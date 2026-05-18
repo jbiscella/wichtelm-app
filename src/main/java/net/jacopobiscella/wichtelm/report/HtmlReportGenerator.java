@@ -1,0 +1,285 @@
+package net.jacopobiscella.wichtelm.report;
+
+import net.jacopobiscella.wichtelm.error.ReportGenerationException;
+import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
+import net.jacopobiscella.wichtelm.strategy.StrategyStep;
+import org.hatrack.commons.OHLCBar;
+import org.hatrack.commons.OHLCSeries;
+import org.hatrack.frauholle.model.EquityPoint;
+import org.hatrack.frauholle.model.Trade;
+import org.hatrack.frauholle.result.BacktestDiagnostics;
+import org.hatrack.frauholle.result.BacktestMetrics;
+import org.hatrack.heerwisch.api.error.ChartRenderException;
+import org.hatrack.heerwisch.api.error.DriverInternalException;
+import org.hatrack.heerwisch.api.port.ChartRenderer;
+import org.hatrack.heerwisch.api.spec.Annotation;
+import org.hatrack.heerwisch.api.spec.ChartImage;
+import org.hatrack.heerwisch.api.spec.ChartSpec;
+import org.hatrack.heerwisch.api.spec.LayoutSpec;
+import org.hatrack.heerwisch.jfreechart.JFreeChartRenderer;
+
+import java.io.IOException;
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.time.Instant;
+import java.time.format.DateTimeFormatter;
+import java.util.ArrayList;
+import java.util.Base64;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+
+/**
+ * Renders a self-contained HTML backtest report (CLAUDE.md section 7).
+ *
+ * <p>Per-Scenario price charts are rendered via the heerwisch-jfreechart
+ * driver. The equity and drawdown curves are rendered as inline SVG line
+ * charts: the heerwisch {@code Series} contract accepts only OHLC/HA price
+ * data and cannot represent an equity curve.
+ */
+public final class HtmlReportGenerator {
+
+    private static final MathContext DECIMAL = MathContext.DECIMAL64;
+    private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+
+    /**
+     * Generates the report and returns the path written. The filename follows
+     * {@code {configBasename}_{timestamp}.html} with colons replaced by hyphens
+     * (CLAUDE.md section 7.1); existing reports are never overwritten.
+     */
+    public Path generate(ReportData data) {
+        try {
+            Files.createDirectories(data.outputDirectory());
+            String timestamp = data.generatedAt()
+                    .format(DateTimeFormatter.ISO_LOCAL_DATE_TIME)
+                    .replace(':', '-');
+            Path target = data.outputDirectory()
+                    .resolve(data.configBasename() + "_" + timestamp + ".html");
+            Files.writeString(target, buildHtml(data));
+            return target;
+        } catch (IOException e) {
+            throw new ReportGenerationException("failed to write HTML report", e);
+        }
+    }
+
+    private String buildHtml(ReportData data) {
+        ChartRenderer renderer = newRenderer();
+        StringBuilder html = new StringBuilder();
+        html.append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/>")
+                .append("<title>Backtest report — ").append(esc(data.configBasename()))
+                .append("</title></head><body>");
+
+        html.append("<header><h1>Backtest report</h1><p>Strategy: ")
+                .append(esc(data.strategy().featureName())).append("</p></header>");
+
+        appendMetrics(html, data.result().metrics());
+        appendScenarioBoxes(html, data, renderer);
+        appendTrailingSection(html, data);
+
+        html.append("</body></html>");
+        return html.toString();
+    }
+
+    private void appendMetrics(StringBuilder html, BacktestMetrics metrics) {
+        html.append("<section class=\"aggregate-metrics\"><h2>Aggregate metrics</h2><dl>");
+        metricRow(html, "totalReturn", metrics.totalReturn().toPlainString());
+        metricRow(html, "numTrades", Integer.toString(metrics.numTrades()));
+        metricRow(html, "winRate", metrics.winRate().toPlainString());
+        metricRow(html, "maxDrawdown", metrics.maxDrawdown().toPlainString());
+        metricRow(html, "sharpeRatio", metrics.sharpeRatio().toPlainString());
+        metricRow(html, "sortinoRatio", metrics.sortinoRatio().toPlainString());
+        metricRow(html, "calmarRatio", metrics.calmarRatio().toPlainString());
+        metricRow(html, "profitFactor", metrics.profitFactor().signum() == 0
+                ? "undefined" : metrics.profitFactor().toPlainString());
+        metricRow(html, "avgWin", metrics.avgWin().toPlainString());
+        metricRow(html, "avgLoss", metrics.avgLoss().toPlainString());
+        html.append("</dl></section>");
+    }
+
+    private void metricRow(StringBuilder html, String name, String value) {
+        html.append("<dt>").append(name).append("</dt><dd>").append(esc(value)).append("</dd>");
+    }
+
+    private void appendScenarioBoxes(StringBuilder html, ReportData data, ChartRenderer renderer) {
+        html.append("<section class=\"scenario-boxes\"><h2>Per-Scenario breakdown</h2>");
+        List<StrategyScenario> scenarios = new ArrayList<>(data.strategy().scenarios());
+        scenarios.sort(Comparator.comparing(StrategyScenario::name));
+        for (StrategyScenario scenario : scenarios) {
+            appendBox(html, data, renderer, scenario);
+        }
+        html.append("</section>");
+    }
+
+    private void appendBox(StringBuilder html, ReportData data, ChartRenderer renderer,
+                           StrategyScenario scenario) {
+        List<Instant> triggers = data.triggersByScenario()
+                .getOrDefault(scenario.name(), List.of());
+        html.append("<section class=\"scenario-box\" data-scenario=\"")
+                .append(esc(scenario.name())).append("\"><h3>").append(esc(scenario.name()))
+                .append("</h3><p class=\"trigger-count\">Trigger count: ")
+                .append(triggers.size()).append("</p>");
+
+        for (String timeframe : timeframesFor(data, scenario)) {
+            OHLCSeries series = timeframe.equals(data.strategy().primaryTimeframe().wire())
+                    ? data.primarySeries()
+                    : data.higherTimeframeSeries().get(timeframe);
+            if (series == null) {
+                throw new ReportGenerationException(
+                        "no series supplied for timeframe " + timeframe);
+            }
+            html.append(renderChart(renderer, series, triggers, timeframe));
+        }
+
+        html.append("<table class=\"sub-report\"><thead><tr><th>Trigger time</th></tr></thead><tbody>");
+        for (Instant trigger : triggers) {
+            html.append("<tr><td>").append(esc(trigger.toString())).append("</td></tr>");
+        }
+        html.append("</tbody></table></section>");
+    }
+
+    /** Primary timeframe plus every higher timeframe a Scenario's steps reference. */
+    private List<String> timeframesFor(ReportData data, StrategyScenario scenario) {
+        Map<String, String> seriesTimeframe = new HashMap<>();
+        data.strategy().backgroundSeries().forEach(series ->
+                series.timeframe().ifPresent(tf -> seriesTimeframe.put(series.name(), tf.wire())));
+
+        Set<String> timeframes = new LinkedHashSet<>();
+        timeframes.add(data.strategy().primaryTimeframe().wire());
+        for (StrategyStep step : scenario.conditionSteps()) {
+            Matcher matcher = IDENTIFIER.matcher(step.text());
+            while (matcher.find()) {
+                String timeframe = seriesTimeframe.get(matcher.group());
+                if (timeframe != null) {
+                    timeframes.add(timeframe);
+                }
+            }
+        }
+        return List.copyOf(timeframes);
+    }
+
+    private String renderChart(ChartRenderer renderer, OHLCSeries series,
+                               List<Instant> markers, String timeframeLabel) {
+        try {
+            var builder = ChartSpec.builder().withSeries(series).withLayout(LayoutSpec.defaults());
+            Map<Instant, BigDecimal> closeByTime = new HashMap<>();
+            for (OHLCBar bar : series.bars()) {
+                closeByTime.put(bar.time(), bar.close());
+            }
+            for (Instant marker : markers) {
+                BigDecimal price = closeByTime.get(marker);
+                if (price != null) {
+                    builder.addAnnotation(new Annotation.BarHighlight(marker, price, "trigger"));
+                }
+            }
+            ChartImage image = renderer.render(builder.build());
+            String base64 = Base64.getEncoder().encodeToString(image.bytes());
+            return "<figure class=\"chart\" data-timeframe=\"" + esc(timeframeLabel) + "\">"
+                    + "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
+                    + esc(image.contentType()) + ";base64," + base64 + "\"/>"
+                    + "<figcaption>" + esc(timeframeLabel) + "</figcaption></figure>";
+        } catch (ChartRenderException e) {
+            throw new ReportGenerationException(
+                    "chart rendering failed for timeframe " + timeframeLabel, e);
+        }
+    }
+
+    private void appendTrailingSection(StringBuilder html, ReportData data) {
+        List<EquityPoint> curve = data.result().equityCurve();
+        html.append("<section class=\"equity-curve\"><h2>Equity curve</h2>")
+                .append(svgLineChart(curve, EquityPoint::equity, "equity"))
+                .append("</section>");
+        html.append("<section class=\"drawdown-curve\"><h2>Drawdown</h2>")
+                .append(svgLineChart(drawdown(curve), p -> p, "drawdown"))
+                .append("</section>");
+
+        html.append("<section class=\"trade-list\"><h2>Trades</h2>")
+                .append("<table><thead><tr><th>entryTime</th><th>exitTime</th><th>direction</th>")
+                .append("<th>entryPrice</th><th>exitPrice</th><th>pnl_pct</th></tr></thead><tbody>");
+        for (Trade trade : data.result().trades()) {
+            html.append("<tr><td>").append(esc(trade.entryTime().toString()))
+                    .append("</td><td>").append(esc(trade.exitTime().toString()))
+                    .append("</td><td>").append(trade.direction())
+                    .append("</td><td>").append(trade.entryPrice().toPlainString())
+                    .append("</td><td>").append(trade.exitPrice().toPlainString())
+                    .append("</td><td>").append(trade.pnlPercent().toPlainString())
+                    .append("</td></tr>");
+        }
+        html.append("</tbody></table></section>");
+
+        BacktestDiagnostics diagnostics = data.result().diagnostics();
+        html.append("<section class=\"diagnostics\"><h2>Diagnostics</h2><dl>");
+        metricRow(html, "ignoredBuySignals", Integer.toString(diagnostics.ignoredBuySignals()));
+        metricRow(html, "ignoredSellSignals", Integer.toString(diagnostics.ignoredSellSignals()));
+        metricRow(html, "noOpClosePositionSignals",
+                Integer.toString(diagnostics.noOpClosePositionSignals()));
+        metricRow(html, "unfilledSignalsAtEndOfSeries",
+                Integer.toString(diagnostics.unfilledSignalsAtEndOfSeries()));
+        metricRow(html, "forcedClosesAtExplicitPrice",
+                Integer.toString(diagnostics.forcedClosesAtExplicitPrice()));
+        metricRow(html, "addToPositionCount", Integer.toString(diagnostics.addToPositionCount()));
+        metricRow(html, "addToPositionOnNoPositionCount",
+                Integer.toString(diagnostics.addToPositionOnNoPositionCount()));
+        html.append("</dl></section>");
+    }
+
+    /** Drawdown points: peak-to-current decline derived from the equity curve. */
+    private List<BigDecimal> drawdown(List<EquityPoint> curve) {
+        List<BigDecimal> result = new ArrayList<>(curve.size());
+        BigDecimal peak = null;
+        for (EquityPoint point : curve) {
+            peak = (peak == null || point.equity().compareTo(peak) > 0) ? point.equity() : peak;
+            result.add(peak.subtract(point.equity(), DECIMAL));
+        }
+        return result;
+    }
+
+    private <T> String svgLineChart(List<T> points, java.util.function.Function<T, BigDecimal> value,
+                                    String cssClass) {
+        if (points.isEmpty()) {
+            return "<p class=\"" + cssClass + " empty\">no data</p>";
+        }
+        double width = 900;
+        double height = 240;
+        double min = Double.MAX_VALUE;
+        double max = -Double.MAX_VALUE;
+        for (T point : points) {
+            double v = value.apply(point).doubleValue();
+            min = Math.min(min, v);
+            max = Math.max(max, v);
+        }
+        double span = max - min == 0 ? 1 : max - min;
+        StringBuilder path = new StringBuilder();
+        for (int i = 0; i < points.size(); i++) {
+            double x = points.size() == 1 ? 0 : width * i / (points.size() - 1);
+            double y = height - (value.apply(points.get(i)).doubleValue() - min) / span * height;
+            path.append(i == 0 ? "M" : "L").append(round(x)).append(' ').append(round(y)).append(' ');
+        }
+        return "<svg class=\"" + cssClass + "\" viewBox=\"0 0 " + (int) width + " " + (int) height
+                + "\" xmlns=\"http://www.w3.org/2000/svg\"><path fill=\"none\" stroke=\"#1f77b4\" "
+                + "stroke-width=\"2\" d=\"" + path.toString().strip() + "\"/></svg>";
+    }
+
+    private static double round(double value) {
+        return Math.round(value * 100.0) / 100.0;
+    }
+
+    private ChartRenderer newRenderer() {
+        try {
+            return new JFreeChartRenderer();
+        } catch (DriverInternalException e) {
+            throw new ReportGenerationException("could not initialize the chart renderer", e);
+        }
+    }
+
+    private static String esc(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+                .replace("\"", "&quot;");
+    }
+}
