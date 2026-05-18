@@ -19,13 +19,24 @@
     <hatrack.version>0.42.0-alpha</hatrack.version>
     <tomlj.version>1.1.1</tomlj.version>
     <cucumber.version>7.34.3</cucumber.version>
-    <junit.jupiter.version>5.13.4</junit.jupiter.version>
-    <junit.platform.version>1.13.4</junit.platform.version>
+    <junit.bom.version>5.14.4</junit.bom.version>
 
     <compiler.plugin.version>3.15.0</compiler.plugin.version>
     <surefire.plugin.version>3.5.5</surefire.plugin.version>
     <shade.plugin.version>3.6.2</shade.plugin.version>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.junit</groupId>
+        <artifactId>junit-bom</artifactId>
+        <version>${junit.bom.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <dependencies>
     <!-- ha-track libraries (Maven Central) -->
@@ -88,13 +99,11 @@
     <dependency>
       <groupId>org.junit.platform</groupId>
       <artifactId>junit-platform-suite</artifactId>
-      <version>${junit.platform.version}</version>
       <scope>test</scope>
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
       <artifactId>junit-jupiter</artifactId>
-      <version>${junit.jupiter.version}</version>
       <scope>test</scope>
     </dependency>
   </dependencies>
