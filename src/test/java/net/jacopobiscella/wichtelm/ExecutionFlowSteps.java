@@ -13,7 +13,9 @@ import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunner;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParser;
+import org.hatrack.frauholle.eodhd.EodhdMarketDataSource;
 import org.hatrack.frauholle.error.BacktestException;
+import org.hatrack.frauholle.port.MarketDataSource;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -23,6 +25,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -40,6 +43,9 @@ public class ExecutionFlowSteps {
     private ParsedStrategy strategy;
     private BacktestRunResult runResult;
     private WichtelmException thrown;
+    private final Map<String, String> environment = new HashMap<>();
+    private String apiTokenEnvName;
+    private MarketDataSource resolvedDataSource;
 
     @Before
     public void setUp() throws IOException {
@@ -187,6 +193,63 @@ public class ExecutionFlowSteps {
         assertInstanceOf(DataSourceUnavailableException.class, thrown);
         assertTrue(thrown.getMessage().contains("higher-timeframe"),
                 () -> "unexpected error message: " + thrown.getMessage());
+    }
+
+    private BacktestConfig eodhdConfig() {
+        return new BacktestConfig(
+                tempDir.resolve("config.toml"),
+                tempDir.resolve("strategy.strat"),
+                "AAPL",
+                LocalDate.parse("2024-01-01"),
+                LocalDate.parse("2024-01-10"),
+                DataSource.EODHD,
+                BigDecimal.valueOf(50),
+                false,
+                Map.of(),
+                Optional.empty(),
+                Optional.empty(),
+                Optional.of(apiTokenEnvName),
+                List.of());
+    }
+
+    @Given("an EODHD-backed config whose api_token_env is {string}")
+    public void anEodhdBackedConfig(String envName) {
+        apiTokenEnvName = envName;
+    }
+
+    @Given("the environment variable {string} is set to {string}")
+    public void theEnvironmentVariableIsSetTo(String name, String value) {
+        environment.put(name, value);
+    }
+
+    @Given("the environment variable {string} is not set")
+    public void theEnvironmentVariableIsNotSet(String name) {
+        environment.remove(name);
+    }
+
+    @When("the data source is resolved")
+    public void theDataSourceIsResolved() {
+        resolvedDataSource = new BacktestRunner(environment::get).dataSourceFor(eodhdConfig());
+    }
+
+    @When("the data source is resolved expecting failure")
+    public void theDataSourceIsResolvedExpectingFailure() {
+        try {
+            resolvedDataSource = new BacktestRunner(environment::get).dataSourceFor(eodhdConfig());
+        } catch (WichtelmException e) {
+            thrown = e;
+        }
+    }
+
+    @Then("an EODHD market data source is created")
+    public void anEodhdMarketDataSourceIsCreated() {
+        assertInstanceOf(EodhdMarketDataSource.class, resolvedDataSource);
+    }
+
+    @Then("a DataSourceUnavailableException names the missing {string} variable")
+    public void aDataSourceUnavailableExceptionNamesTheMissingVariable(String name) {
+        assertInstanceOf(DataSourceUnavailableException.class, thrown);
+        assertTrue(thrown.getMessage().contains(name), () -> "message: " + thrown.getMessage());
     }
 
     @Then("a BacktestResult is produced")

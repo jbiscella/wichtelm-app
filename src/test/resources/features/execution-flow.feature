@@ -29,3 +29,15 @@ Feature: Backtest execution flow
     And a 1d dataset that ends before the primary range end
     When the backtest runner is executed expecting failure
     Then a higher-timeframe coverage error is raised
+
+  Scenario: An EODHD data source is instantiated when the API-token env var is set
+    Given an EODHD-backed config whose api_token_env is "EODHD_API_TOKEN"
+    And the environment variable "EODHD_API_TOKEN" is set to "demo-token"
+    When the data source is resolved
+    Then an EODHD market data source is created
+
+  Scenario: An EODHD data source with a missing API-token env var is rejected
+    Given an EODHD-backed config whose api_token_env is "EODHD_API_TOKEN"
+    And the environment variable "EODHD_API_TOKEN" is not set
+    When the data source is resolved expecting failure
+    Then a DataSourceUnavailableException names the missing "EODHD_API_TOKEN" variable

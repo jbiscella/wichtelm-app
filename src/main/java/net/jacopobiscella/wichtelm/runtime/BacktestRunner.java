@@ -9,6 +9,7 @@ import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.Timeframe;
 import org.hatrack.frauholle.csv.CsvMarketDataSource;
 import org.hatrack.frauholle.engine.Backtester;
+import org.hatrack.frauholle.eodhd.EodhdMarketDataSource;
 import org.hatrack.frauholle.error.BacktestException;
 import org.hatrack.frauholle.error.InvalidBacktestSpecException;
 import org.hatrack.frauholle.error.MarketDataException;
@@ -23,6 +24,7 @@ import java.time.ZoneOffset;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.UnaryOperator;
 
 /**
  * Drives the backtest execution flow (CLAUDE.md section 6.1, steps 4-9): resolve
@@ -34,6 +36,20 @@ public final class BacktestRunner {
     /** Position sizing is percentage-based, so the initial capital is a fixed normalized base. */
     private static final BigDecimal NORMALIZED_INITIAL_CAPITAL = new BigDecimal("100000");
 
+    private final UnaryOperator<String> environment;
+
+    public BacktestRunner() {
+        this(System::getenv);
+    }
+
+    /**
+     * @param environment environment-variable lookup, injectable so the EODHD
+     *                    api_token_env resolution can be exercised in tests
+     */
+    public BacktestRunner(UnaryOperator<String> environment) {
+        this.environment = environment;
+    }
+
     /**
      * Runs the backtest end to end.
      *
@@ -42,7 +58,7 @@ public final class BacktestRunner {
      */
     public BacktestRunResult run(ParsedStrategy strategy, BacktestConfig config,
                                  Map<String, BigDecimal> parameters) throws BacktestException {
-        MarketDataSource dataSource = marketDataSource(config);
+        MarketDataSource dataSource = dataSourceFor(config);
         Instant from = config.dateFrom().atStartOfDay(ZoneOffset.UTC).toInstant();
         Instant until = config.dateTo().plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
 
@@ -114,7 +130,14 @@ public final class BacktestRunner {
         }
     }
 
-    private MarketDataSource marketDataSource(BacktestConfig config) {
+    /**
+     * Resolves the {@link MarketDataSource} for a config (CLAUDE.md section 6.1
+     * step 4): a CSV driver or an EODHD driver. For EODHD, the API token is read
+     * from the environment variable named by {@code [eodhd].api_token_env}; a
+     * missing or empty variable raises {@link DataSourceUnavailableException}
+     * (the runtime half of rule C9). The token value itself is never logged.
+     */
+    public MarketDataSource dataSourceFor(BacktestConfig config) {
         return switch (config.dataSource()) {
             case CSV -> {
                 Path file = config.csvFile().orElseThrow(() -> new DataSourceUnavailableException(
@@ -122,8 +145,17 @@ public final class BacktestRunner {
                 Path baseDirectory = file.getParent() == null ? Path.of(".") : file.getParent();
                 yield new CsvMarketDataSource(baseDirectory, file.getFileName().toString());
             }
-            case EODHD -> throw new DataSourceUnavailableException(
-                    "the EODHD data source is wired with the CLI increment (6c)");
+            case EODHD -> {
+                String variableName = config.eodhdApiTokenEnv().orElseThrow(
+                        () -> new DataSourceUnavailableException(
+                                "eodhd data source requires [eodhd].api_token_env"));
+                String token = environment.apply(variableName);
+                if (token == null || token.isBlank()) {
+                    throw new DataSourceUnavailableException("environment variable " + variableName
+                            + " is not set; it must hold the EODHD API token");
+                }
+                yield new EodhdMarketDataSource(token);
+            }
         };
     }
 
