@@ -5,15 +5,15 @@ import net.jacopobiscella.wichtelm.error.DslEvaluationException;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 
 /**
  * Evaluates DSL condition and arithmetic expressions against a bar's values.
  *
  * <p>Scope: market variables, declared parameters, trade-context variables,
- * arithmetic, and the English-prose comparison operators. Indicator and
- * window-aggregate function evaluation is intentionally out of this increment;
- * a function call in an expression raises a {@link DslEvaluationException}.
+ * arithmetic, the English-prose comparison operators, and indicator function
+ * calls resolved through an {@link IndicatorSource}.
  */
 public final class ExpressionEvaluator {
 
@@ -22,9 +22,17 @@ public final class ExpressionEvaluator {
         BigDecimal get(String identifier);
     }
 
+    /** Resolves an indicator/function call to its numeric value at a given bar. */
+    public interface IndicatorSource {
+        BigDecimal evaluate(String functionName, List<BigDecimal> arguments);
+    }
+
+    /** Identifier and function resolution for one bar. */
+    public record Scope(Values values, IndicatorSource indicators) {
+    }
+
     private static final MathContext DECIMAL = MathContext.DECIMAL64;
 
-    /** Comparison operators, longest-first so multi-word phrases match before shorter ones. */
     private static final List<String> COMPARATORS = List.of(
             "crosses below", "crosses above", "drops below", "rises above",
             "is above", "is below", "exceeds");
@@ -44,7 +52,7 @@ public final class ExpressionEvaluator {
      * may be {@code null} when no prior bar exists; crossing operators then yield
      * {@code false}.
      */
-    public boolean condition(String text, Values current, Values previous) {
+    public boolean condition(String text, Scope current, Scope previous) {
         String t = text.strip();
         int splitAt = -1;
         String operator = null;
@@ -85,8 +93,8 @@ public final class ExpressionEvaluator {
     }
 
     /** Evaluates an arithmetic expression to a single value. */
-    public BigDecimal arithmetic(String expression, Values values) {
-        Cursor cursor = new Cursor(expression, values);
+    public BigDecimal arithmetic(String expression, Scope scope) {
+        Cursor cursor = new Cursor(expression, scope);
         BigDecimal result = cursor.expression();
         cursor.skipWhitespace();
         if (!cursor.atEnd()) {
@@ -102,12 +110,12 @@ public final class ExpressionEvaluator {
     /** Recursive-descent cursor over a single arithmetic expression. */
     private final class Cursor {
         private final String s;
-        private final Values values;
+        private final Scope scope;
         private int pos;
 
-        Cursor(String s, Values values) {
+        Cursor(String s, Scope scope) {
             this.s = s;
-            this.values = values;
+            this.scope = scope;
         }
 
         boolean atEnd() {
@@ -210,10 +218,31 @@ public final class ExpressionEvaluator {
             String name = s.substring(start, pos);
             skipWhitespace();
             if (pos < s.length() && s.charAt(pos) == '(') {
-                throw fail(s, "function/indicator evaluation is not implemented in this increment: "
-                        + name);
+                return functionCall(name);
             }
-            return values.get(name);
+            return scope.values().get(name);
+        }
+
+        BigDecimal functionCall(String name) {
+            pos++;
+            List<BigDecimal> arguments = new ArrayList<>();
+            skipWhitespace();
+            if (pos < s.length() && s.charAt(pos) == ')') {
+                pos++;
+            } else {
+                arguments.add(expression());
+                skipWhitespace();
+                while (pos < s.length() && s.charAt(pos) == ',') {
+                    pos++;
+                    arguments.add(expression());
+                    skipWhitespace();
+                }
+                if (atEnd() || s.charAt(pos) != ')') {
+                    throw fail(s, "missing closing parenthesis in call to " + name);
+                }
+                pos++;
+            }
+            return scope.indicators().evaluate(name, arguments);
         }
     }
 }

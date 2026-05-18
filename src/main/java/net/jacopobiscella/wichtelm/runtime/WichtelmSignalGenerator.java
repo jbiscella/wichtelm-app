@@ -1,5 +1,6 @@
 package net.jacopobiscella.wichtelm.runtime;
 
+import net.jacopobiscella.wichtelm.runtime.ExpressionEvaluator.Scope;
 import net.jacopobiscella.wichtelm.strategy.FirstClassCondition;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.PositionPrecondition;
@@ -20,6 +21,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
+import java.util.TreeMap;
 
 /**
  * Translates a parsed strategy into frau-holle {@link Signal}s, one per primary
@@ -34,6 +36,11 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
 
     private static final MathContext DECIMAL = MathContext.DECIMAL64;
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
+
+    /** Indicator source for stop/take expressions, which rule P16 forbids functions in. */
+    private static final ExpressionEvaluator.IndicatorSource NO_INDICATORS = (name, arguments) -> {
+        throw new IllegalStateException("indicators are not allowed in stop_loss/take_profit: " + name);
+    };
 
     private final ParsedStrategy strategy;
     private final Map<String, BigDecimal> parameters;
@@ -60,16 +67,16 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 new ExpressionEvaluator(strategy.featureName(), bar.time(), context.barIndex());
 
         Optional<Position> open = context.currentPosition();
+        Scope current = scopeFor(context, bar, open, context.barIndex());
+        Scope previous = previousBar == null
+                ? null : scopeFor(context, previousBar, open, context.barIndex() - 1);
+
         if (open.isEmpty()) {
-            return entrySignal(context, evaluator, bar, previousBar);
+            return entrySignal(context, evaluator, current, previous);
         }
 
         Position position = open.get();
-        ExpressionEvaluator.Values current = barValues(bar, open, context.barIndex());
-        ExpressionEvaluator.Values previous = previousBar == null
-                ? null : barValues(previousBar, open, context.barIndex() - 1);
-
-        Optional<Signal> protectiveExit = protectiveExit(position, bar, evaluator);
+        Optional<Signal> protectiveExit = protectiveExit(position, bar);
         if (protectiveExit.isPresent()) {
             return protectiveExit.get();
         }
@@ -101,11 +108,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     }
 
     private Signal entrySignal(BarContext context, ExpressionEvaluator evaluator,
-                               OHLCBar bar, OHLCBar previousBar) {
-        ExpressionEvaluator.Values current = barValues(bar, Optional.empty(), context.barIndex());
-        ExpressionEvaluator.Values previous = previousBar == null
-                ? null : barValues(previousBar, Optional.empty(), context.barIndex() - 1);
-
+                               Scope current, Scope previous) {
         for (StrategyScenario scenario : strategy.scenarios()) {
             if (scenario.precondition() != PositionPrecondition.NO_OPEN_POSITION) {
                 continue;
@@ -134,8 +137,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 .map(expression -> evaluateProtective(expression, position));
     }
 
-    private Optional<Signal> protectiveExit(Position position, OHLCBar bar,
-                                            ExpressionEvaluator evaluator) {
+    private Optional<Signal> protectiveExit(Position position, OHLCBar bar) {
         Optional<StrategyScenario> entry = entryScenarioFor(position.direction());
         if (entry.isEmpty()) {
             return Optional.empty();
@@ -167,7 +169,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private BigDecimal evaluateProtective(String expression, Position position) {
         ExpressionEvaluator evaluator =
                 new ExpressionEvaluator(strategy.featureName(), position.entryTime(), 0);
-        return evaluator.arithmetic(expression, positionValues(position));
+        return evaluator.arithmetic(expression, new Scope(positionValues(position), NO_INDICATORS));
     }
 
     private Optional<StrategyScenario> entryScenarioFor(Direction direction) {
@@ -181,8 +183,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     }
 
     private boolean conjunctionHolds(StrategyScenario scenario, ExpressionEvaluator evaluator,
-                                     ExpressionEvaluator.Values current,
-                                     ExpressionEvaluator.Values previous) {
+                                     Scope current, Scope previous) {
         for (StrategyStep step : scenario.conditionSteps()) {
             if (!evaluator.condition(step.text(), current, previous)) {
                 return false;
@@ -208,11 +209,30 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private OHLCBar previousBar(BarContext context) {
         OHLCBar latest = null;
         for (OHLCBar candidate : context.history()) {
-            if (candidate.time().isBefore(context.currentBar().time())) {
+            if (candidate.time().isBefore(context.currentBar().time())
+                    && (latest == null || candidate.time().isAfter(latest.time()))) {
                 latest = candidate;
             }
         }
         return latest;
+    }
+
+    private Scope scopeFor(BarContext context, OHLCBar bar, Optional<Position> position, long barIndex) {
+        BarIndicatorSource indicators = new BarIndicatorSource(barsUpToAndIncluding(context, bar),
+                strategy.featureName(), bar.time(), barIndex);
+        return new Scope(barValues(bar, position, barIndex), indicators);
+    }
+
+    /** All known bars with time at or before {@code bar}, in chronological order. */
+    private java.util.List<OHLCBar> barsUpToAndIncluding(BarContext context, OHLCBar bar) {
+        TreeMap<Instant, OHLCBar> byTime = new TreeMap<>();
+        for (OHLCBar candidate : context.history()) {
+            if (!candidate.time().isAfter(bar.time())) {
+                byTime.put(candidate.time(), candidate);
+            }
+        }
+        byTime.put(bar.time(), bar);
+        return java.util.List.copyOf(byTime.values());
     }
 
     private ExpressionEvaluator.Values barValues(OHLCBar bar, Optional<Position> position,
