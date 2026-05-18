@@ -70,7 +70,7 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
 
     private BigDecimal latest(String functionName, BigDecimal[] series) {
         if (series.length == 0 || series[series.length - 1] == null) {
-            throw fail(functionName,
+            throw new IndicatorWarmupException(
                     "insufficient bar history to evaluate " + functionName + " at this bar");
         }
         return series[series.length - 1];
@@ -80,7 +80,8 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
     private BigDecimal stddev(int period) {
         List<BigDecimal> closes = closes();
         if (closes.size() < period) {
-            throw fail("stddev", "insufficient bar history to evaluate stddev at this bar");
+            throw new IndicatorWarmupException(
+                    "insufficient bar history to evaluate stddev at this bar");
         }
         List<BigDecimal> window = closes.subList(closes.size() - period, closes.size());
         BigDecimal divisor = BigDecimal.valueOf(period);
