@@ -19,7 +19,7 @@ import java.util.Optional;
  * T, so it enforces the lookahead-safety invariant by construction.
  *
  * <p>A bar's close time is the open time of the following bar; the final bar
- * uses the nominal timeframe duration.
+ * advances its open time by exactly one timeframe (calendar-correct).
  */
 public final class HigherTimeframeSeries {
 
@@ -45,7 +45,7 @@ public final class HigherTimeframeSeries {
         for (int i = 0; i < sorted.size(); i++) {
             computed.add(i + 1 < sorted.size()
                     ? sorted.get(i + 1).time()
-                    : sorted.get(i).time().plus(Timeframes.nominalDuration(timeframe)));
+                    : Timeframes.advance(sorted.get(i).time(), timeframe));
         }
         this.closeTimes = List.copyOf(computed);
     }

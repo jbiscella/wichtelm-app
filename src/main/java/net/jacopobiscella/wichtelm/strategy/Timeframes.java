@@ -2,7 +2,9 @@ package net.jacopobiscella.wichtelm.strategy;
 
 import org.hatrack.commons.Timeframe;
 
-import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
 
 /**
  * Ordering helper for {@link Timeframe} values. The commons {@code Timeframe}
@@ -36,11 +38,22 @@ public final class Timeframes {
     }
 
     /**
-     * Nominal duration of one timeframe. Month and year use nominal lengths
-     * (30 and 365 days); callers that need an exact bar-close time should
-     * prefer the open time of the following bar.
+     * Advances an open time by exactly one timeframe, using calendar-correct
+     * arithmetic at UTC. Month and year boundaries land on the true calendar
+     * boundary (not a nominal 30/365-day length), so a bar's close time is
+     * exact even for the final bar of a {@code 1M} or {@code 1Y} series.
      */
-    public static Duration nominalDuration(Timeframe tf) {
-        return Duration.ofSeconds(approximateSeconds(tf));
+    public static Instant advance(Instant time, Timeframe tf) {
+        ZonedDateTime zoned = time.atZone(ZoneOffset.UTC);
+        ZonedDateTime advanced = switch (tf.unit()) {
+            case SECOND -> zoned.plusSeconds(tf.amount());
+            case MINUTE -> zoned.plusMinutes(tf.amount());
+            case HOUR -> zoned.plusHours(tf.amount());
+            case DAY -> zoned.plusDays(tf.amount());
+            case WEEK -> zoned.plusWeeks(tf.amount());
+            case MONTH -> zoned.plusMonths(tf.amount());
+            case YEAR -> zoned.plusYears(tf.amount());
+        };
+        return advanced.toInstant();
     }
 }
