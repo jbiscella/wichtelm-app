@@ -465,9 +465,9 @@ Scenario: A well-formed canonical strategy parses successfully
   Given the canonical example strategy from §3.9
   When the parser reads the file
   Then no exception is thrown
-  And the parsed AST contains 7 parameters
+  And the parsed AST contains 6 parameters
   And the parsed AST contains 2 Background series declarations
-  And the parsed AST contains 6 Scenarios
+  And the parsed AST contains 5 Scenarios
   And each Scenario terminates with one of long_entry/long_exit/short_entry/short_exit
 ```
 
