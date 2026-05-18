@@ -2,6 +2,8 @@ package net.jacopobiscella.wichtelm.strategy;
 
 import org.hatrack.commons.Timeframe;
 
+import java.time.Duration;
+
 /**
  * Ordering helper for {@link Timeframe} values. The commons {@code Timeframe}
  * record carries no comparison method, so rule P8 (higher-TF strictly above
@@ -31,5 +33,14 @@ public final class Timeframes {
     /** True when {@code candidate} represents a strictly longer timeframe than {@code primary}. */
     public static boolean isStrictlyHigher(Timeframe candidate, Timeframe primary) {
         return approximateSeconds(candidate) > approximateSeconds(primary);
+    }
+
+    /**
+     * Nominal duration of one timeframe. Month and year use nominal lengths
+     * (30 and 365 days); callers that need an exact bar-close time should
+     * prefer the open time of the following bar.
+     */
+    public static Duration nominalDuration(Timeframe tf) {
+        return Duration.ofSeconds(approximateSeconds(tf));
     }
 }
