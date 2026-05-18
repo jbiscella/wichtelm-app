@@ -1,0 +1,10 @@
+# Claude Code local settings (per-developer, not shared)
+.claude/settings.local.json
+
+# Maven build output
+target/
+
+# IDE
+.idea/
+*.iml
+.vscode/
