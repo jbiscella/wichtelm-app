@@ -15,3 +15,17 @@ Feature: Backtest execution flow
     And a CSV dataset for the symbol on the 1h and 1d timeframes
     When the backtest runner executes
     Then a BacktestResult is produced
+
+  Scenario: A higher-timeframe series with interior gaps but full span is accepted
+    Given a multi-timeframe strategy with a 1d Background series
+    And a CSV dataset for the symbol on the 1h timeframe
+    And a 1d dataset with interior gaps that still spans the primary range
+    When the backtest runner executes
+    Then a BacktestResult is produced
+
+  Scenario: A higher-timeframe series ending before the primary range end is rejected
+    Given a multi-timeframe strategy with a 1d Background series
+    And a CSV dataset for the symbol on the 1h timeframe
+    And a 1d dataset that ends before the primary range end
+    When the backtest runner is executed expecting failure
+    Then a higher-timeframe coverage error is raised

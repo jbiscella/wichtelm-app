@@ -7,6 +7,8 @@ import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
 import net.jacopobiscella.wichtelm.config.BacktestConfig;
 import net.jacopobiscella.wichtelm.config.DataSource;
+import net.jacopobiscella.wichtelm.error.DataSourceUnavailableException;
+import net.jacopobiscella.wichtelm.error.WichtelmException;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunner;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
@@ -27,7 +29,9 @@ import java.util.Optional;
 import java.util.stream.Stream;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /** Step definitions for {@code execution-flow.feature} (increment 6b). */
 public class ExecutionFlowSteps {
@@ -35,6 +39,7 @@ public class ExecutionFlowSteps {
     private Path tempDir;
     private ParsedStrategy strategy;
     private BacktestRunResult runResult;
+    private WichtelmException thrown;
 
     @Before
     public void setUp() throws IOException {
@@ -116,12 +121,28 @@ public class ExecutionFlowSteps {
     }
 
     private void writeDailyDataset() throws IOException {
+        writeDailyDatasetOnDays(0, 1, 2, 3, 4, 5, 6, 7, 8, 9);
+    }
+
+    private void writeDailyDatasetOnDays(int... dayOffsets) throws IOException {
         StringBuilder csv = new StringBuilder("time,open,high,low,close\n");
         Instant start = Instant.parse("2024-01-01T00:00:00Z");
-        for (int i = 0; i < 10; i++) {
-            appendRow(csv, start.plus(Duration.ofDays(i)), 100 + i);
+        for (int day : dayOffsets) {
+            appendRow(csv, start.plus(Duration.ofDays(day)), 100 + day);
         }
         Files.writeString(tempDir.resolve("AAPL_1d.csv"), csv);
+    }
+
+    @Given("a 1d dataset with interior gaps that still spans the primary range")
+    public void a1dDatasetWithInteriorGaps() throws IOException {
+        // Hourly data spans days 0-4; the 1d series keeps days 0, 1 and 4
+        // (an interior weekend-like gap) yet still spans the primary range.
+        writeDailyDatasetOnDays(0, 1, 4);
+    }
+
+    @Given("a 1d dataset that ends before the primary range end")
+    public void a1dDatasetThatEndsEarly() throws IOException {
+        writeDailyDatasetOnDays(0, 1, 2);
     }
 
     private static void appendRow(StringBuilder csv, Instant time, int close) {
@@ -130,9 +151,8 @@ public class ExecutionFlowSteps {
                 .append(close).append('\n');
     }
 
-    @When("the backtest runner executes")
-    public void theBacktestRunnerExecutes() throws BacktestException {
-        BacktestConfig config = new BacktestConfig(
+    private BacktestConfig buildConfig() {
+        return new BacktestConfig(
                 tempDir.resolve("config.toml"),
                 tempDir.resolve("strategy.strat"),
                 "AAPL",
@@ -146,7 +166,27 @@ public class ExecutionFlowSteps {
                 Optional.of(tempDir.resolve("{symbol}_{timeframe}.csv")),
                 Optional.empty(),
                 List.of());
-        runResult = new BacktestRunner().run(strategy, config, Map.of());
+    }
+
+    @When("the backtest runner executes")
+    public void theBacktestRunnerExecutes() throws BacktestException {
+        runResult = new BacktestRunner().run(strategy, buildConfig(), Map.of());
+    }
+
+    @When("the backtest runner is executed expecting failure")
+    public void theBacktestRunnerIsExecutedExpectingFailure() throws BacktestException {
+        try {
+            runResult = new BacktestRunner().run(strategy, buildConfig(), Map.of());
+        } catch (WichtelmException e) {
+            thrown = e;
+        }
+    }
+
+    @Then("a higher-timeframe coverage error is raised")
+    public void aHigherTimeframeCoverageErrorIsRaised() {
+        assertInstanceOf(DataSourceUnavailableException.class, thrown);
+        assertTrue(thrown.getMessage().contains("higher-timeframe"),
+                () -> "unexpected error message: " + thrown.getMessage());
     }
 
     @Then("a BacktestResult is produced")

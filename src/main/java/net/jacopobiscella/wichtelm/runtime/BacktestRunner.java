@@ -4,6 +4,7 @@ import net.jacopobiscella.wichtelm.config.BacktestConfig;
 import net.jacopobiscella.wichtelm.error.DataSourceUnavailableException;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
+import net.jacopobiscella.wichtelm.strategy.Timeframes;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.Timeframe;
 import org.hatrack.frauholle.csv.CsvMarketDataSource;
@@ -62,6 +63,7 @@ public final class BacktestRunner {
                 throw new DataSourceUnavailableException(
                         "higher-timeframe series " + tf.wire() + " returned no bars for the date range");
             }
+            verifySpansPrimaryRange(tf, bars, primarySeries);
             higherTimeframeBars.put(tf.wire(), bars);
         }
 
@@ -82,6 +84,34 @@ public final class BacktestRunner {
 
         BacktestResult result = new Backtester().run(spec);
         return new BacktestRunResult(result, primarySeries, higherTimeframeBars);
+    }
+
+    /**
+     * Verifies a higher-timeframe series spans the primary series (CLAUDE.md
+     * section 6.1 step 5): its first bar opens at or before the first primary
+     * bar, and its last bar closes at or after the last primary bar. Interior
+     * gaps from market closures (weekends, holidays) are acceptable —
+     * {@link HigherTimeframeSeries} resolves to the most recently closed bar.
+     */
+    private void verifySpansPrimaryRange(Timeframe timeframe, List<OHLCBar> higherBars,
+                                         List<OHLCBar> primarySeries) {
+        if (primarySeries.isEmpty()) {
+            return;
+        }
+        Instant primaryStart = primarySeries.getFirst().time();
+        Instant primaryEnd = primarySeries.getLast().time();
+        Instant higherStart = higherBars.getFirst().time();
+        Instant higherEnd = Timeframes.advance(higherBars.getLast().time(), timeframe);
+        if (higherStart.isAfter(primaryStart)) {
+            throw new DataSourceUnavailableException("higher-timeframe series " + timeframe.wire()
+                    + " starts at " + higherStart + ", after the primary range start "
+                    + primaryStart + "; early bars cannot be resolved");
+        }
+        if (higherEnd.isBefore(primaryEnd)) {
+            throw new DataSourceUnavailableException("higher-timeframe series " + timeframe.wire()
+                    + " ends at " + higherBars.getLast().time() + ", before the primary range end "
+                    + primaryEnd + "; late bars cannot be resolved");
+        }
     }
 
     private MarketDataSource marketDataSource(BacktestConfig config) {
