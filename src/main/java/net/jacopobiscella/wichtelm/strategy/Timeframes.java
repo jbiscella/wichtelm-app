@@ -2,6 +2,10 @@ package net.jacopobiscella.wichtelm.strategy;
 
 import org.hatrack.commons.Timeframe;
 
+import java.time.Instant;
+import java.time.ZoneOffset;
+import java.time.ZonedDateTime;
+
 /**
  * Ordering helper for {@link Timeframe} values. The commons {@code Timeframe}
  * record carries no comparison method, so rule P8 (higher-TF strictly above
@@ -31,5 +35,25 @@ public final class Timeframes {
     /** True when {@code candidate} represents a strictly longer timeframe than {@code primary}. */
     public static boolean isStrictlyHigher(Timeframe candidate, Timeframe primary) {
         return approximateSeconds(candidate) > approximateSeconds(primary);
+    }
+
+    /**
+     * Advances an open time by exactly one timeframe, using calendar-correct
+     * arithmetic at UTC. Month and year boundaries land on the true calendar
+     * boundary (not a nominal 30/365-day length), so a bar's close time is
+     * exact even for the final bar of a {@code 1M} or {@code 1Y} series.
+     */
+    public static Instant advance(Instant time, Timeframe tf) {
+        ZonedDateTime zoned = time.atZone(ZoneOffset.UTC);
+        ZonedDateTime advanced = switch (tf.unit()) {
+            case SECOND -> zoned.plusSeconds(tf.amount());
+            case MINUTE -> zoned.plusMinutes(tf.amount());
+            case HOUR -> zoned.plusHours(tf.amount());
+            case DAY -> zoned.plusDays(tf.amount());
+            case WEEK -> zoned.plusWeeks(tf.amount());
+            case MONTH -> zoned.plusMonths(tf.amount());
+            case YEAR -> zoned.plusYears(tf.amount());
+        };
+        return advanced.toInstant();
     }
 }
