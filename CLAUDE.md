@@ -376,14 +376,19 @@ The report begins with a header summarizing the backtest, followed by the 10 agg
 
 ### 7.3 Body section: per-Scenario boxes
 
-For each declared Scenario in the strategy, the report contains one "box" with:
+For each declared Scenario in the strategy, the report contains one "box". The box header carries the Scenario name and the total trigger count. The body is a sequence of **per-trigger blocks** — one block per recorded trigger time, in chronological order — each rendered inside a visually distinct container (light border, padding). A Scenario that produced zero triggers shows only its header; the body is empty.
+
+Each per-trigger block contains:
 
 | Element | Content |
 |---|---|
-| Scenario name (as written in the `.strat` file) | as box title |
-| Trigger count | number of bars at which the Scenario fired (signal was emitted, regardless of frau-holle accepting or ignoring it). Derived as the size of the recorded trigger-time list, so it is always consistent with the chart markers and sub-report rows below |
-| Chart visualization | one chart for the primary TF + one chart for each higher-TF referenced via Background, with one marker per trigger bar time for this Scenario |
-| Sub-report table | tabular view with one row per trigger bar time; the first column is the trigger timestamp, followed by one column per `When`/`And` step of the Scenario, marked when that sub-condition held at the trigger bar. Every step holds at a trigger by definition (that is what causes the Scenario to fire), so the per-step columns document which sub-conditions the Scenario is composed of. The chart markers and sub-report rows are populated from the same trigger-time list and therefore correspond bijectively |
+| Block header | the trigger ordinal and timestamp (e.g. `Trigger #1 — 2020-02-12T13:00:00Z`) |
+| Local primary-TF chart | bars inside the window `[trigger − max(P × 1.5, 30), trigger + 10]` where `P` is the largest indicator period referenced by the Scenario at the primary TF. The chart carries HA candles plus SMA / EMA overlays on the main pane (matching what `HtmlReportGenerator.toIndicator(...)` currently maps), with RSI rendered as a separate SVG sub-pane. Other indicator types in the v1 catalog (BollingerBands, ATR, MACD components, ADX, Stochastic) are reserved for future enhancements — when a Background series declares one of those, the indicator is silently skipped in the chart but its lookback still feeds the window sizing. The trigger bar itself is annotated via heerwisch `Annotation.BarHighlight` so the user can see which bar fired the Scenario |
+| Local higher-TF chart(s) | rendered once per **distinct higher timeframe** referenced by the Scenario (multiple Background series on the same higher TF — e.g. a 1d EMA and a 1d ATR — share a single 1d chart with both indicators added as overlays / sub-panes), with the same windowing rule applied at that timeframe (`max(P × 1.5, 30)` bars of that TF before the trigger plus 10 after) |
+| Sub-pane indicators | RSI sub-pane(s) below each chart whose timeframe declares an `rsi(...)` Background series. The RSI is computed on the full series for accurate values and clipped to the chart's window; the Y axis is pinned to 0–100 with grid ticks at 0/30/50/70/100, the strategy's `overbought` / `oversold` parameter values are drawn as dashed threshold lines (with pale danger-zone shading above / below), and a vertical reference line marks the trigger time so it lines up visually with the main chart above. Other sub-pane indicators (ATR, MACD, ADX, Stochastic) are reserved for future enhancements |
+| Sub-report mini-table | one row per block (always exactly one, since the block represents a single trigger): the trigger timestamp followed by one cell per `When`/`And` step of the Scenario, marked when that sub-condition held at the trigger bar. By construction every step holds at a trigger — that is what causes the Scenario to fire — so the cells document which sub-conditions the Scenario is composed of |
+
+The chart markers, sub-pane vertical references and sub-report rows are all populated from the same trigger-time list and therefore correspond bijectively: a box with `N` triggers carries `N` per-trigger blocks, `N × (1 + H)` charts where `H` is the number of **distinct higher timeframes** the Scenario references (so two 1d series share one 1d chart), and `N` sub-report rows total summed across the blocks.
 
 Boxes are sorted alphabetically by Scenario name. The 4 first-class condition types (`long_entry`, `long_exit`, `short_entry`, `short_exit`) appear in the order their Scenarios were declared in the source file, broken alphabetically within the same condition type if multiple Scenarios share it.
 

@@ -30,8 +30,9 @@ Feature: HTML report generation
     Then the report contains 4 scenario boxes
     And the scenario box order is "A", "B", "C", "D"
 
-  Scenario: A box for a Scenario referencing two timeframes contains two charts
+  Scenario: A trigger block for a Scenario referencing two timeframes contains charts for both timeframes
     Given a strategy with an entry Scenario referencing a 1d Background series on primary 1h
+    And the "Multi" Scenario has a recorded trigger at "2024-01-03T03:00:00Z"
     And the report output directory is a fresh temporary directory
     When the report is generated
     Then the box for that Scenario contains 2 charts
