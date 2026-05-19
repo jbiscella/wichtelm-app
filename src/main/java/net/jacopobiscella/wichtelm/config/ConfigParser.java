@@ -167,11 +167,28 @@ public final class ConfigParser {
         if (!toml.isString("csv.file")) {
             throw fail("csv.file", "C8", "data_source \"csv\" requires [csv].file");
         }
-        Path path = resolve(toml.getString("csv.file"));
-        if (!Files.isReadable(path)) {
+        String raw = toml.getString("csv.file");
+        Path path = resolve(raw);
+        if (containsPlaceholder(raw)) {
+            Path directory = path.getParent();
+            if (directory != null && containsPlaceholder(directory.toString())) {
+                throw fail("csv.file", "C8", "[csv].file placeholders must appear only in the "
+                        + "file name, not in a directory component: " + raw);
+            }
+            Path baseDirectory = directory != null
+                    ? directory : (configDir != null ? configDir : Path.of("."));
+            if (!Files.isDirectory(baseDirectory) || !Files.isReadable(baseDirectory)) {
+                throw fail("csv.file", "C8",
+                        "[csv].file base directory is not a readable directory: " + baseDirectory);
+            }
+        } else if (!Files.isReadable(path)) {
             throw fail("csv.file", "C8", "[csv].file is not a readable path: " + path);
         }
         return Optional.of(path);
+    }
+
+    private static boolean containsPlaceholder(String csvFile) {
+        return csvFile.contains("{symbol}") || csvFile.contains("{timeframe}");
     }
 
     private Optional<String> parseEodhdApiTokenEnv(DataSource dataSource) {

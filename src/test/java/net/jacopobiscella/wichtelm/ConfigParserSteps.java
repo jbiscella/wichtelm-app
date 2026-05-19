@@ -104,6 +104,41 @@ public class ConfigParserSteps {
         tomlContent = key + " = true\n" + requiredSections(true);
     }
 
+    private String csvConfig(String csvFilePath) {
+        return "strategy = \"" + strategyFile + "\"\n"
+                + "symbol = \"AAPL\"\ndata_source = \"csv\"\n\n"
+                + "[date_range]\nfrom = 2024-01-01\nto = 2024-12-31\n\n"
+                + "[sizing]\nposition_size_pct = 50\n\n"
+                + "[csv]\nfile = \"" + csvFilePath + "\"\n";
+    }
+
+    @Given("a TOML config with a csv literal file path that exists")
+    public void csvLiteralFilePathExists() throws IOException {
+        Path csv = tempDir.resolve("data.csv");
+        Files.writeString(csv, "time,open,high,low,close\n");
+        tomlContent = csvConfig(csv.toString());
+    }
+
+    @Given("a TOML config with a csv literal file path that does not exist")
+    public void csvLiteralFilePathMissing() {
+        tomlContent = csvConfig(tempDir.resolve("missing.csv").toString());
+    }
+
+    @Given("a TOML config with a csv placeholder pattern in an existing directory")
+    public void csvPlaceholderInExistingDirectory() {
+        tomlContent = csvConfig(tempDir.resolve("{symbol}_{timeframe}.csv").toString());
+    }
+
+    @Given("a TOML config with a csv placeholder pattern in a missing directory")
+    public void csvPlaceholderInMissingDirectory() {
+        tomlContent = csvConfig(tempDir.resolve("nope").resolve("{symbol}_{timeframe}.csv").toString());
+    }
+
+    @Given("a TOML config with a csv placeholder in a directory component")
+    public void csvPlaceholderInDirectoryComponent() {
+        tomlContent = csvConfig(tempDir.resolve("{symbol}").resolve("{timeframe}.csv").toString());
+    }
+
     @Given("a strategy declaring parameter {string}")
     public void aStrategyDeclaringParameter(String parameterName) {
         assertEquals("rsi_period", parameterName);

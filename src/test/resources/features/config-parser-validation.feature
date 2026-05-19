@@ -33,3 +33,31 @@ Feature: Config parser validation
     When the config parser reads the file
     Then no config exception is thrown
     And a warning is emitted referencing "experimental_flag"
+
+  Scenario: A csv literal file path that exists passes C8
+    Given a TOML config with a csv literal file path that exists
+    When the config parser reads the file
+    Then no config exception is thrown
+
+  Scenario: A csv literal file path that does not exist is rejected by C8
+    Given a TOML config with a csv literal file path that does not exist
+    When the config parser reads the file
+    Then ConfigParseException is thrown
+    And the config violatedRule is "C8"
+
+  Scenario: A csv placeholder pattern with a readable base directory passes C8
+    Given a TOML config with a csv placeholder pattern in an existing directory
+    When the config parser reads the file
+    Then no config exception is thrown
+
+  Scenario: A csv placeholder pattern with a missing base directory is rejected by C8
+    Given a TOML config with a csv placeholder pattern in a missing directory
+    When the config parser reads the file
+    Then ConfigParseException is thrown
+    And the config violatedRule is "C8"
+
+  Scenario: A csv pattern with a placeholder in a directory component is rejected by C8
+    Given a TOML config with a csv placeholder in a directory component
+    When the config parser reads the file
+    Then ConfigParseException is thrown
+    And the config violatedRule is "C8"
