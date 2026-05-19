@@ -31,7 +31,7 @@ published to Maven Central under the `net.jacopobiscella` namespace.
 - [CLI reference](#cli-reference)
 - [Writing a strategy — the `.strat` DSL](#writing-a-strategy--the-strat-dsl)
 - [The TOML config file](#the-toml-config-file)
-- [Global preferences](#global-preferences)
+- [Configuration precedence](#configuration-precedence)
 - [The HTML report](#the-html-report)
 - [Exit codes and errors](#exit-codes-and-errors)
 - [Worked example](#worked-example)
@@ -413,27 +413,19 @@ naming the variable.
 
 ---
 
-## Global preferences
+## Configuration precedence
 
-An optional global preferences file at
-`~/.config/wichtelm/config.toml` (XDG Base Directory standard) can supply
-defaults:
+The output directory is resolved in this order, highest first:
 
-```toml
-[defaults]
-output_dir  = "~/wichtelm-reports"
-data_source = "csv"
+1. The `--output-dir` CLI flag
+2. The per-backtest config's `[output].directory`
+3. The current working directory (`.`)
 
-[eodhd]
-api_token_env = "EODHD_API_TOKEN"
-```
-
-Precedence, highest first:
-
-1. CLI flags (`--output-dir`)
-2. Per-backtest config file values
-3. Global preferences
-4. Built-in defaults
+> **Note:** a global preferences file at `~/.config/wichtelm/config.toml`
+> (XDG Base Directory standard) is described in the specification but is **not
+> read by the CLI in v1** — every backtest takes its `data_source`, output
+> directory, and other settings from the per-backtest config file (and
+> CLI flags). Global preferences are reserved for a future release.
 
 ---
 
@@ -558,6 +550,8 @@ The following are **not** implemented in v1:
 - Trailing stops
 - Literal `[csv].file` paths without the `{symbol}` placeholder
 - Parallel execution of multiple backtests in one invocation
+- A global preferences file (`~/.config/wichtelm/config.toml`) — specified but
+  not yet read by the CLI
 
 These are reserved for future additive releases or a future major version.
 
