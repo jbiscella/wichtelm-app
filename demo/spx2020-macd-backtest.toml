@@ -1,0 +1,30 @@
+# MACD breakout demo on the synthetic SPX 2020 (COVID year) dataset.
+# Run from the repository root:
+#   wichtelm run demo/spx2020-macd-backtest.toml
+# Paths below are resolved relative to this config file (the demo/ directory).
+
+strategy    = "strategies/macd-breakout.strat"
+symbol      = "SPX2020"
+data_source = "csv"
+
+# Constrained to the most demonstrative window: pre-crash, COVID crash,
+# early recovery. MACD on 1h bars fires frequently even with the volume
+# and trend filters, so a 4-month window keeps the per-trigger blocks in
+# the report readable rather than rendering hundreds.
+[date_range]
+from = 2020-02-15
+to   = 2020-04-15
+
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+
+[parameters]
+vol_period    = 20
+stop_loss_pct = 4
+
+[output]
+directory = "reports"
+
+[csv]
+file = "data/{symbol}_{timeframe}.csv"
