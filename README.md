@@ -149,7 +149,7 @@ Usage:
 |---|---|
 | `wichtelm run <config-file>` | Runs a backtest using the strategy and parameters declared in the TOML config file, then writes an HTML report |
 | `wichtelm run <config-file> --no-report` | Runs the backtest but does not produce an HTML report |
-| `wichtelm run <config-file> --output-dir <path>` | Runs the backtest and writes the report to `<path>`, overriding the directory configured in the config or global preferences |
+| `wichtelm run <config-file> --output-dir <path>` | Runs the backtest and writes the report to `<path>`, overriding the `[output].directory` set in the config file |
 | `wichtelm validate <strat-file>` | Parses the strategy file and reports parse-time errors; does **not** run a backtest or load any data |
 | `wichtelm --version` | Prints the application version |
 | `wichtelm --help` | Prints CLI usage |
