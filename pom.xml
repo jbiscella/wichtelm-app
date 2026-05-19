@@ -11,6 +11,20 @@
 
   <name>wichtelm-app</name>
   <description>End-user backtesting application for trading strategies on single instruments.</description>
+  <inceptionYear>2026</inceptionYear>
+
+  <organization>
+    <name>Jacopo Biscella</name>
+  </organization>
+
+  <licenses>
+    <license>
+      <name>0BSD</name>
+      <url>https://opensource.org/license/0bsd</url>
+      <distribution>repo</distribution>
+      <comments>BSD Zero Clause License</comments>
+    </license>
+  </licenses>
 
   <properties>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -25,6 +39,7 @@
     <surefire.plugin.version>3.5.5</surefire.plugin.version>
     <shade.plugin.version>3.6.2</shade.plugin.version>
     <antrun.plugin.version>3.2.0</antrun.plugin.version>
+    <license.plugin.version>2.5.0</license.plugin.version>
   </properties>
 
   <dependencyManagement>
@@ -112,6 +127,46 @@
   <build>
     <finalName>wichtelm</finalName>
     <plugins>
+      <!-- Auto-generates the project LICENSE file and the THIRD-PARTY.txt
+           dependency-license report during the generate-resources phase, so
+           both are refreshed on every build. The 0BSD license is supplied via
+           the custom license repository under src/license. -->
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>license-maven-plugin</artifactId>
+        <version>${license.plugin.version}</version>
+        <configuration>
+          <licenseName>bsd_0</licenseName>
+          <licenseResolver>${project.baseUri}src/license</licenseResolver>
+          <licenseFile>${project.basedir}/LICENSE</licenseFile>
+          <inceptionYear>2026</inceptionYear>
+          <organizationName>Jacopo Biscella</organizationName>
+        </configuration>
+        <executions>
+          <execution>
+            <id>generate-project-license</id>
+            <phase>generate-resources</phase>
+            <goals>
+              <goal>update-project-license</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>generate-third-party-licenses</id>
+            <phase>generate-resources</phase>
+            <goals>
+              <goal>add-third-party</goal>
+            </goals>
+            <configuration>
+              <!-- THIRD-PARTY.txt is written to the repository root and
+                   reflects only the dependencies shipped in the JAR. -->
+              <outputDirectory>${project.basedir}</outputDirectory>
+              <thirdPartyFilename>THIRD-PARTY.txt</thirdPartyFilename>
+              <excludedScopes>test</excludedScopes>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-compiler-plugin</artifactId>
