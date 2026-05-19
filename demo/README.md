@@ -14,13 +14,16 @@ pipeline (build → parse → load CSV → backtest → render report).
 | `strategies/mean-reversion-trend.strat` | The demo strategy (5 scenarios, multi-timeframe, stop-loss) |
 | `data/DEMO_1h.csv` | Hourly OHLC bars — the primary timeframe (2880 bars, 120 days) |
 | `data/DEMO_1d.csv` | Daily OHLC bars — the higher timeframe used by the trend filter (120 bars) |
-| `data/SPX2020_1h.csv` | Hourly OHLCV bars, full calendar year 2020 — calibrated to the real S&P 500 COVID year (see below) |
-| `data/SPX2022_1h.csv` | Hourly OHLCV bars, full calendar year 2022 — calibrated to the real S&P 500 bear market (see below) |
-| `demo-backtest.toml` | The per-backtest config that ties strategy + data + date range together |
+| `data/SPX2020_1h.csv` / `data/SPX2020_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2020 — calibrated to the real S&P 500 COVID year (see below) |
+| `data/SPX2022_1h.csv` / `data/SPX2022_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2022 — calibrated to the real S&P 500 bear market (see below) |
+| `demo-backtest.toml` | The original per-backtest config (`DEMO` symbol, 120 days) |
+| `spx2020-backtest.toml` / `spx2022-backtest.toml` | Per-backtest configs that run the same strategy against the SPX 2020 / 2022 datasets |
 | `GenerateData.java` | Deterministic generator for the `DEMO` CSV files (single-file Java program) |
-| [`SyntheticDataGenerator`](../src/main/java/net/jacopobiscella/wichtelm/demo/SyntheticDataGenerator.java) | Regime-switching GBM + GARCH generator for the SPX 2020 / 2022 datasets |
-| `run_demo.sh` | One-shot end-to-end run (build, generate, validate, backtest) |
-| `reports/demo-backtest-report.html` | The committed HTML report produced by the run below |
+| [`SyntheticDataGenerator`](../src/main/java/net/jacopobiscella/wichtelm/demo/SyntheticDataGenerator.java) | Regime-switching GBM + GARCH generator for the SPX 2020 / 2022 hourly datasets |
+| [`DailyAggregator`](../src/main/java/net/jacopobiscella/wichtelm/demo/DailyAggregator.java) | Aggregates a 1h CSV into the matching 1d series (used to produce `SPX2020_1d.csv` / `SPX2022_1d.csv`) |
+| `run_demo.sh` | One-shot end-to-end run (build, generate, validate, backtest) for the `DEMO` example |
+| `reports/demo-backtest-report.html` | The committed HTML report for the `DEMO` backtest |
+| `reports/spx2020-backtest-report.html` / `reports/spx2022-backtest-report.html` | The committed HTML reports for the SPX 2020 / 2022 backtests |
 
 ## Running it
 
@@ -121,11 +124,45 @@ datasets, not real prices — they exist for demo backtests, not for any
 research that depends on the actual historical tape.
 
 The generator is deterministic in its seed, so re-running produces
-byte-identical CSVs. To regenerate:
+byte-identical CSVs. To regenerate the hourly files and derive the
+matching 1d series:
 
 ```sh
 mvn -q compile
 java -cp target/classes net.jacopobiscella.wichtelm.demo.SyntheticDataGenerator
+java -cp target/classes net.jacopobiscella.wichtelm.demo.DailyAggregator \
+    demo/data/SPX2020_1h.csv demo/data/SPX2020_1d.csv
+java -cp target/classes net.jacopobiscella.wichtelm.demo.DailyAggregator \
+    demo/data/SPX2022_1h.csv demo/data/SPX2022_1d.csv
 ```
 
-(Optional first arg is the output directory; defaults to `demo/data`.)
+## SPX backtest reports
+
+`spx2020-backtest.toml` and `spx2022-backtest.toml` run the same
+`mean-reversion-trend.strat` strategy (RSI mean reversion with a daily
+EMA trend filter) against the two SPX datasets. To produce a fresh
+timestamped report:
+
+```sh
+mvn -q clean package -DskipTests
+java -jar target/wichtelm.jar run demo/spx2020-backtest.toml
+java -jar target/wichtelm.jar run demo/spx2022-backtest.toml
+```
+
+The stable committed copies (`reports/spx2020-backtest-report.html`,
+`reports/spx2022-backtest-report.html`) show how the same strategy
+behaves under very different market regimes:
+
+| Metric | SPX 2020 (COVID year) | SPX 2022 (bear market) |
+|---|---:|---:|
+| Total return | −4.0% | +2.6% |
+| Trades | 17 | 20 |
+| Win rate | 52.9% | 70.0% |
+| Max drawdown | 7.5% | 3.8% |
+| Sharpe ratio | −0.84 | +0.66 |
+| Profit factor | 0.58 | 1.45 |
+
+A clean illustration of a mean-reversion strategy's preferences — it
+loses modestly in 2020's strong V-recovery (mean reversion is punished
+by sustained trends) and wins modestly in 2022's choppier bear market
+where the opposing-side reversions actually pay.
