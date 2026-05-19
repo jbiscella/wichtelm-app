@@ -14,8 +14,11 @@ pipeline (build → parse → load CSV → backtest → render report).
 | `strategies/mean-reversion-trend.strat` | The demo strategy (5 scenarios, multi-timeframe, stop-loss) |
 | `data/DEMO_1h.csv` | Hourly OHLC bars — the primary timeframe (2880 bars, 120 days) |
 | `data/DEMO_1d.csv` | Daily OHLC bars — the higher timeframe used by the trend filter (120 bars) |
+| `data/SPX2020_1h.csv` | Hourly OHLCV bars, full calendar year 2020 — calibrated to the real S&P 500 COVID year (see below) |
+| `data/SPX2022_1h.csv` | Hourly OHLCV bars, full calendar year 2022 — calibrated to the real S&P 500 bear market (see below) |
 | `demo-backtest.toml` | The per-backtest config that ties strategy + data + date range together |
-| `GenerateData.java` | Deterministic generator for the two CSV files (single-file Java program) |
+| `GenerateData.java` | Deterministic generator for the `DEMO` CSV files (single-file Java program) |
+| [`SyntheticDataGenerator`](../src/main/java/net/jacopobiscella/wichtelm/demo/SyntheticDataGenerator.java) | Regime-switching GBM + GARCH generator for the SPX 2020 / 2022 datasets |
 | `run_demo.sh` | One-shot end-to-end run (build, generate, validate, backtest) |
 | `reports/demo-backtest-report.html` | The committed HTML report produced by the run below |
 
@@ -85,3 +88,44 @@ trend regime (a rise then a fall, so the trend filter admits longs early and
 shorts late) plus three beating oscillations that drive the RSI across its
 thresholds with varying swing sizes. The 1d series is aggregated from the 1h
 series, so the two timeframes are always mutually consistent.
+
+## Realistic regime datasets (SPX 2020, SPX 2022)
+
+`data/SPX2020_1h.csv` and `data/SPX2022_1h.csv` feed the Block 7 demo
+backtests. Each is one full calendar year of hourly bars (24/7, no session
+gaps — macroscopic regimes still follow real calendar dates), produced by
+[`SyntheticDataGenerator`](../src/main/java/net/jacopobiscella/wichtelm/demo/SyntheticDataGenerator.java).
+
+The model is **regime-switching geometric Brownian motion** with
+**GARCH(1,1) volatility clustering** on the log returns:
+
+```
+sigma^2_t = omega * sigma_lr^2 + alpha * r_{t-1}^2 + beta * sigma^2_{t-1}
+r_t       = (mu - 0.5 * sigma^2_t) * dt + sigma_t * sqrt(dt) * Z_t,  Z_t ~ N(0,1)
+S_t       = S_{t-1} * exp(r_t)
+```
+
+Within each calendar window the annual drift `mu` and the long-run
+volatility are piecewise constant and calibrated to the shape of the real
+episode the regime represents:
+
+- **2020**: calm bull (Jan – Feb 19) → COVID crash (Feb 19 – Mar 23, ~-34%)
+  → V-recovery → autumn chop → vaccine rally.
+- **2022**: early decline → relief rally → bear leg → bear-market rally →
+  another leg lower → year-end relief.
+
+Macro statistics (drawdowns, regime volatilities, year-end levels) come in
+within a handful of percentage points of the real S&P 500 figures;
+individual bars are pure simulation. These are realistic-looking synthetic
+datasets, not real prices — they exist for demo backtests, not for any
+research that depends on the actual historical tape.
+
+The generator is deterministic in its seed, so re-running produces
+byte-identical CSVs. To regenerate:
+
+```sh
+mvn -q compile
+java -cp target/classes net.jacopobiscella.wichtelm.demo.SyntheticDataGenerator
+```
+
+(Optional first arg is the output directory; defaults to `demo/data`.)
