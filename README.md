@@ -222,19 +222,35 @@ primary timeframe.
 
 ### Built-in function / indicator catalog
 
+The DSL grammar defines the catalog below. **Not every entry is evaluable by
+the backtest runtime yet** — entries marked *runtime pending* parse and
+validate but raise a `DslEvaluationException` if a backtest actually reaches
+them. Stick to the runtime-supported entries for a strategy that runs
+end to end.
+
+**Runtime-supported today:**
+
 | Category | Available |
 |---|---|
-| Market variables | `open`, `high`, `low`, `close`, `volume`, `bar_time`, `bar_index` |
+| Market variables | `open`, `high`, `low`, `close`, `volume`, `bar_index` |
 | Base indicators | `sma(period)`, `ema(period)`, `rsi(period)`, `atr(period)`, `stddev(period)` |
+| Trade-context variables | `entry_price`, `position_size` (exit scenarios and `And with` clauses only) |
+
+**Parser-accepted but *runtime pending* (will fail during a backtest):**
+
+| Category | Names |
+|---|---|
+| Market variables | `bar_time` |
+| Trade-context variables | `entry_time` |
 | Composite | `macd(fast, slow, signal)` |
 | Window aggregates | `highest(<expr>, period)`, `lowest(<expr>, period)`, `avg_volume(period)` |
 | Heikin-Ashi primitives | `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)`, `ha_strong(...)`, `ha_doji(...)` |
 | Price / MA primitives | `price_above_ma(...)`, `price_crosses_ma(...)` |
 | RSI level primitives | `rsi_crosses_50()`, `rsi_overbought(threshold)`, `rsi_oversold(threshold)` |
 | MACD primitives | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
-| Trade-context variables | `entry_price`, `entry_time`, `position_size` (exit scenarios and `And with` clauses only) |
 
-The catalog is closed in v1.
+The catalog is closed in v1; the *runtime pending* entries are wired into the
+evaluator in subsequent increments.
 
 ### Stop-loss and take-profit
 
