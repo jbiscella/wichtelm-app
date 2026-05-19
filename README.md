@@ -85,12 +85,13 @@ cd wichtelm-app
 mvn clean package
 ```
 
-The `package` phase produces two artifacts in `target/`:
+The `package` phase produces these artifacts in `target/`:
 
 | Artifact | What it is |
 |---|---|
-| `target/wichtelm.jar` | A self-contained, executable "fat" JAR (all dependencies shaded in) |
-| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage`; the executable is `target/dist/wichtelm/bin/wichtelm` |
+| `target/wichtelm.jar` | The executable JAR. All permissively-licensed dependencies are shaded in; the LGPL JFreeChart library is **not** — see [License](#license) |
+| `target/lib/jfreechart.jar` | The LGPL JFreeChart library, loaded at runtime via the JAR's manifest `Class-Path`. Must stay next to `wichtelm.jar` (as `lib/jfreechart.jar`) when the JAR is copied or distributed |
+| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage` (bundles both JARs); the executable is `target/dist/wichtelm/bin/wichtelm` |
 
 You can run the tool either way:
 
@@ -657,5 +658,10 @@ and regulations in their jurisdiction.
 
 `wichtelm-app` is released under the **BSD Zero Clause License (0BSD)** — a
 permissive, public-domain-equivalent license. See the [`LICENSE`](LICENSE)
-file for the full text. A generated [`THIRD-PARTY.txt`](THIRD-PARTY.txt)
-lists the licenses of all bundled dependencies.
+file for the full text, and the generated
+[`THIRD-PARTY.txt`](THIRD-PARTY.txt) for the licenses of every dependency.
+
+One dependency, **JFreeChart**, is licensed under the LGPL 2.1. It is
+therefore *not* merged into the executable JAR: it ships as a separate
+`lib/jfreechart.jar` referenced from the JAR's manifest `Class-Path`, so it
+stays independently replaceable as the LGPL requires.
