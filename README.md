@@ -278,6 +278,11 @@ Feature: Mean Reversion with Trend Filter
     When rsi_value crosses above overbought
     Then long_exit
 
+  Scenario: Exit long on price floor
+    Given a long position is open
+    When close drops below entry_price * 0.95
+    Then long_exit
+
   Scenario: Enter short on overbought reversal
     Given no open position
     When rsi_value crosses above overbought
@@ -324,18 +329,20 @@ running a backtest.
 A per-backtest config file tells `wichtelm` which strategy to run, against
 which symbol and date range, and where the data comes from.
 
+> **TOML note:** every bare key must appear *before* the first `[table]`
+> header — otherwise TOML treats it as a key of that table. Keep `strategy`,
+> `symbol`, and `data_source` at the top of the file.
+
 ```toml
-# Required
-strategy = "strategies/mean-reversion.strat"
-symbol   = "AAPL"
+# Required — top-level keys, before any [table] header
+strategy    = "strategies/mean-reversion.strat"
+symbol      = "AAPL"
+data_source = "csv"            # one of "csv" or "eodhd"
 
 # Required: date range
 [date_range]
 from = 2024-01-01
 to   = 2024-12-31
-
-# Required: data source — one of "csv" or "eodhd"
-data_source = "csv"
 
 # Required: position sizing
 [sizing]
@@ -500,14 +507,13 @@ ConfigParseException [C8] at my-backtest.toml (csv.file) — [csv].file must con
 `backtests/aapl-2024.toml`:
 
 ```toml
-strategy = "strategies/mean-reversion.strat"
-symbol   = "AAPL"
+strategy    = "strategies/mean-reversion.strat"
+symbol      = "AAPL"
+data_source = "csv"
 
 [date_range]
 from = 2024-01-01
 to   = 2024-12-31
-
-data_source = "csv"
 
 [sizing]
 position_size_pct = 50
