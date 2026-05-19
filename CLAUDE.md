@@ -122,13 +122,15 @@ Expressions in Scenarios use the following syntax:
 |---|---|
 | Market variables (no parameters) | `open`, `high`, `low`, `close`, `volume`, `bar_time`, `bar_index` |
 | Base indicators (from `indicators` ha-track module) | `sma(period)`, `ema(period)`, `rsi(period)`, `atr(period)`, `stddev(period)` |
-| Composite indicators | `macd(fast, slow, signal)` (with field accessors `.macd_line`, `.signal_line`, `.histogram` — syntax TBD at parser implementation time) |
+| Composite indicators (decomposed — see note) | `macd_line(fast, slow, signal)`, `macd_signal(fast, slow, signal)`, `macd_histogram(fast, slow, signal)` |
 | Window aggregates | `highest(<expr>, period)`, `lowest(<expr>, period)`, `avg_volume(period)` |
 | HA primitives (from nachtkrapp) | `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)`, `ha_strong(...)`, `ha_doji(...)` |
 | Price/MA primitives (from nachtkrapp) | `price_above_ma(...)`, `price_crosses_ma(...)` |
 | RSI level primitives (from nachtkrapp) | `rsi_crosses_50()`, `rsi_overbought(threshold)`, `rsi_oversold(threshold)` |
 | MACD primitives (from nachtkrapp) | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
 | Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `entry_time`, `position_size` |
+
+Composite indicators are exposed as flat per-component functions in v1: there is no callable `macd` — its components are the three `macd_*` functions listed above, consistent with how every other indicator in the catalog is exposed flat. A field-accessor syntax (`macd(...).macd_line`) was considered and rejected: it would require a postfix-access layer in the expression parser plus indicator-specific parse-time validation, for no gain over flat functions. If field accessors are ever wanted, that is a general parser feature, not a MACD concern.
 
 The catalog is closed in v1. Adding new built-ins requires a v1.x additive release (japicmp-validated).
 
