@@ -124,7 +124,7 @@ public final class HtmlReportGenerator {
         html.append("<section class=\"scenario-box\" data-scenario=\"")
                 .append(esc(scenario.name())).append("\"><h3>").append(esc(scenario.name()))
                 .append("</h3><p class=\"trigger-count\">Trigger count: ")
-                .append(triggers.size()).append("</p>");
+                .append(data.triggerCounts().getOrDefault(scenario.name(), 0)).append("</p>");
 
         for (String timeframe : timeframesFor(data, scenario)) {
             OHLCSeries series = timeframe.equals(data.strategy().primaryTimeframe().wire())

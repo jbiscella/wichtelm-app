@@ -103,7 +103,8 @@ public final class BacktestRunner {
         }
 
         BacktestResult result = new Backtester().run(spec);
-        return new BacktestRunResult(result, primarySeries, higherTimeframeBars);
+        return new BacktestRunResult(result, primarySeries, higherTimeframeBars,
+                generator.triggerCounts());
     }
 
     /**

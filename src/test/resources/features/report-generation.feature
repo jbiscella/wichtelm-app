@@ -30,3 +30,10 @@ Feature: HTML report generation
     When the report is generated
     Then the box for that Scenario contains 2 charts
     And the chart timeframes of that box are "1h" and "1d"
+
+  Scenario: A Scenario that fires three times shows its trigger count in the report box
+    Given a pyramiding strategy whose entry Scenario always fires
+    And a CSV dataset of 3 primary bars
+    And the report output directory is a fresh temporary directory
+    When a backtest is run and its report is generated
+    Then the box for "Always enter" shows "Trigger count: 3"

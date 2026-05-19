@@ -3,12 +3,17 @@ package net.jacopobiscella.wichtelm;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
+import net.jacopobiscella.wichtelm.config.BacktestConfig;
+import net.jacopobiscella.wichtelm.config.DataSource;
 import net.jacopobiscella.wichtelm.report.HtmlReportGenerator;
 import net.jacopobiscella.wichtelm.report.ReportData;
+import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
+import net.jacopobiscella.wichtelm.runtime.BacktestRunner;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParser;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
+import org.hatrack.frauholle.error.BacktestException;
 import org.hatrack.frauholle.model.EquityPoint;
 import org.hatrack.frauholle.result.BacktestDiagnostics;
 import org.hatrack.frauholle.result.BacktestMetrics;
@@ -20,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -57,6 +63,8 @@ public class ReportGenerationSteps {
     private BacktestResult result;
     private Path reportPath;
     private String reportHtml;
+    private Path dataDir;
+    private Map<String, Integer> triggerCounts = Map.of();
 
     private static OHLCSeries series(Instant start, Duration step, int count) {
         List<OHLCBar> bars = new ArrayList<>();
@@ -91,7 +99,7 @@ public class ReportGenerationSteps {
 
     private ReportData reportData() {
         return new ReportData(configBasename, generatedAt, outputDirectory, strategy,
-                backtestResult(), primarySeries(), higherSeries, Map.of());
+                backtestResult(), primarySeries(), higherSeries, Map.of(), triggerCounts);
     }
 
     @Given("a report for config basename {string} generated at {string}")
@@ -189,6 +197,57 @@ public class ReportGenerationSteps {
     @Then("the chart timeframes of that box are {string} and {string}")
     public void theChartTimeframesOfThatBoxAre(String first, String second) {
         assertEquals(List.of(first, second), dataAttributeValues(focusBox(), "data-timeframe"));
+    }
+
+    @Given("a pyramiding strategy whose entry Scenario always fires")
+    public void aPyramidingAlwaysEnterStrategy() {
+        strategy = StrategyParser.parse("""
+                Feature: Trigger count strategy
+                  Primary timeframe: 1h
+
+                  Scenario: Always enter
+                    Given no open position
+                    When close is above 0
+                    Then long_entry
+                """, "trigger-count.strat");
+    }
+
+    @Given("a CSV dataset of 3 primary bars")
+    public void aCsvDatasetOfThreeBars() throws IOException {
+        dataDir = Files.createTempDirectory("wichtelm-block5-data");
+        StringBuilder csv = new StringBuilder("time,open,high,low,close\n");
+        Instant start = Instant.parse("2024-01-01T00:00:00Z");
+        for (int i = 0; i < 3; i++) {
+            csv.append(start.plus(Duration.ofHours(i))).append(",100,102,98,100\n");
+        }
+        Files.writeString(dataDir.resolve("AAPL_1h.csv"), csv);
+    }
+
+    @When("a backtest is run and its report is generated")
+    public void aBacktestIsRunAndItsReportIsGenerated() throws BacktestException, IOException {
+        BacktestConfig config = new BacktestConfig(
+                dataDir.resolve("config.toml"), dataDir.resolve("strategy.strat"), "AAPL",
+                LocalDate.parse("2024-01-01"), LocalDate.parse("2024-01-02"),
+                DataSource.CSV, BigDecimal.valueOf(50), true, Map.of(), Optional.empty(),
+                Optional.of(dataDir.resolve("{symbol}_{timeframe}.csv")), Optional.empty(), List.of());
+        BacktestRunResult run = new BacktestRunner().run(strategy, config, Map.of());
+        triggerCounts = run.triggerCounts();
+        result = run.result();
+        ReportData data = new ReportData(configBasename, generatedAt, outputDirectory, strategy,
+                run.result(), new OHLCSeries(run.primarySeries()), Map.of(), Map.of(), triggerCounts);
+        reportPath = new HtmlReportGenerator().generate(data);
+        reportHtml = Files.readString(reportPath);
+    }
+
+    @Then("the box for {string} shows {string}")
+    public void theBoxForScenarioShows(String scenarioName, String expectedText) {
+        String marker = "data-scenario=\"" + scenarioName + "\"";
+        int start = reportHtml.indexOf(marker);
+        assertTrue(start >= 0, () -> "no box for scenario " + scenarioName);
+        int end = reportHtml.indexOf("</section>", start);
+        String box = reportHtml.substring(start, end < 0 ? reportHtml.length() : end);
+        assertTrue(box.contains(expectedText),
+                () -> "box for " + scenarioName + " did not contain '" + expectedText + "': " + box);
     }
 
     private String focusBox() {

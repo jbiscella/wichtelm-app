@@ -62,6 +62,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private final Map<String, BackgroundSeries> seriesByName = new LinkedHashMap<>();
     private final Map<String, List<OHLCBar>> higherTimeframeBars = new HashMap<>();
     private final Map<String, HigherTimeframeSeries> higherResolvers = new HashMap<>();
+    private final Map<String, Integer> triggerCounts = new LinkedHashMap<>();
 
     /** Generator for a strategy without higher-timeframe Background series. */
     public WichtelmSignalGenerator(ParsedStrategy strategy, Map<String, BigDecimal> parameters,
@@ -121,6 +122,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         for (StrategyScenario scenario : strategy.scenarios()) {
             if (scenario.precondition() == exitPrecondition
                     && conjunctionHolds(scenario, evaluator, current, previous)) {
+                recordTrigger(scenario);
                 return new Signal.ClosePosition();
             }
         }
@@ -133,6 +135,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 if (scenario.precondition() == PositionPrecondition.NO_OPEN_POSITION
                         && scenario.terminalCondition() == sameDirectionEntry
                         && conjunctionHolds(scenario, evaluator, current, previous)) {
+                    recordTrigger(scenario);
                     return new Signal.AddToPosition(quantity(context), position.direction());
                 }
             }
@@ -148,6 +151,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 continue;
             }
             if (conjunctionHolds(scenario, evaluator, current, previous)) {
+                recordTrigger(scenario);
                 BigDecimal quantity = quantity(context);
                 return scenario.terminalCondition() == FirstClassCondition.LONG_ENTRY
                         ? new Signal.Buy(quantity)
@@ -155,6 +159,15 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
             }
         }
         return new Signal.Hold();
+    }
+
+    /** Trigger count per Scenario name, accumulated across the backtest (CLAUDE.md section 7.3). */
+    public Map<String, Integer> triggerCounts() {
+        return Map.copyOf(triggerCounts);
+    }
+
+    private void recordTrigger(StrategyScenario scenario) {
+        triggerCounts.merge(scenario.name(), 1, Integer::sum);
     }
 
     /** Snapshotted stop_loss price for an open position, if its entry Scenario declared one. */
