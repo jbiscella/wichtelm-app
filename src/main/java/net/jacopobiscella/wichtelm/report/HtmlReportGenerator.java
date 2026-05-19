@@ -33,6 +33,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -178,15 +179,19 @@ public final class HtmlReportGenerator {
                                List<Instant> markers, String timeframeLabel) {
         try {
             var builder = ChartSpec.builder().withSeries(series).withLayout(LayoutSpec.defaults());
-            Map<Instant, BigDecimal> closeByTime = new HashMap<>();
+            TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
             for (OHLCBar bar : series.bars()) {
                 closeByTime.put(bar.time(), bar.close());
             }
             int placed = 0;
             for (Instant marker : markers) {
-                BigDecimal price = closeByTime.get(marker);
-                if (price != null) {
-                    builder.addAnnotation(new Annotation.BarHighlight(marker, price, "trigger"));
+                // A trigger time is a primary-TF instant. On a higher-TF chart
+                // it falls inside a wider bar, so the marker is placed on the
+                // bar that was open at the trigger (greatest bar time <= marker).
+                Map.Entry<Instant, BigDecimal> bar = closeByTime.floorEntry(marker);
+                if (bar != null) {
+                    builder.addAnnotation(
+                            new Annotation.BarHighlight(bar.getKey(), bar.getValue(), "trigger"));
                     placed++;
                 }
             }

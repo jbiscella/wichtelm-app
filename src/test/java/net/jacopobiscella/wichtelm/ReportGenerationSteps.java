@@ -143,6 +143,11 @@ public class ReportGenerationSteps {
                 Duration.ofDays(1), 6));
     }
 
+    @Given("the {string} Scenario has a recorded trigger at {string}")
+    public void theScenarioHasARecordedTriggerAt(String scenarioName, String triggerIso) {
+        triggerTimes = Map.of(scenarioName, List.of(Instant.parse(triggerIso)));
+    }
+
     @When("the report is generated")
     public void theReportIsGenerated() throws IOException {
         reportPath = new HtmlReportGenerator().generate(reportData());
