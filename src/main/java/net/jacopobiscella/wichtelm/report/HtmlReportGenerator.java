@@ -4,6 +4,7 @@ import net.jacopobiscella.wichtelm.error.ReportGenerationException;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
+import net.jacopobiscella.wichtelm.strategy.Timeframes;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.commons.PriceSource;
@@ -202,7 +203,7 @@ public final class HtmlReportGenerator {
         List<StrategyStep> steps = scenario.conditionSteps();
         for (int n = 0; n < triggers.size(); n++) {
             Instant trigger = triggers.get(n);
-            appendTriggerBlock(html, data, renderer, trigger, n + 1, timeframes, steps);
+            appendTriggerBlock(html, data, renderer, scenario, trigger, n + 1, timeframes, steps);
         }
 
         html.append("</section>");
@@ -215,25 +216,31 @@ public final class HtmlReportGenerator {
      * at that bar. CLAUDE.md section 7.3 describes the layout.
      */
     private void appendTriggerBlock(StringBuilder html, ReportData data, ChartRenderer renderer,
-                                     Instant trigger, int ordinal, List<String> timeframes,
-                                     List<StrategyStep> steps) {
+                                     StrategyScenario scenario, Instant trigger, int ordinal,
+                                     List<String> timeframes, List<StrategyStep> steps) {
         html.append("<div class=\"trigger-block\" data-trigger=\"")
                 .append(esc(trigger.toString())).append("\">")
                 .append("<h4>Trigger #").append(ordinal).append(" — ")
                 .append(esc(trigger.toString())).append("</h4>");
 
+        String primaryTfWire = data.strategy().primaryTimeframe().wire();
         for (String timeframe : timeframes) {
-            OHLCSeries fullSeries = timeframe.equals(data.strategy().primaryTimeframe().wire())
+            boolean isPrimary = timeframe.equals(primaryTfWire);
+            OHLCSeries fullSeries = isPrimary
                     ? data.primarySeries()
                     : data.higherTimeframeSeries().get(timeframe);
             if (fullSeries == null) {
                 throw new ReportGenerationException(
                         "no series supplied for timeframe " + timeframe);
             }
-            int periodOnTf = maxIndicatorPeriodForTimeframe(timeframe, data);
+            int periodOnTf = maxIndicatorPeriodForTimeframe(scenario, timeframe, data);
             int before = Math.max(30, (int) Math.ceil(periodOnTf * 1.5));
             int after = 10;
-            OHLCSeries window = sliceAround(fullSeries, trigger, before, after);
+            Timeframe tf = isPrimary
+                    ? data.strategy().primaryTimeframe()
+                    : Timeframe.fromWire(timeframe);
+            OHLCSeries window = sliceAround(fullSeries, trigger, tf, isPrimary,
+                    before, after);
             if (window.bars().isEmpty()) {
                 continue;
             }
@@ -256,11 +263,37 @@ public final class HtmlReportGenerator {
         html.append("</tr></tbody></table></div>");
     }
 
-    /** Largest indicator period among Background series on the given timeframe. */
-    private int maxIndicatorPeriodForTimeframe(String timeframe, ReportData data) {
+    /**
+     * Largest indicator period among the Background series **referenced by
+     * the given Scenario** on the given timeframe. The scope-by-scenario rule
+     * matters when other Scenarios in the same strategy reference long-period
+     * indicators on the same timeframe: those should not inflate this
+     * Scenario's window.
+     */
+    private int maxIndicatorPeriodForTimeframe(StrategyScenario scenario, String timeframe,
+                                               ReportData data) {
+        String primaryTf = data.strategy().primaryTimeframe().wire();
+        Map<String, BackgroundSeries> seriesByName = new HashMap<>();
+        for (BackgroundSeries bg : data.strategy().backgroundSeries()) {
+            seriesByName.put(bg.name(), bg);
+        }
+        Set<String> referenced = new LinkedHashSet<>();
+        for (StrategyStep step : scenario.conditionSteps()) {
+            Matcher matcher = IDENTIFIER.matcher(step.text());
+            while (matcher.find()) {
+                BackgroundSeries bg = seriesByName.get(matcher.group());
+                if (bg == null) {
+                    continue;
+                }
+                String seriesTf = bg.timeframe().map(Timeframe::wire).orElse(primaryTf);
+                if (seriesTf.equals(timeframe)) {
+                    referenced.add(bg.name());
+                }
+            }
+        }
         int max = 0;
-        for (BackgroundSeries bg : seriesForTimeframe(timeframe, data)) {
-            Indicator ind = toIndicator(bg.expression(), data.parameters());
+        for (String name : referenced) {
+            Indicator ind = toIndicator(seriesByName.get(name).expression(), data.parameters());
             if (ind == null) {
                 continue;
             }
@@ -280,16 +313,42 @@ public final class HtmlReportGenerator {
         return max;
     }
 
-    /** Sub-series of {@code full} centred on the bar at or just before {@code triggerTime}. */
-    private OHLCSeries sliceAround(OHLCSeries full, Instant triggerTime,
-                                    int beforeBars, int afterBars) {
+    /**
+     * Sub-series of {@code full} centred on the bar visible to the runtime at
+     * {@code triggerTime}.
+     *
+     * <p>For the primary timeframe the trigger time IS the open time of the
+     * bar that fired the signal, so that bar (the latest with
+     * {@code time <= triggerTime}) is the anchor.
+     *
+     * <p>For higher timeframes the runtime resolves to the most recently
+     * CLOSED bar with {@code closeTime <= triggerTime} (CLAUDE.md section
+     * 3.5). The chart anchors on the same bar so the local window mirrors
+     * exactly what the strategy could see — the currently-open higher-TF bar
+     * containing the trigger is treated as future data and skipped.
+     */
+    private OHLCSeries sliceAround(OHLCSeries full, Instant triggerTime, Timeframe tf,
+                                    boolean isPrimary, int beforeBars, int afterBars) {
         List<OHLCBar> bars = full.bars();
         int idx = -1;
-        for (int i = 0; i < bars.size(); i++) {
-            if (!bars.get(i).time().isAfter(triggerTime)) {
-                idx = i;
-            } else {
-                break;
+        if (isPrimary) {
+            for (int i = 0; i < bars.size(); i++) {
+                if (!bars.get(i).time().isAfter(triggerTime)) {
+                    idx = i;
+                } else {
+                    break;
+                }
+            }
+        } else {
+            for (int i = 0; i < bars.size(); i++) {
+                Instant closeTime = i + 1 < bars.size()
+                        ? bars.get(i + 1).time()
+                        : Timeframes.advance(bars.get(i).time(), tf);
+                if (!closeTime.isAfter(triggerTime)) {
+                    idx = i;
+                } else {
+                    break;
+                }
             }
         }
         if (idx < 0) {
