@@ -3,12 +3,17 @@ package net.jacopobiscella.wichtelm;
 import io.cucumber.java.en.Given;
 import io.cucumber.java.en.Then;
 import io.cucumber.java.en.When;
+import net.jacopobiscella.wichtelm.config.BacktestConfig;
+import net.jacopobiscella.wichtelm.config.DataSource;
 import net.jacopobiscella.wichtelm.report.HtmlReportGenerator;
 import net.jacopobiscella.wichtelm.report.ReportData;
+import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
+import net.jacopobiscella.wichtelm.runtime.BacktestRunner;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParser;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
+import org.hatrack.frauholle.error.BacktestException;
 import org.hatrack.frauholle.model.EquityPoint;
 import org.hatrack.frauholle.result.BacktestDiagnostics;
 import org.hatrack.frauholle.result.BacktestMetrics;
@@ -20,6 +25,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -57,6 +63,8 @@ public class ReportGenerationSteps {
     private BacktestResult result;
     private Path reportPath;
     private String reportHtml;
+    private Path dataDir;
+    private Map<String, List<Instant>> triggerTimes = Map.of();
 
     private static OHLCSeries series(Instant start, Duration step, int count) {
         List<OHLCBar> bars = new ArrayList<>();
@@ -91,7 +99,7 @@ public class ReportGenerationSteps {
 
     private ReportData reportData() {
         return new ReportData(configBasename, generatedAt, outputDirectory, strategy,
-                backtestResult(), primarySeries(), higherSeries, Map.of());
+                backtestResult(), primarySeries(), higherSeries, triggerTimes);
     }
 
     @Given("a report for config basename {string} generated at {string}")
@@ -133,6 +141,11 @@ public class ReportGenerationSteps {
         focusScenario = "Multi";
         higherSeries.put("1d", series(Instant.parse("2024-01-01T00:00:00Z"),
                 Duration.ofDays(1), 6));
+    }
+
+    @Given("the {string} Scenario has a recorded trigger at {string}")
+    public void theScenarioHasARecordedTriggerAt(String scenarioName, String triggerIso) {
+        triggerTimes = Map.of(scenarioName, List.of(Instant.parse(triggerIso)));
     }
 
     @When("the report is generated")
@@ -189,6 +202,104 @@ public class ReportGenerationSteps {
     @Then("the chart timeframes of that box are {string} and {string}")
     public void theChartTimeframesOfThatBoxAre(String first, String second) {
         assertEquals(List.of(first, second), dataAttributeValues(focusBox(), "data-timeframe"));
+    }
+
+    @Given("a pyramiding strategy whose entry Scenario always fires")
+    public void aPyramidingAlwaysEnterStrategy() {
+        strategy = StrategyParser.parse("""
+                Feature: Trigger count strategy
+                  Primary timeframe: 1h
+
+                  Scenario: Always enter
+                    Given no open position
+                    When close is above 0
+                    Then long_entry
+                """, "trigger-count.strat");
+    }
+
+    @Given("a CSV dataset of 3 primary bars")
+    public void aCsvDatasetOfThreeBars() throws IOException {
+        dataDir = Files.createTempDirectory("wichtelm-block5-data");
+        StringBuilder csv = new StringBuilder("time,open,high,low,close\n");
+        Instant start = Instant.parse("2024-01-01T00:00:00Z");
+        for (int i = 0; i < 3; i++) {
+            csv.append(start.plus(Duration.ofHours(i))).append(",100,102,98,100\n");
+        }
+        Files.writeString(dataDir.resolve("AAPL_1h.csv"), csv);
+    }
+
+    @When("a backtest is run and its report is generated")
+    public void aBacktestIsRunAndItsReportIsGenerated() throws BacktestException, IOException {
+        BacktestConfig config = new BacktestConfig(
+                dataDir.resolve("config.toml"), dataDir.resolve("strategy.strat"), "AAPL",
+                LocalDate.parse("2024-01-01"), LocalDate.parse("2024-01-02"),
+                DataSource.CSV, BigDecimal.valueOf(50), true, Map.of(), Optional.empty(),
+                Optional.of(dataDir.resolve("{symbol}_{timeframe}.csv")), Optional.empty(), List.of());
+        BacktestRunResult run = new BacktestRunner().run(strategy, config, Map.of());
+        triggerTimes = run.triggerTimes();
+        result = run.result();
+        ReportData data = new ReportData(configBasename, generatedAt, outputDirectory, strategy,
+                run.result(), new OHLCSeries(run.primarySeries()), Map.of(), triggerTimes);
+        reportPath = new HtmlReportGenerator().generate(data);
+        reportHtml = Files.readString(reportPath);
+    }
+
+    @Then("the box for {string} shows {string}")
+    public void theBoxForScenarioShows(String scenarioName, String expectedText) {
+        String box = boxFor(scenarioName);
+        assertTrue(box.contains(expectedText),
+                () -> "box for " + scenarioName + " did not contain '" + expectedText + "': " + box);
+    }
+
+    @Then("the box for {string} has {int} chart markers")
+    public void theBoxForScenarioHasChartMarkers(String scenarioName, int expected) {
+        assertEquals(expected, markerCount(boxFor(scenarioName)),
+                () -> "unexpected chart marker count in box for " + scenarioName);
+    }
+
+    @Then("the box for {string} has {int} sub-report rows")
+    public void theBoxForScenarioHasSubReportRows(String scenarioName, int expected) {
+        assertEquals(expected, subReportRowCount(boxFor(scenarioName)),
+                () -> "unexpected sub-report row count in box for " + scenarioName);
+    }
+
+    @Then("the chart markers and sub-report rows of the {string} box correspond to the same trigger count")
+    public void theMarkersAndRowsCorrespond(String scenarioName) {
+        String box = boxFor(scenarioName);
+        int markers = markerCount(box);
+        int rows = subReportRowCount(box);
+        assertEquals(markers, rows,
+                () -> "chart markers (" + markers + ") and sub-report rows (" + rows
+                        + ") disagree for box " + scenarioName);
+        assertTrue(box.contains("Trigger count: " + markers),
+                () -> "trigger count does not match the " + markers + " markers/rows in box "
+                        + scenarioName);
+    }
+
+    private String boxFor(String scenarioName) {
+        String marker = "data-scenario=\"" + scenarioName + "\"";
+        int start = reportHtml.indexOf(marker);
+        assertTrue(start >= 0, () -> "no box for scenario " + scenarioName);
+        int end = reportHtml.indexOf("</section>", start);
+        return reportHtml.substring(start, end < 0 ? reportHtml.length() : end);
+    }
+
+    private static int markerCount(String box) {
+        int total = 0;
+        Matcher matcher = Pattern.compile("data-markers=\"(\\d+)\"").matcher(box);
+        while (matcher.find()) {
+            total += Integer.parseInt(matcher.group(1));
+        }
+        return total;
+    }
+
+    private static int subReportRowCount(String box) {
+        int bodyStart = box.indexOf("<tbody>");
+        int bodyEnd = box.indexOf("</tbody>", bodyStart);
+        if (bodyStart < 0 || bodyEnd < 0) {
+            return 0;
+        }
+        return countMatches(box.substring(bodyStart, bodyEnd), "<tr>");
     }
 
     private String focusBox() {

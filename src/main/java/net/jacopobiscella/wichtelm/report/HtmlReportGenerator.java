@@ -33,6 +33,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -137,9 +138,19 @@ public final class HtmlReportGenerator {
             html.append(renderChart(renderer, series, triggers, timeframe));
         }
 
-        html.append("<table class=\"sub-report\"><thead><tr><th>Trigger time</th></tr></thead><tbody>");
+        List<StrategyStep> steps = scenario.conditionSteps();
+        html.append("<table class=\"sub-report\"><thead><tr><th>Trigger time</th>");
+        for (StrategyStep step : steps) {
+            html.append("<th>").append(esc(step.text())).append("</th>");
+        }
+        html.append("</tr></thead><tbody>");
         for (Instant trigger : triggers) {
-            html.append("<tr><td>").append(esc(trigger.toString())).append("</td></tr>");
+            html.append("<tr><td>").append(esc(trigger.toString())).append("</td>");
+            // Every When/And step held at a trigger bar — that is what a trigger is.
+            for (int i = 0; i < steps.size(); i++) {
+                html.append("<td class=\"sub-condition-held\">✓</td>");
+            }
+            html.append("</tr>");
         }
         html.append("</tbody></table></section>");
     }
@@ -168,19 +179,26 @@ public final class HtmlReportGenerator {
                                List<Instant> markers, String timeframeLabel) {
         try {
             var builder = ChartSpec.builder().withSeries(series).withLayout(LayoutSpec.defaults());
-            Map<Instant, BigDecimal> closeByTime = new HashMap<>();
+            TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
             for (OHLCBar bar : series.bars()) {
                 closeByTime.put(bar.time(), bar.close());
             }
+            int placed = 0;
             for (Instant marker : markers) {
-                BigDecimal price = closeByTime.get(marker);
-                if (price != null) {
-                    builder.addAnnotation(new Annotation.BarHighlight(marker, price, "trigger"));
+                // A trigger time is a primary-TF instant. On a higher-TF chart
+                // it falls inside a wider bar, so the marker is placed on the
+                // bar that was open at the trigger (greatest bar time <= marker).
+                Map.Entry<Instant, BigDecimal> bar = closeByTime.floorEntry(marker);
+                if (bar != null) {
+                    builder.addAnnotation(
+                            new Annotation.BarHighlight(bar.getKey(), bar.getValue(), "trigger"));
+                    placed++;
                 }
             }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
-            return "<figure class=\"chart\" data-timeframe=\"" + esc(timeframeLabel) + "\">"
+            return "<figure class=\"chart\" data-timeframe=\"" + esc(timeframeLabel)
+                    + "\" data-markers=\"" + placed + "\">"
                     + "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
                     + esc(image.contentType()) + ";base64," + base64 + "\"/>"
                     + "<figcaption>" + esc(timeframeLabel) + "</figcaption></figure>";

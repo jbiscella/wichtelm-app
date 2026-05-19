@@ -30,3 +30,26 @@ Feature: HTML report generation
     When the report is generated
     Then the box for that Scenario contains 2 charts
     And the chart timeframes of that box are "1h" and "1d"
+
+  Scenario: A trigger marker lands on both the primary and the higher-timeframe chart
+    Given a strategy with an entry Scenario referencing a 1d Background series on primary 1h
+    And the "Multi" Scenario has a recorded trigger at "2024-01-03T03:00:00Z"
+    And the report output directory is a fresh temporary directory
+    When the report is generated
+    Then the box for "Multi" has 2 chart markers
+
+  Scenario: A Scenario that fires three times shows its trigger count in the report box
+    Given a pyramiding strategy whose entry Scenario always fires
+    And a CSV dataset of 3 primary bars
+    And the report output directory is a fresh temporary directory
+    When a backtest is run and its report is generated
+    Then the box for "Always enter" shows "Trigger count: 3"
+
+  Scenario: A Scenario box renders one chart marker and one sub-report row per trigger
+    Given a pyramiding strategy whose entry Scenario always fires
+    And a CSV dataset of 3 primary bars
+    And the report output directory is a fresh temporary directory
+    When a backtest is run and its report is generated
+    Then the box for "Always enter" has 3 chart markers
+    And the box for "Always enter" has 3 sub-report rows
+    And the chart markers and sub-report rows of the "Always enter" box correspond to the same trigger count

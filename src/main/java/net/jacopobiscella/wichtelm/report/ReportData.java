@@ -21,7 +21,8 @@ import java.util.Objects;
  * @param result               the frau-holle backtest result
  * @param primarySeries        OHLC bars for the primary timeframe
  * @param higherTimeframeSeries OHLC bars per higher timeframe, keyed by timeframe wire (e.g. "1d")
- * @param triggersByScenario   trigger bar times per Scenario name
+ * @param triggersByScenario   trigger bar times per Scenario name; drives the trigger
+ *                             count, chart markers and sub-report rows of each box
  */
 public record ReportData(String configBasename,
                          LocalDateTime generatedAt,
@@ -40,6 +41,8 @@ public record ReportData(String configBasename,
         Objects.requireNonNull(result, "result");
         Objects.requireNonNull(primarySeries, "primarySeries");
         higherTimeframeSeries = Map.copyOf(higherTimeframeSeries);
-        triggersByScenario = Map.copyOf(triggersByScenario);
+        Map<String, List<Instant>> triggers = new java.util.LinkedHashMap<>();
+        triggersByScenario.forEach((name, times) -> triggers.put(name, List.copyOf(times)));
+        triggersByScenario = Map.copyOf(triggers);
     }
 }

@@ -226,6 +226,7 @@ Each rule below MUST be enforced at parse time. On violation, the parser throws 
 | P19 | A Scenario starting with `Given a long position is open` MUST terminate with `Then long_exit` (semantic consistency) |
 | P20 | A Scenario starting with `Given a short position is open` MUST terminate with `Then short_exit` (semantic consistency) |
 | P21 | Static numeric range checks: where parameters are passed to functions with known valid ranges (e.g. RSI threshold in (0, 100), period > 0), violations produce a parse error |
+| P22 | Scenario names (the text after `Scenario:` in each block) MUST be unique within a strategy. Two Scenarios with the same name in the same `.strat` file produce a parse error. This is symmetric to P4 (unique Parameter names) and P7 (unique Background series names) |
 
 ## 5. Config file — TOML grammar
 
@@ -376,9 +377,9 @@ For each declared Scenario in the strategy, the report contains one "box" with:
 | Element | Content |
 |---|---|
 | Scenario name (as written in the `.strat` file) | as box title |
-| Trigger count | number of bars at which the Scenario fired (signal was emitted, regardless of frau-holle accepting or ignoring it) |
-| Chart visualization | one chart for the primary TF + one chart for each higher-TF referenced via Background, with markers at all trigger bar times for this Scenario |
-| Sub-report table | tabular view with one row per trigger; columns include timestamp and the values of every sub-condition (When/And steps) at the trigger time |
+| Trigger count | number of bars at which the Scenario fired (signal was emitted, regardless of frau-holle accepting or ignoring it). Derived as the size of the recorded trigger-time list, so it is always consistent with the chart markers and sub-report rows below |
+| Chart visualization | one chart for the primary TF + one chart for each higher-TF referenced via Background, with one marker per trigger bar time for this Scenario |
+| Sub-report table | tabular view with one row per trigger bar time; the first column is the trigger timestamp, followed by one column per `When`/`And` step of the Scenario, marked when that sub-condition held at the trigger bar. Every step holds at a trigger by definition (that is what causes the Scenario to fire), so the per-step columns document which sub-conditions the Scenario is composed of. The chart markers and sub-report rows are populated from the same trigger-time list and therefore correspond bijectively |
 
 Boxes are sorted alphabetically by Scenario name. The 4 first-class condition types (`long_entry`, `long_exit`, `short_entry`, `short_exit`) appear in the order their Scenarios were declared in the source file, broken alphabetically within the same condition type if multiple Scenarios share it.
 

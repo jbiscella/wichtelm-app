@@ -167,7 +167,8 @@ public final class WichtelmCli {
                 .forEach((wire, bars) -> higherSeries.put(wire, new OHLCSeries(bars)));
 
         ReportData data = new ReportData(basename, LocalDateTime.now(), outputDirectory, strategy,
-                result.result(), new OHLCSeries(result.primarySeries()), higherSeries, Map.of());
+                result.result(), new OHLCSeries(result.primarySeries()), higherSeries,
+                result.triggerTimes());
         return new HtmlReportGenerator().generate(data);
     }
 
