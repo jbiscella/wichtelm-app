@@ -226,6 +226,7 @@ Each rule below MUST be enforced at parse time. On violation, the parser throws 
 | P19 | A Scenario starting with `Given a long position is open` MUST terminate with `Then long_exit` (semantic consistency) |
 | P20 | A Scenario starting with `Given a short position is open` MUST terminate with `Then short_exit` (semantic consistency) |
 | P21 | Static numeric range checks: where parameters are passed to functions with known valid ranges (e.g. RSI threshold in (0, 100), period > 0), violations produce a parse error |
+| P22 | Scenario names (the text after `Scenario:` in each block) MUST be unique within a strategy. Two Scenarios with the same name in the same `.strat` file produce a parse error. This is symmetric to P4 (unique Parameter names) and P7 (unique Background series names) |
 
 ## 5. Config file — TOML grammar
 

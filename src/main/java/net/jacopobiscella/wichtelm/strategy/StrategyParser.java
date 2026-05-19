@@ -124,6 +124,7 @@ public final class StrategyParser {
         }
 
         List<StrategyScenario> scenarios = new ArrayList<>();
+        Set<String> scenarioNames = new HashSet<>();
         while (i < lines.length) {
             String t = lines[i].strip();
             if (isSkippable(t)) {
@@ -134,6 +135,10 @@ public final class StrategyParser {
                 throw fail("P10", i + 1, 1, "unexpected line outside of a Scenario: " + t);
             }
             ScenarioBlock block = collectScenario(i);
+            if (!scenarioNames.add(block.name())) {
+                throw fail("P22", block.headerLine(), 1,
+                        "duplicate Scenario name: " + block.name());
+            }
             scenarios.add(parseScenario(block, parameterNames, seriesNames));
             i = block.nextIndex();
         }

@@ -52,6 +52,13 @@ public class StrategyParserSteps {
                 + parameterLine + "\n  " + parameterLine + "\n\n" + ENTRY_SCENARIO;
     }
 
+    @Given("a strategy file with two Scenarios both named {string}")
+    public void strategyWithDuplicateScenarioName(String scenarioName) {
+        String scenario = "  Scenario: " + scenarioName + "\n    Given no open position\n"
+                + "    When close exceeds 1\n    Then long_entry\n";
+        content = valid(scenario + "\n" + scenario);
+    }
+
     @Given("a strategy file with a Scenario that ends with {string}")
     public void strategyWithScenarioEndingWith(String terminalStep) {
         content = valid("  Scenario: Bad\n    Given no open position\n"

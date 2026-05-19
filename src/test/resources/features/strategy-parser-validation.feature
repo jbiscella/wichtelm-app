@@ -1,5 +1,5 @@
 Feature: Strategy parser parse-time validation
-  The hand-written .strat parser enforces rules P1-P21 at parse time and
+  The hand-written .strat parser enforces rules P1-P22 at parse time and
   rejects malformed strategies with a typed StrategyParseException.
 
   Scenario: Empty strategy file is rejected by P1
@@ -19,6 +19,12 @@ Feature: Strategy parser parse-time validation
     When the parser reads the file
     Then StrategyParseException is thrown
     And violatedRule is "P4"
+
+  Scenario: Duplicate Scenario names are rejected by P22
+    Given a strategy file with two Scenarios both named "Enter long"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P22"
 
   Scenario: Scenario not terminating with a first-class condition is rejected by P10
     Given a strategy file with a Scenario that ends with "Then unknown_condition"
