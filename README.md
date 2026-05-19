@@ -224,9 +224,10 @@ primary timeframe.
 
 The DSL grammar defines the catalog below. **Not every entry is evaluable by
 the backtest runtime yet** — entries marked *runtime pending* parse and
-validate but raise a `DslEvaluationException` if a backtest actually reaches
-them. Stick to the runtime-supported entries for a strategy that runs
-end to end.
+validate but fail at runtime if a backtest actually reaches them (indicator
+functions raise a `DslEvaluationException`; `bar_time` / `entry_time` raise an
+unresolved-identifier error). Stick to the runtime-supported entries for a
+strategy that runs end to end.
 
 **Runtime-supported today:**
 
@@ -481,7 +482,8 @@ The report contains, in order:
 | `1` | Application error (parse failure, data source unavailable, report failure, backtest error) |
 | `2` | Usage error (missing or unexpected CLI arguments) |
 
-All application errors derive from a single root exception, `WichtelmException`:
+Most application errors derive from a single root exception,
+`WichtelmException`:
 
 | Exception | Raised when |
 |---|---|
@@ -490,6 +492,10 @@ All application errors derive from a single root exception, `WichtelmException`:
 | `DslEvaluationException` | A runtime error occurs while evaluating a DSL expression (e.g. division by zero) |
 | `DataSourceUnavailableException` | The CSV file or EODHD API cannot be reached or returns malformed data |
 | `ReportGenerationException` | HTML rendering fails (e.g. a filesystem write error) |
+
+A `BacktestException` thrown by the underlying `ha-track` backtester is *not*
+a `WichtelmException`; the CLI catches it separately and still reports it with
+exit code `1`.
 
 Parse errors are printed to stderr with the rule identifier and source
 location, for example:
