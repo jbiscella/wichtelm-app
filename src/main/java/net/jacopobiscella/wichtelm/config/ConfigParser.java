@@ -168,6 +168,10 @@ public final class ConfigParser {
             throw fail("csv.file", "C8", "data_source \"csv\" requires [csv].file");
         }
         String raw = toml.getString("csv.file");
+        if (!raw.contains("{symbol}")) {
+            throw fail("csv.file", "C8", "[csv].file must contain the {symbol} placeholder "
+                    + "when data_source = \"csv\". Example: \"data/{symbol}_1h.csv\" for symbol AAPL");
+        }
         Path path = resolve(raw);
         if (containsPlaceholder(raw)) {
             Path directory = path.getParent();

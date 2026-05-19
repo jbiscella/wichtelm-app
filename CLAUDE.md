@@ -283,7 +283,7 @@ api_token_env = "<env-var-name>"  # name of env var holding the token; the token
 | C5 | `sizing.position_size_pct` MUST be a numeric value in (0, 100] |
 | C6 | `sizing.pyramiding` defaults to false if absent |
 | C7 | `[parameters]` keys MUST match names declared in the strategy's Parameter declarations. Unknown parameter names produce a parse-time error. Missing parameters use the strategy's declared default |
-| C8 | If `data_source = "csv"`, `[csv].file` is required. If the path contains no placeholders, the literal path MUST be readable. If it contains `{symbol}`/`{timeframe}` placeholders, the placeholders MUST appear only in the file name (not in a directory component), and the parent directory MUST exist and be readable. Per-file validation occurs at data-load time, where a missing file raises `DataSourceUnavailableException` |
+| C8 | If `data_source = "csv"`, `[csv].file` is required and MUST contain the `{symbol}` placeholder — the `frau-holle-csv` driver rejects literal paths without it, so a literal path is rejected at parse time with a `ConfigParseException`. The `{timeframe}` placeholder is optional. Placeholders MUST appear only in the file name (not in a directory component), and the parent directory MUST exist and be readable. Per-file validation occurs at data-load time, where a missing file raises `DataSourceUnavailableException` |
 | C9 | If `data_source = "eodhd"`, `[eodhd].api_token_env` is required and the referenced environment variable MUST be set with a non-empty value (verified at runtime, not parse-time) |
 | C10 | `output.format` is restricted to `"html"` in v1. Other values produce a parse-time error |
 | C11 | Unknown top-level keys produce a warning (P2 severity), not a parse error, to allow forward compatibility |
@@ -657,6 +657,7 @@ The following are explicitly NOT implemented in v1:
 - Diagnostic / visualization-only Scenarios in `.strat` files
 - Tags (`@xxx`), Rule, Scenario Outline, Examples, DocStrings, DataTable Gherkin features
 - Parallel execution of multiple backtests in a single CLI invocation
+- Literal `[csv].file` paths without the `{symbol}` placeholder — the `frau-holle-csv` driver requires the placeholder; supporting literal paths is reserved as a future enhancement contingent on an additive `frau-holle-csv` change
 
 These are reserved for future additive releases (japicmp-validated) or future major versions.
 
