@@ -112,16 +112,14 @@ public class ConfigParserSteps {
                 + "[csv]\nfile = \"" + csvFilePath + "\"\n";
     }
 
-    @Given("a TOML config with a csv literal file path that exists")
-    public void csvLiteralFilePathExists() throws IOException {
-        Path csv = tempDir.resolve("data.csv");
-        Files.writeString(csv, "time,open,high,low,close\n");
-        tomlContent = csvConfig(csv.toString());
+    @Given("a TOML config with a csv file pattern containing the symbol placeholder")
+    public void csvFilePatternContainingSymbol() {
+        tomlContent = csvConfig(tempDir.resolve("{symbol}_1h.csv").toString());
     }
 
-    @Given("a TOML config with a csv literal file path that does not exist")
-    public void csvLiteralFilePathMissing() {
-        tomlContent = csvConfig(tempDir.resolve("missing.csv").toString());
+    @Given("a TOML config with a csv literal file path without the symbol placeholder")
+    public void csvLiteralFilePathWithoutSymbol() {
+        tomlContent = csvConfig(tempDir.resolve("aapl_1h.csv").toString());
     }
 
     @Given("a TOML config with a csv placeholder pattern in an existing directory")
