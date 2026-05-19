@@ -104,6 +104,27 @@ public class ExecutionFlowSteps {
                 """, "multi-tf-test.strat");
     }
 
+    @Given("a strategy whose Background series is defined as bar_index")
+    public void aStrategyWithABarIndexBackgroundSeries() {
+        strategy = StrategyParser.parse("""
+                Feature: bar_index Background test
+                  Primary timeframe: 1h
+
+                  Background:
+                    Given a series n defined as bar_index
+
+                  Scenario: Enter
+                    Given no open position
+                    When n is above 1000
+                    Then long_entry
+
+                  Scenario: Exit
+                    Given a long position is open
+                    When n is below 0
+                    Then long_exit
+                """, "bar-index-test.strat");
+    }
+
     @Given("a CSV dataset for the symbol on the 1h timeframe")
     public void aCsvDatasetOn1h() throws IOException {
         writeHourlyDataset();

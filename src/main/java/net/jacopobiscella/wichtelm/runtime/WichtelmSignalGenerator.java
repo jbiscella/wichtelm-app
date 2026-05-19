@@ -317,10 +317,11 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                             "no closed " + wire + " bar exists yet for series " + series.name()));
             layerBars = barsUpTo(wire, targetBar.time());
         }
+        long targetIndex = layerBars.size() - 1;
         ExpressionEvaluator evaluator =
-                new ExpressionEvaluator(strategy.featureName(), primaryBarTime, 0);
-        Scope scope = new Scope(seriesLayerValues(targetBar, series),
-                new BarIndicatorSource(layerBars, strategy.featureName(), targetBar.time(), 0));
+                new ExpressionEvaluator(strategy.featureName(), primaryBarTime, targetIndex);
+        Scope scope = new Scope(seriesLayerValues(targetBar, series, targetIndex),
+                new BarIndicatorSource(layerBars, strategy.featureName(), targetBar.time(), targetIndex));
         return evaluator.arithmetic(series.expression(), scope);
     }
 
@@ -334,13 +335,15 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         return bars;
     }
 
-    private ExpressionEvaluator.Values seriesLayerValues(OHLCBar bar, BackgroundSeries series) {
+    private ExpressionEvaluator.Values seriesLayerValues(OHLCBar bar, BackgroundSeries series,
+                                                         long barIndex) {
         return name -> switch (name) {
             case "open" -> bar.open();
             case "high" -> bar.high();
             case "low" -> bar.low();
             case "close" -> bar.close();
             case "volume" -> bar.volume().orElse(BigDecimal.ZERO);
+            case "bar_index" -> BigDecimal.valueOf(barIndex);
             default -> {
                 BigDecimal parameter = parameters.get(name);
                 if (parameter != null) {

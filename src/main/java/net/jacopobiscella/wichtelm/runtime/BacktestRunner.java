@@ -74,7 +74,11 @@ public final class BacktestRunner {
             if (higherTimeframeBars.containsKey(tf.wire())) {
                 continue;
             }
-            List<OHLCBar> bars = fetch(dataSource, config.symbol(), tf, from, until);
+            // Widen the lower bound by one higher-TF period so the bar that
+            // already contains `from` (e.g. the week a Wednesday start falls in)
+            // is fetched rather than dropped by a since-honoring data source.
+            Instant higherSince = Timeframes.retreat(from, tf);
+            List<OHLCBar> bars = fetch(dataSource, config.symbol(), tf, higherSince, until);
             if (bars.isEmpty()) {
                 throw new DataSourceUnavailableException(
                         "higher-timeframe series " + tf.wire() + " returned no bars for the date range");

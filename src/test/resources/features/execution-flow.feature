@@ -41,3 +41,9 @@ Feature: Backtest execution flow
     And the environment variable "EODHD_API_TOKEN" is not set
     When the data source is resolved expecting failure
     Then a DataSourceUnavailableException names the missing "EODHD_API_TOKEN" variable
+
+  Scenario: A Background series defined as bar_index resolves at runtime
+    Given a strategy whose Background series is defined as bar_index
+    And a CSV dataset for the symbol on the 1h timeframe
+    When the backtest runner executes
+    Then a BacktestResult is produced
