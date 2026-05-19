@@ -25,6 +25,8 @@ import java.math.RoundingMode;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
+import java.time.YearMonth;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Base64;
@@ -32,6 +34,7 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -256,11 +259,11 @@ public final class HtmlReportGenerator {
 
     private void appendTrailingSection(StringBuilder html, ReportData data) {
         List<EquityPoint> curve = data.result().equityCurve();
-        html.append("<section class=\"equity-curve\"><h2>Equity curve</h2>")
-                .append(svgLineChart(curve, EquityPoint::equity, "equity"))
+        html.append("<section class=\"equity-curve\"><h2>Equity curve (% of initial capital)</h2>")
+                .append(equityCurveSvg(curve))
                 .append("</section>");
-        html.append("<section class=\"drawdown-curve\"><h2>Drawdown</h2>")
-                .append(svgLineChart(drawdown(curve), p -> p, "drawdown"))
+        html.append("<section class=\"drawdown-curve\"><h2>Drawdown (peak-to-current, %)</h2>")
+                .append(drawdownCurveSvg(curve))
                 .append("</section>");
 
         html.append("<section class=\"trade-list\"><h2>Trades</h2>")
@@ -293,41 +296,196 @@ public final class HtmlReportGenerator {
         html.append("</dl></section>");
     }
 
-    /** Drawdown points: peak-to-current decline derived from the equity curve. */
-    private List<BigDecimal> drawdown(List<EquityPoint> curve) {
-        List<BigDecimal> result = new ArrayList<>(curve.size());
-        BigDecimal peak = null;
-        for (EquityPoint point : curve) {
-            peak = (peak == null || point.equity().compareTo(peak) > 0) ? point.equity() : peak;
-            result.add(peak.subtract(point.equity(), DECIMAL));
+    private String equityCurveSvg(List<EquityPoint> curve) {
+        if (curve.isEmpty()) {
+            return "<p class=\"equity empty\">no data</p>";
         }
-        return result;
+        BigDecimal initial = curve.getFirst().equity();
+        Instant[] times = new Instant[curve.size()];
+        double[] vals = new double[curve.size()];
+        for (int i = 0; i < curve.size(); i++) {
+            times[i] = curve.get(i).time();
+            vals[i] = curve.get(i).equity()
+                    .divide(initial, DECIMAL).doubleValue() * 100.0;
+        }
+        return renderTimeSeries(times, vals, "equity", true);
     }
 
-    private <T> String svgLineChart(List<T> points, java.util.function.Function<T, BigDecimal> value,
-                                    String cssClass) {
-        if (points.isEmpty()) {
-            return "<p class=\"" + cssClass + " empty\">no data</p>";
+    private String drawdownCurveSvg(List<EquityPoint> curve) {
+        if (curve.isEmpty()) {
+            return "<p class=\"drawdown empty\">no data</p>";
         }
-        double width = 900;
-        double height = 240;
-        double min = Double.MAX_VALUE;
-        double max = -Double.MAX_VALUE;
-        for (T point : points) {
-            double v = value.apply(point).doubleValue();
-            min = Math.min(min, v);
-            max = Math.max(max, v);
+        Instant[] times = new Instant[curve.size()];
+        double[] vals = new double[curve.size()];
+        double peak = Double.NEGATIVE_INFINITY;
+        for (int i = 0; i < curve.size(); i++) {
+            times[i] = curve.get(i).time();
+            double eq = curve.get(i).equity().doubleValue();
+            peak = Math.max(peak, eq);
+            vals[i] = peak == 0 ? 0 : (eq / peak - 1.0) * 100.0;
         }
-        double span = max - min == 0 ? 1 : max - min;
+        return renderTimeSeries(times, vals, "drawdown", false);
+    }
+
+    /**
+     * Renders a self-contained SVG time series chart with monthly X-axis
+     * ticks, a 5%-step Y-axis grid, an axis label, and padding on all sides.
+     * Equity charts get a dashed 100% reference line; drawdown charts get a
+     * light-red filled area under the curve and a dark-red line.
+     */
+    private String renderTimeSeries(Instant[] times, double[] vals,
+                                    String cssClass, boolean isEquity) {
+        double vbW = 880.0;
+        double vbH = 300.0;
+        double padLeft = 60.0;
+        double padRight = 40.0;
+        double padTop = 40.0;
+        double padBottom = 60.0;
+        double plotW = vbW - padLeft - padRight;
+        double plotH = vbH - padTop - padBottom;
+
+        double minV = Double.POSITIVE_INFINITY;
+        double maxV = Double.NEGATIVE_INFINITY;
+        for (double v : vals) {
+            minV = Math.min(minV, v);
+            maxV = Math.max(maxV, v);
+        }
+        double yMin;
+        double yMax;
+        if (isEquity) {
+            yMin = Math.min(100.0, Math.floor(minV / 5.0) * 5.0);
+            yMax = Math.max(100.0, Math.ceil(maxV / 5.0) * 5.0);
+        } else {
+            yMin = Math.floor(minV / 5.0) * 5.0;
+            yMax = Math.max(0.0, Math.ceil(maxV / 5.0) * 5.0);
+        }
+        if (yMin == yMax) {
+            yMin -= 5.0;
+            yMax += 5.0;
+        }
+        double ySpan = yMax - yMin;
+
+        long t0 = times[0].toEpochMilli();
+        long t1 = times[times.length - 1].toEpochMilli();
+        long tSpan = Math.max(t1 - t0, 1L);
+
+        StringBuilder svg = new StringBuilder();
+        svg.append("<svg class=\"").append(cssClass)
+                .append("\" viewBox=\"0 0 ").append((int) vbW).append(' ').append((int) vbH)
+                .append("\" width=\"100%\" preserveAspectRatio=\"xMidYMid meet\"")
+                .append(" xmlns=\"http://www.w3.org/2000/svg\">");
+
+        // Horizontal grid lines every 5%.
+        svg.append("<g stroke=\"#e6e6e6\" stroke-width=\"1\">");
+        for (double y = yMin; y <= yMax + 0.001; y += 5.0) {
+            double py = padTop + plotH - (y - yMin) / ySpan * plotH;
+            svg.append("<line x1=\"").append(round(padLeft))
+                    .append("\" x2=\"").append(round(padLeft + plotW))
+                    .append("\" y1=\"").append(round(py))
+                    .append("\" y2=\"").append(round(py)).append("\"/>");
+        }
+        svg.append("</g>");
+
+        // Y-axis tick labels.
+        svg.append("<g font-size=\"11\" font-family=\"sans-serif\" fill=\"#555\">");
+        for (double y = yMin; y <= yMax + 0.001; y += 5.0) {
+            double py = padTop + plotH - (y - yMin) / ySpan * plotH;
+            svg.append("<text x=\"").append(round(padLeft - 6))
+                    .append("\" y=\"").append(round(py + 4))
+                    .append("\" text-anchor=\"end\">").append(formatPercentTick(y))
+                    .append("</text>");
+        }
+        svg.append("</g>");
+
+        // Y-axis label, rotated.
+        double labelCy = padTop + plotH / 2.0;
+        svg.append("<text x=\"18\" y=\"").append(round(labelCy))
+                .append("\" transform=\"rotate(-90, 18, ").append(round(labelCy))
+                .append(")\" text-anchor=\"middle\" font-size=\"12\" font-family=\"sans-serif\" fill=\"#333\">")
+                .append(isEquity ? "Equity (% of initial)" : "Drawdown (%)")
+                .append("</text>");
+
+        // Reference line / filled area BEFORE the main path so the line sits on top.
+        if (isEquity) {
+            double py100 = padTop + plotH - (100.0 - yMin) / ySpan * plotH;
+            svg.append("<line x1=\"").append(round(padLeft))
+                    .append("\" x2=\"").append(round(padLeft + plotW))
+                    .append("\" y1=\"").append(round(py100))
+                    .append("\" y2=\"").append(round(py100))
+                    .append("\" stroke=\"#888\" stroke-dasharray=\"4 4\" stroke-width=\"1\"/>");
+        } else {
+            double py0 = padTop + plotH - (0.0 - yMin) / ySpan * plotH;
+            StringBuilder area = new StringBuilder();
+            double firstPx = padLeft + (double) (times[0].toEpochMilli() - t0) / tSpan * plotW;
+            area.append("M ").append(round(firstPx)).append(',').append(round(py0)).append(' ');
+            for (int i = 0; i < vals.length; i++) {
+                double px = padLeft + (double) (times[i].toEpochMilli() - t0) / tSpan * plotW;
+                double py = padTop + plotH - (vals[i] - yMin) / ySpan * plotH;
+                area.append("L ").append(round(px)).append(',').append(round(py)).append(' ');
+            }
+            double lastPx = padLeft + (double) (times[times.length - 1].toEpochMilli() - t0)
+                    / tSpan * plotW;
+            area.append("L ").append(round(lastPx)).append(',').append(round(py0)).append(" Z");
+            svg.append("<path fill=\"rgba(192,57,43,0.18)\" stroke=\"none\" d=\"")
+                    .append(area).append("\"/>");
+        }
+
+        // Monthly X-axis ticks, labels rotated 45 degrees.
+        YearMonth startYm = YearMonth.from(times[0].atOffset(ZoneOffset.UTC).toLocalDate());
+        YearMonth endYm = YearMonth.from(times[times.length - 1].atOffset(ZoneOffset.UTC).toLocalDate());
+        DateTimeFormatter monthFmt = DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
+        svg.append("<g font-size=\"11\" font-family=\"sans-serif\" fill=\"#555\">");
+        YearMonth ym = startYm;
+        while (!ym.isAfter(endYm)) {
+            Instant tick = ym.atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+            long tickT = tick.toEpochMilli();
+            if (tickT >= t0 && tickT <= t1) {
+                double px = padLeft + (double) (tickT - t0) / tSpan * plotW;
+                svg.append("<line x1=\"").append(round(px))
+                        .append("\" x2=\"").append(round(px))
+                        .append("\" y1=\"").append(round(padTop + plotH))
+                        .append("\" y2=\"").append(round(padTop + plotH + 5))
+                        .append("\" stroke=\"#888\"/>");
+                double labelY = padTop + plotH + 18;
+                svg.append("<text x=\"").append(round(px))
+                        .append("\" y=\"").append(round(labelY))
+                        .append("\" text-anchor=\"end\" transform=\"rotate(-45, ")
+                        .append(round(px)).append(',').append(round(labelY))
+                        .append(")\">").append(ym.format(monthFmt)).append("</text>");
+            }
+            ym = ym.plusMonths(1);
+        }
+        svg.append("</g>");
+
+        // Plot border.
+        svg.append("<rect x=\"").append(round(padLeft))
+                .append("\" y=\"").append(round(padTop))
+                .append("\" width=\"").append(round(plotW))
+                .append("\" height=\"").append(round(plotH))
+                .append("\" fill=\"none\" stroke=\"#888\" stroke-width=\"1\"/>");
+
+        // Main line on top of fill/grid/reference.
         StringBuilder path = new StringBuilder();
-        for (int i = 0; i < points.size(); i++) {
-            double x = points.size() == 1 ? 0 : width * i / (points.size() - 1);
-            double y = height - (value.apply(points.get(i)).doubleValue() - min) / span * height;
-            path.append(i == 0 ? "M" : "L").append(round(x)).append(' ').append(round(y)).append(' ');
+        for (int i = 0; i < vals.length; i++) {
+            double px = padLeft + (double) (times[i].toEpochMilli() - t0) / tSpan * plotW;
+            double py = padTop + plotH - (vals[i] - yMin) / ySpan * plotH;
+            path.append(i == 0 ? "M" : "L").append(round(px)).append(' ')
+                    .append(round(py)).append(' ');
         }
-        return "<svg class=\"" + cssClass + "\" viewBox=\"0 0 " + (int) width + " " + (int) height
-                + "\" xmlns=\"http://www.w3.org/2000/svg\"><path fill=\"none\" stroke=\"#1f77b4\" "
-                + "stroke-width=\"2\" d=\"" + path.toString().strip() + "\"/></svg>";
+        String stroke = isEquity ? "#1f77b4" : "#922b21";
+        svg.append("<path fill=\"none\" stroke=\"").append(stroke)
+                .append("\" stroke-width=\"2\" d=\"").append(path.toString().strip())
+                .append("\"/>");
+
+        svg.append("</svg>");
+        return svg.toString();
+    }
+
+    private static String formatPercentTick(double v) {
+        if (Math.abs(v) < 0.001) {
+            return "0%";
+        }
+        return String.format(Locale.ROOT, "%.0f%%", v);
     }
 
     private static double round(double value) {
