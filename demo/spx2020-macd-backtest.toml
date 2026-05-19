@@ -9,8 +9,9 @@ data_source = "csv"
 
 # Constrained to the most demonstrative window: pre-crash, COVID crash,
 # early recovery. MACD on 1h bars fires frequently even with the volume
-# and trend filters, so a 4-month window keeps the per-trigger blocks in
-# the report readable rather than rendering hundreds.
+# and trend filters, so a two-month window (Feb 15 – Apr 15, ~60 days)
+# keeps the per-trigger blocks in the report readable rather than
+# rendering hundreds.
 [date_range]
 from = 2020-02-15
 to   = 2020-04-15
