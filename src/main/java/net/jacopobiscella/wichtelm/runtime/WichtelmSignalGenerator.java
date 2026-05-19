@@ -1,6 +1,8 @@
 package net.jacopobiscella.wichtelm.runtime;
 
+import net.jacopobiscella.wichtelm.error.DslEvaluationException;
 import net.jacopobiscella.wichtelm.runtime.ExpressionEvaluator.Scope;
+import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.FirstClassCondition;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.PositionPrecondition;
@@ -19,18 +21,28 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
 
 /**
  * Translates a parsed strategy into frau-holle {@link Signal}s, one per primary
- * bar (CLAUDE.md sections 6.2 / 6.3 / Block 4).
+ * bar (CLAUDE.md sections 6.2 / 6.3).
  *
  * <p>Per-bar resolution order for an open position: intrabar stop_loss /
  * take_profit (which precede the close), then close-evaluated exit Scenarios,
  * then pyramiding entries. With no open position, entry Scenarios are evaluated
  * in source order; the first match wins.
+ *
+ * <p>Background series are resolved lazily: a primary-timeframe series is
+ * evaluated against the current bar's history, a higher-timeframe series
+ * against the most recently closed higher-TF bar at or before the primary bar
+ * time ({@link HigherTimeframeSeries}), keeping the runtime lookahead-safe.
  */
 public final class WichtelmSignalGenerator implements SignalGenerator {
 
@@ -47,16 +59,38 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private final BigDecimal positionSizePct;
     private final boolean pyramiding;
     private final Timeframe timeframe;
+    private final Map<String, BackgroundSeries> seriesByName = new LinkedHashMap<>();
+    private final Map<String, List<OHLCBar>> higherTimeframeBars = new HashMap<>();
+    private final Map<String, HigherTimeframeSeries> higherResolvers = new HashMap<>();
 
-    public WichtelmSignalGenerator(ParsedStrategy strategy,
-                                   Map<String, BigDecimal> parameters,
-                                   BigDecimal positionSizePct,
-                                   boolean pyramiding) {
+    /** Generator for a strategy without higher-timeframe Background series. */
+    public WichtelmSignalGenerator(ParsedStrategy strategy, Map<String, BigDecimal> parameters,
+                                   BigDecimal positionSizePct, boolean pyramiding) {
+        this(strategy, parameters, positionSizePct, pyramiding, Map.of());
+    }
+
+    /**
+     * @param higherTimeframeBars OHLC bars for each higher timeframe referenced by a
+     *                            Background series, keyed by timeframe wire (e.g. "1d")
+     */
+    public WichtelmSignalGenerator(ParsedStrategy strategy, Map<String, BigDecimal> parameters,
+                                   BigDecimal positionSizePct, boolean pyramiding,
+                                   Map<String, List<OHLCBar>> higherTimeframeBars) {
         this.strategy = strategy;
         this.parameters = Map.copyOf(parameters);
         this.positionSizePct = positionSizePct;
         this.pyramiding = pyramiding;
         this.timeframe = strategy.primaryTimeframe();
+        for (BackgroundSeries series : strategy.backgroundSeries()) {
+            seriesByName.put(series.name(), series);
+        }
+        higherTimeframeBars.forEach((wire, bars) -> {
+            List<OHLCBar> sorted = new ArrayList<>(bars);
+            sorted.sort(Comparator.comparing(OHLCBar::time));
+            this.higherTimeframeBars.put(wire, List.copyOf(sorted));
+            this.higherResolvers.put(wire,
+                    new HigherTimeframeSeries(Timeframe.fromWire(wire), sorted));
+        });
     }
 
     @Override
@@ -185,7 +219,13 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private boolean conjunctionHolds(StrategyScenario scenario, ExpressionEvaluator evaluator,
                                      Scope current, Scope previous) {
         for (StrategyStep step : scenario.conditionSteps()) {
-            if (!evaluator.condition(step.text(), current, previous)) {
+            try {
+                if (!evaluator.condition(step.text(), current, previous)) {
+                    return false;
+                }
+            } catch (IndicatorWarmupException notReady) {
+                // An indicator or Background series is still warming up: the
+                // Scenario cannot fire at this bar, but the backtest continues.
                 return false;
             }
         }
@@ -199,7 +239,6 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 .divide(context.currentBar().close(), DECIMAL);
     }
 
-    /** A fill instant strictly inside the current bar's interval. */
     private Instant intrabarFillTime(OHLCBar bar) {
         Instant open = bar.time();
         Instant close = Timeframes.advance(open, timeframe);
@@ -218,13 +257,14 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     }
 
     private Scope scopeFor(BarContext context, OHLCBar bar, Optional<Position> position, long barIndex) {
-        BarIndicatorSource indicators = new BarIndicatorSource(barsUpToAndIncluding(context, bar),
-                strategy.featureName(), bar.time(), barIndex);
-        return new Scope(barValues(bar, position, barIndex), indicators);
+        List<OHLCBar> barsUpTo = barsUpToAndIncluding(context, bar);
+        BarIndicatorSource indicators =
+                new BarIndicatorSource(barsUpTo, strategy.featureName(), bar.time(), barIndex);
+        return new Scope(barValues(bar, position, barIndex, barsUpTo), indicators);
     }
 
     /** All known bars with time at or before {@code bar}, in chronological order. */
-    private java.util.List<OHLCBar> barsUpToAndIncluding(BarContext context, OHLCBar bar) {
+    private List<OHLCBar> barsUpToAndIncluding(BarContext context, OHLCBar bar) {
         TreeMap<Instant, OHLCBar> byTime = new TreeMap<>();
         for (OHLCBar candidate : context.history()) {
             if (!candidate.time().isAfter(bar.time())) {
@@ -232,11 +272,11 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
             }
         }
         byTime.put(bar.time(), bar);
-        return java.util.List.copyOf(byTime.values());
+        return List.copyOf(byTime.values());
     }
 
     private ExpressionEvaluator.Values barValues(OHLCBar bar, Optional<Position> position,
-                                                 long barIndex) {
+                                                 long barIndex, List<OHLCBar> primaryBarsUpTo) {
         return name -> switch (name) {
             case "open" -> bar.open();
             case "high" -> bar.high();
@@ -248,8 +288,78 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                     .orElseThrow(() -> unresolved(name));
             case "position_size" -> position.map(Position::quantity)
                     .orElseThrow(() -> unresolved(name));
-            default -> resolveParameter(name);
+            default -> {
+                BackgroundSeries series = seriesByName.get(name);
+                yield series != null
+                        ? resolveSeries(series, bar.time(), primaryBarsUpTo)
+                        : resolveParameter(name);
+            }
         };
+    }
+
+    /** Evaluates a Background series at the bar visible at {@code primaryBarTime}. */
+    private BigDecimal resolveSeries(BackgroundSeries series, Instant primaryBarTime,
+                                     List<OHLCBar> primaryBarsUpTo) {
+        List<OHLCBar> layerBars;
+        OHLCBar targetBar;
+        if (series.timeframe().isEmpty()) {
+            layerBars = primaryBarsUpTo;
+            targetBar = layerBars.getLast();
+        } else {
+            String wire = series.timeframe().get().wire();
+            HigherTimeframeSeries resolver = higherResolvers.get(wire);
+            if (resolver == null) {
+                throw seriesFailure(series, primaryBarTime,
+                        "no " + wire + " data was loaded for Background series " + series.name());
+            }
+            targetBar = resolver.resolveAt(primaryBarTime)
+                    .orElseThrow(() -> new IndicatorWarmupException(
+                            "no closed " + wire + " bar exists yet for series " + series.name()));
+            layerBars = barsUpTo(wire, targetBar.time());
+        }
+        long targetIndex = layerBars.size() - 1;
+        ExpressionEvaluator evaluator =
+                new ExpressionEvaluator(strategy.featureName(), primaryBarTime, targetIndex);
+        Scope scope = new Scope(seriesLayerValues(targetBar, series, targetIndex),
+                new BarIndicatorSource(layerBars, strategy.featureName(), targetBar.time(), targetIndex));
+        return evaluator.arithmetic(series.expression(), scope);
+    }
+
+    private List<OHLCBar> barsUpTo(String wire, Instant inclusiveLimit) {
+        List<OHLCBar> bars = new ArrayList<>();
+        for (OHLCBar bar : higherTimeframeBars.getOrDefault(wire, List.of())) {
+            if (!bar.time().isAfter(inclusiveLimit)) {
+                bars.add(bar);
+            }
+        }
+        return bars;
+    }
+
+    private ExpressionEvaluator.Values seriesLayerValues(OHLCBar bar, BackgroundSeries series,
+                                                         long barIndex) {
+        return name -> switch (name) {
+            case "open" -> bar.open();
+            case "high" -> bar.high();
+            case "low" -> bar.low();
+            case "close" -> bar.close();
+            case "volume" -> bar.volume().orElse(BigDecimal.ZERO);
+            case "bar_index" -> BigDecimal.valueOf(barIndex);
+            default -> {
+                BigDecimal parameter = parameters.get(name);
+                if (parameter != null) {
+                    yield parameter;
+                }
+                throw seriesFailure(series, bar.time(),
+                        "Background series expression may only reference market variables, "
+                                + "parameters and indicators: " + name);
+            }
+        };
+    }
+
+    private DslEvaluationException seriesFailure(BackgroundSeries series, Instant barTime,
+                                                 String message) {
+        return new DslEvaluationException(strategy.featureName(), series.line(), barTime, 0,
+                series.expression(), message);
     }
 
     private ExpressionEvaluator.Values positionValues(Position position) {

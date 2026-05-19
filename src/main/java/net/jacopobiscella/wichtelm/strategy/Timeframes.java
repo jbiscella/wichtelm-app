@@ -56,4 +56,23 @@ public final class Timeframes {
         };
         return advanced.toInstant();
     }
+
+    /**
+     * Moves a time back by exactly one timeframe, using calendar-correct
+     * arithmetic at UTC. Used to widen a higher-timeframe fetch so the bar that
+     * already contains the requested range start is included.
+     */
+    public static Instant retreat(Instant time, Timeframe tf) {
+        ZonedDateTime zoned = time.atZone(ZoneOffset.UTC);
+        ZonedDateTime retreated = switch (tf.unit()) {
+            case SECOND -> zoned.minusSeconds(tf.amount());
+            case MINUTE -> zoned.minusMinutes(tf.amount());
+            case HOUR -> zoned.minusHours(tf.amount());
+            case DAY -> zoned.minusDays(tf.amount());
+            case WEEK -> zoned.minusWeeks(tf.amount());
+            case MONTH -> zoned.minusMonths(tf.amount());
+            case YEAR -> zoned.minusYears(tf.amount());
+        };
+        return retreated.toInstant();
+    }
 }

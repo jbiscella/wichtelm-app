@@ -313,7 +313,7 @@ Per-backtest config file values override global preferences.
 | 2 | Parse config file: enforce all C1-C11 rules |
 | 3 | Resolve parameter values: per-config overrides take precedence over strategy defaults |
 | 4 | Resolve data source: instantiate `MarketDataSource` (frau-holle-csv or frau-holle-eodhd) and load OHLC bars for the primary TF and any Background higher-TFs |
-| 5 | Verify all higher-TF series cover the same `date_range` as the primary series (no gaps that would prevent lookahead-safe resolution) |
+| 5 | Verify each higher-TF series spans the primary series: its first bar opens at or before the first primary bar, and its last bar closes at or after the last primary bar. Interior gaps from market closures (weekends, holidays) are acceptable — `HigherTimeframeSeries` resolves to the most recently closed bar. Failure raises `DataSourceUnavailableException` |
 | 6 | Construct a `SignalGenerator` from the parsed AST; the generator captures all parameters, all Background series (with lookahead-safe accessors), and emits Signal variants based on Scenario evaluation |
 | 7 | Construct a `BacktestSpec` with the primary-TF series, the synthesized SignalGenerator, and the normalized initial capital |
 | 8 | Run the backtest via `Backtester.run(spec)` |
