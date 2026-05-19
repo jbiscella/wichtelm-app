@@ -37,7 +37,8 @@ import java.util.Random;
  *
  * <p>Output is one CSV per dataset, written under the directory supplied as
  * the first command-line argument (default {@code demo/data}), one bar per
- * hour over the whole calendar year (8760 bars). The CSV schema is the one
+ * hour over the whole calendar year (8760 bars in a common year, 8784 in a
+ * leap year). The CSV schema is the one
  * the {@code frau-holle-csv} driver expects:
  * {@code time,open,high,low,close,volume} with UTC ISO-8601 timestamps.
  *
@@ -91,8 +92,10 @@ public final class SyntheticDataGenerator {
     private static final double GARCH_BETA = 0.90;
     private static final double GARCH_OMEGA = 1.0 - GARCH_ALPHA - GARCH_BETA;
 
-    // 8760 bars per year — 24/7 hourly, no session gaps. The macroscopic
-    // regimes still follow real calendar dates.
+    // Nominal hours-per-year used to convert annual drift/vol to per-bar
+    // values; fixed at 8760 so the per-bar return statistics do not shift
+    // by 1/366 in a leap year. The actual emitted bar count is the real
+    // length of the calendar year (8760, or 8784 when the year is leap).
     private static final double HOURS_PER_YEAR = 8760.0;
 
     public static void main(String[] args) throws IOException {
