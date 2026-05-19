@@ -33,6 +33,8 @@ Feature: CLI behavior
     When wichtelm is invoked with "--version"
     Then the CLI exit code is 0
     And stdout contains "wichtelm"
+    And stdout contains "0BSD"
+    And stdout contains "NOT financial advice"
 
   Scenario: wichtelm --help prints usage
     When wichtelm is invoked with "--help"

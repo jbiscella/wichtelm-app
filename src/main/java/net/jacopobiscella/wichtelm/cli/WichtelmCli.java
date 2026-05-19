@@ -62,6 +62,11 @@ public final class WichtelmCli {
         return switch (args[0]) {
             case "--version" -> {
                 out.println("wichtelm " + VERSION);
+                out.println("Backtesting tool for historical analysis. "
+                        + "Provided \"AS IS\" under 0BSD license.");
+                out.println("NOT financial advice. Past performance is not "
+                        + "indicative of future results.");
+                out.println("See LICENSE and README for full disclaimer.");
                 yield EXIT_SUCCESS;
             }
             case "--help" -> {
@@ -189,6 +194,8 @@ public final class WichtelmCli {
                   wichtelm run <config-file> [--no-report] [--output-dir <path>]
                   wichtelm validate <strat-file>
                   wichtelm --version
-                  wichtelm --help""");
+                  wichtelm --help
+
+                NOT financial advice. Use at your own risk. See README for full disclaimer.""");
     }
 }

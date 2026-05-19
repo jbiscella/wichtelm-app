@@ -189,6 +189,16 @@ public class ReportGenerationSteps {
         assertEquals(count, countMatches(reportHtml, "class=\"scenario-box\""));
     }
 
+    @Then("the report contains the disclaimer footer")
+    public void theReportContainsTheDisclaimerFooter() {
+        assertEquals(1, countMatches(reportHtml, "<footer"),
+                "report should contain exactly one footer element");
+        assertTrue(reportHtml.contains("NOT financial advice"),
+                "footer should carry the financial-advice disclaimer");
+        assertTrue(reportHtml.contains("Past performance is not indicative"),
+                "footer should carry the past-performance disclaimer");
+    }
+
     @Then("the scenario box order is {string}, {string}, {string}, {string}")
     public void theScenarioBoxOrderIs(String a, String b, String c, String d) {
         assertEquals(List.of(a, b, c, d), dataAttributeValues(reportHtml, "data-scenario"));

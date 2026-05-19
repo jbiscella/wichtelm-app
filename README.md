@@ -38,6 +38,8 @@ published to Maven Central under the `net.jacopobiscella` namespace.
 - [Demo](#demo)
 - [Limitations (v1 scope)](#limitations-v1-scope)
 - [Development](#development)
+- [Disclaimer](#disclaimer)
+- [License](#license)
 
 ---
 
@@ -613,3 +615,47 @@ Runtime profile: Java 25, single Maven module, single-threaded backtest
 runtime, `BigDecimal` arithmetic with `MathContext.DECIMAL64`, UTC `Instant`
 for time. Dependencies are the published `ha-track` artifacts plus the `tomlj`
 TOML parser.
+
+---
+
+## Disclaimer
+
+This software is a tool for **historical analysis only**.
+It is NOT a trading platform, brokerage, financial advice service,
+or investment product.
+
+**No warranties.** The software is provided "AS IS" under its license.
+The author makes no warranties regarding accuracy, completeness,
+reliability, or fitness for any purpose.
+
+**Past performance is not indicative of future results.** Results
+obtained with this software reflect hypothetical performance on
+historical data and have inherent limitations:
+- They cannot account for all market conditions
+- They cannot model unforeseen events
+- They cannot guarantee future returns
+
+**Use at your own risk.** Any trading decisions based on output
+from this software are made solely at the user's discretion and
+risk. The author accepts no liability for any financial losses,
+regulatory issues, or other consequences arising from use of this
+software.
+
+**No financial advice.** Nothing in this software, its documentation,
+its output, or its associated artifacts constitutes financial,
+investment, legal, or tax advice. Users should consult qualified
+professionals before making investment decisions.
+
+**No regulatory endorsement.** This software is not registered with,
+endorsed by, or approved by any financial regulatory authority.
+Users are solely responsible for compliance with applicable laws
+and regulations in their jurisdiction.
+
+---
+
+## License
+
+`wichtelm-app` is released under the **BSD Zero Clause License (0BSD)** — a
+permissive, public-domain-equivalent license. See the [`LICENSE`](LICENSE)
+file for the full text. A generated [`THIRD-PARTY.txt`](THIRD-PARTY.txt)
+lists the licenses of all bundled dependencies.
