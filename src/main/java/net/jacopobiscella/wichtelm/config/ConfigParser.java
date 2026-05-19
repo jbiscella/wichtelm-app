@@ -167,11 +167,39 @@ public final class ConfigParser {
         if (!toml.isString("csv.file")) {
             throw fail("csv.file", "C8", "data_source \"csv\" requires [csv].file");
         }
-        Path path = resolve(toml.getString("csv.file"));
-        if (!Files.isReadable(path)) {
+        String raw = toml.getString("csv.file");
+        Path path = resolve(raw);
+        if (containsPlaceholder(raw)) {
+            Path directory = placeholderBaseDirectory(raw);
+            if (!Files.isDirectory(directory) || !Files.isReadable(directory)) {
+                throw fail("csv.file", "C8",
+                        "[csv].file base directory is not a readable directory: " + directory);
+            }
+        } else if (!Files.isReadable(path)) {
             throw fail("csv.file", "C8", "[csv].file is not a readable path: " + path);
         }
         return Optional.of(path);
+    }
+
+    private static boolean containsPlaceholder(String csvFile) {
+        return csvFile.contains("{symbol}") || csvFile.contains("{timeframe}");
+    }
+
+    /** The path portion before the first placeholder, resolved to a directory. */
+    private Path placeholderBaseDirectory(String csvFile) {
+        String prefix = csvFile.substring(0, csvFile.indexOf('{'));
+        if (prefix.isEmpty()) {
+            return configDir != null ? configDir : Path.of(".");
+        }
+        Path prefixPath = resolve(prefix);
+        if (prefix.endsWith("/")) {
+            return prefixPath;
+        }
+        Path parent = prefixPath.getParent();
+        if (parent != null) {
+            return parent;
+        }
+        return configDir != null ? configDir : Path.of(".");
     }
 
     private Optional<String> parseEodhdApiTokenEnv(DataSource dataSource) {
