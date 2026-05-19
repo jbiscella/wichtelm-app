@@ -170,10 +170,16 @@ public final class ConfigParser {
         String raw = toml.getString("csv.file");
         Path path = resolve(raw);
         if (containsPlaceholder(raw)) {
-            Path directory = placeholderBaseDirectory(raw);
-            if (!Files.isDirectory(directory) || !Files.isReadable(directory)) {
+            Path directory = path.getParent();
+            if (directory != null && containsPlaceholder(directory.toString())) {
+                throw fail("csv.file", "C8", "[csv].file placeholders must appear only in the "
+                        + "file name, not in a directory component: " + raw);
+            }
+            Path baseDirectory = directory != null
+                    ? directory : (configDir != null ? configDir : Path.of("."));
+            if (!Files.isDirectory(baseDirectory) || !Files.isReadable(baseDirectory)) {
                 throw fail("csv.file", "C8",
-                        "[csv].file base directory is not a readable directory: " + directory);
+                        "[csv].file base directory is not a readable directory: " + baseDirectory);
             }
         } else if (!Files.isReadable(path)) {
             throw fail("csv.file", "C8", "[csv].file is not a readable path: " + path);
@@ -183,23 +189,6 @@ public final class ConfigParser {
 
     private static boolean containsPlaceholder(String csvFile) {
         return csvFile.contains("{symbol}") || csvFile.contains("{timeframe}");
-    }
-
-    /** The path portion before the first placeholder, resolved to a directory. */
-    private Path placeholderBaseDirectory(String csvFile) {
-        String prefix = csvFile.substring(0, csvFile.indexOf('{'));
-        if (prefix.isEmpty()) {
-            return configDir != null ? configDir : Path.of(".");
-        }
-        Path prefixPath = resolve(prefix);
-        if (prefix.endsWith("/")) {
-            return prefixPath;
-        }
-        Path parent = prefixPath.getParent();
-        if (parent != null) {
-            return parent;
-        }
-        return configDir != null ? configDir : Path.of(".");
     }
 
     private Optional<String> parseEodhdApiTokenEnv(DataSource dataSource) {

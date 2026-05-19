@@ -55,3 +55,9 @@ Feature: Config parser validation
     When the config parser reads the file
     Then ConfigParseException is thrown
     And the config violatedRule is "C8"
+
+  Scenario: A csv pattern with a placeholder in a directory component is rejected by C8
+    Given a TOML config with a csv placeholder in a directory component
+    When the config parser reads the file
+    Then ConfigParseException is thrown
+    And the config violatedRule is "C8"

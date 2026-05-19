@@ -134,6 +134,11 @@ public class ConfigParserSteps {
         tomlContent = csvConfig(tempDir.resolve("nope").resolve("{symbol}_{timeframe}.csv").toString());
     }
 
+    @Given("a TOML config with a csv placeholder in a directory component")
+    public void csvPlaceholderInDirectoryComponent() {
+        tomlContent = csvConfig(tempDir.resolve("{symbol}").resolve("{timeframe}.csv").toString());
+    }
+
     @Given("a strategy declaring parameter {string}")
     public void aStrategyDeclaringParameter(String parameterName) {
         assertEquals("rsi_period", parameterName);
