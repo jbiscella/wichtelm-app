@@ -244,11 +244,25 @@ public final class HtmlReportGenerator {
             if (window.bars().isEmpty()) {
                 continue;
             }
-            html.append(renderLocalChart(renderer, window, trigger, timeframe, data));
+            // Snap the visual trigger marker to the highlighted bar's open
+            // time. On a primary chart the bar's open IS the trigger time;
+            // on a higher-TF chart it is the previously closed bar's open,
+            // so without this snap the RSI sub-pane's vertical reference
+            // line could drift by up to one higher-TF bar relative to the
+            // BarHighlight on the main chart above.
+            Instant markerTime = trigger;
+            for (OHLCBar b : window.bars()) {
+                if (!b.time().isAfter(trigger)) {
+                    markerTime = b.time();
+                } else {
+                    break;
+                }
+            }
+            html.append(renderLocalChart(renderer, window, markerTime, timeframe, data));
             Instant windowStart = window.bars().getFirst().time();
             Instant windowEnd = window.bars().getLast().time();
             html.append(renderSubpanesForTimeframe(
-                    timeframe, fullSeries, windowStart, windowEnd, trigger, data));
+                    timeframe, fullSeries, windowStart, windowEnd, markerTime, data));
         }
 
         html.append("<table class=\"sub-report\"><thead><tr><th>Trigger time</th>");
