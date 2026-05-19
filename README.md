@@ -85,12 +85,13 @@ cd wichtelm-app
 mvn clean package
 ```
 
-The `package` phase produces two artifacts in `target/`:
+The `package` phase produces these artifacts in `target/`:
 
 | Artifact | What it is |
 |---|---|
-| `target/wichtelm.jar` | A self-contained, executable "fat" JAR (all dependencies shaded in) |
-| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage`; the executable is `target/dist/wichtelm/bin/wichtelm` |
+| `target/wichtelm.jar` | The executable JAR. All permissively-licensed dependencies are shaded in; the LGPL JFreeChart library is **not** — see [License](#license) |
+| `target/lib/jfreechart.jar` | The LGPL JFreeChart library, loaded at runtime via the JAR's manifest `Class-Path`. Must stay next to `wichtelm.jar` (as `lib/jfreechart.jar`) when the JAR is copied or distributed |
+| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage` (bundles both JARs); the executable is `target/dist/wichtelm/bin/wichtelm` |
 
 You can run the tool either way:
 
