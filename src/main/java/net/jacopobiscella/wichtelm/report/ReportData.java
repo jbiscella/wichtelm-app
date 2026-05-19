@@ -4,6 +4,7 @@ import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.frauholle.result.BacktestResult;
 
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -23,6 +24,9 @@ import java.util.Objects;
  * @param higherTimeframeSeries OHLC bars per higher timeframe, keyed by timeframe wire (e.g. "1d")
  * @param triggersByScenario   trigger bar times per Scenario name; drives the trigger
  *                             count, chart markers and sub-report rows of each box
+ * @param parameters           effective strategy parameter values (TOML overrides applied),
+ *                             used to resolve identifier args in Background series
+ *                             expressions when rendering indicator overlays
  */
 public record ReportData(String configBasename,
                          LocalDateTime generatedAt,
@@ -31,7 +35,8 @@ public record ReportData(String configBasename,
                          BacktestResult result,
                          OHLCSeries primarySeries,
                          Map<String, OHLCSeries> higherTimeframeSeries,
-                         Map<String, List<Instant>> triggersByScenario) {
+                         Map<String, List<Instant>> triggersByScenario,
+                         Map<String, BigDecimal> parameters) {
 
     public ReportData {
         Objects.requireNonNull(configBasename, "configBasename");
@@ -44,5 +49,6 @@ public record ReportData(String configBasename,
         Map<String, List<Instant>> triggers = new java.util.LinkedHashMap<>();
         triggersByScenario.forEach((name, times) -> triggers.put(name, List.copyOf(times)));
         triggersByScenario = Map.copyOf(triggers);
+        parameters = Map.copyOf(parameters);
     }
 }

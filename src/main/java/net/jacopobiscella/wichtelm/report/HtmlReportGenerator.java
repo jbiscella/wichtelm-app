@@ -1,10 +1,13 @@
 package net.jacopobiscella.wichtelm.report;
 
 import net.jacopobiscella.wichtelm.error.ReportGenerationException;
+import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
+import org.hatrack.commons.PriceSource;
+import org.hatrack.commons.Timeframe;
 import org.hatrack.frauholle.model.EquityPoint;
 import org.hatrack.frauholle.model.Trade;
 import org.hatrack.frauholle.result.BacktestDiagnostics;
@@ -15,6 +18,8 @@ import org.hatrack.heerwisch.api.port.ChartRenderer;
 import org.hatrack.heerwisch.api.spec.Annotation;
 import org.hatrack.heerwisch.api.spec.ChartImage;
 import org.hatrack.heerwisch.api.spec.ChartSpec;
+import org.hatrack.heerwisch.api.spec.ChartSpecBuilder;
+import org.hatrack.heerwisch.api.spec.Indicator;
 import org.hatrack.heerwisch.api.spec.LayoutSpec;
 import org.hatrack.heerwisch.jfreechart.JFreeChartRenderer;
 
@@ -53,6 +58,10 @@ public final class HtmlReportGenerator {
 
     private static final MathContext DECIMAL = MathContext.DECIMAL64;
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private static final Pattern INDICATOR_CALL =
+            Pattern.compile("^\\s*([a-z_][a-z0-9_]*)\\s*\\(([^)]*)\\)\\s*$");
+    private static final BigDecimal DEFAULT_RSI_OVERBOUGHT = BigDecimal.valueOf(70);
+    private static final BigDecimal DEFAULT_RSI_OVERSOLD = BigDecimal.valueOf(30);
 
     /**
      * Generates the report and returns the path written. The filename follows
@@ -184,7 +193,7 @@ public final class HtmlReportGenerator {
                 throw new ReportGenerationException(
                         "no series supplied for timeframe " + timeframe);
             }
-            html.append(renderChart(renderer, series, triggers, timeframe));
+            html.append(renderChart(renderer, series, triggers, timeframe, data));
         }
 
         List<StrategyStep> steps = scenario.conditionSteps();
@@ -225,9 +234,10 @@ public final class HtmlReportGenerator {
     }
 
     private String renderChart(ChartRenderer renderer, OHLCSeries series,
-                               List<Instant> markers, String timeframeLabel) {
+                               List<Instant> markers, String timeframeLabel, ReportData data) {
         try {
             var builder = ChartSpec.builder().withSeries(series).withLayout(LayoutSpec.defaults());
+            addIndicatorsForTimeframe(builder, timeframeLabel, series, data);
             TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
             for (OHLCBar bar : series.bars()) {
                 closeByTime.put(bar.time(), bar.close());
@@ -255,6 +265,81 @@ public final class HtmlReportGenerator {
             throw new ReportGenerationException(
                     "chart rendering failed for timeframe " + timeframeLabel, e);
         }
+    }
+
+    /**
+     * Wires every Background series whose timeframe matches the chart's
+     * timeframe into the ChartSpec as a heerwisch {@link Indicator}. Each
+     * indicator's default pane decides whether it overlays the price pane
+     * (SMA, EMA, BollingerBands) or renders as a subplot (RSI, ATR, MACD,
+     * ADX, Stochastic). Identifier args in the series expression resolve
+     * against the effective parameter map. Unsupported function names
+     * (window aggregates, MACD components, HA primitives, etc.) are
+     * skipped silently — the catalog covers more functions than heerwisch
+     * exposes as chart indicators.
+     */
+    private void addIndicatorsForTimeframe(ChartSpecBuilder builder, String timeframeLabel,
+                                            OHLCSeries underlying, ReportData data) {
+        String primaryTf = data.strategy().primaryTimeframe().wire();
+        int bars = underlying.bars().size();
+        for (BackgroundSeries series : data.strategy().backgroundSeries()) {
+            String seriesTf = series.timeframe().map(Timeframe::wire).orElse(primaryTf);
+            if (!seriesTf.equals(timeframeLabel)) {
+                continue;
+            }
+            Indicator indicator = toIndicator(series.expression(), data.parameters());
+            // Skip indicators the chart can't honour — heerwisch rejects a
+            // ChartSpec whose series has fewer bars than the indicator needs.
+            if (indicator != null && bars >= indicator.minBars()) {
+                builder.addIndicator(indicator);
+            }
+        }
+    }
+
+    /**
+     * Maps a Background series expression like {@code "ema(trend_period)"}
+     * or {@code "rsi(rsi_period)"} to a heerwisch {@link Indicator}, with
+     * identifier args resolved against the effective parameter map. RSI
+     * thresholds come from {@code overbought} / {@code oversold} parameters
+     * if the strategy declared them, otherwise fall back to 70 / 30.
+     */
+    private static Indicator toIndicator(String expression, Map<String, BigDecimal> parameters) {
+        Matcher matcher = INDICATOR_CALL.matcher(expression);
+        if (!matcher.matches()) {
+            return null;
+        }
+        String function = matcher.group(1);
+        String rawArgs = matcher.group(2).trim();
+        String[] args = rawArgs.isEmpty() ? new String[0] : rawArgs.split("\\s*,\\s*");
+        try {
+            return switch (function) {
+                case "sma" -> new Indicator.SMA(resolveIntArg(args, 0, parameters),
+                        PriceSource.CLOSE);
+                case "ema" -> new Indicator.EMA(resolveIntArg(args, 0, parameters),
+                        PriceSource.CLOSE);
+                case "rsi" -> new Indicator.RSI(
+                        resolveIntArg(args, 0, parameters),
+                        parameters.getOrDefault("overbought", DEFAULT_RSI_OVERBOUGHT),
+                        parameters.getOrDefault("oversold", DEFAULT_RSI_OVERSOLD),
+                        PriceSource.CLOSE);
+                case "atr" -> new Indicator.ATR(resolveIntArg(args, 0, parameters));
+                default -> null;
+            };
+        } catch (IllegalArgumentException unresolvable) {
+            return null;
+        }
+    }
+
+    private static int resolveIntArg(String[] args, int index, Map<String, BigDecimal> parameters) {
+        if (index >= args.length) {
+            throw new IllegalArgumentException("missing arg");
+        }
+        String token = args[index].trim();
+        BigDecimal fromParam = parameters.get(token);
+        if (fromParam != null) {
+            return fromParam.intValueExact();
+        }
+        return Integer.parseInt(token);
     }
 
     private void appendTrailingSection(StringBuilder html, ReportData data) {
