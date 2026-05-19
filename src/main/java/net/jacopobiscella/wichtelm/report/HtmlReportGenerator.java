@@ -1,10 +1,13 @@
 package net.jacopobiscella.wichtelm.report;
 
 import net.jacopobiscella.wichtelm.error.ReportGenerationException;
+import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
+import org.hatrack.commons.PriceSource;
+import org.hatrack.commons.Timeframe;
 import org.hatrack.frauholle.model.EquityPoint;
 import org.hatrack.frauholle.model.Trade;
 import org.hatrack.frauholle.result.BacktestDiagnostics;
@@ -15,8 +18,12 @@ import org.hatrack.heerwisch.api.port.ChartRenderer;
 import org.hatrack.heerwisch.api.spec.Annotation;
 import org.hatrack.heerwisch.api.spec.ChartImage;
 import org.hatrack.heerwisch.api.spec.ChartSpec;
+import org.hatrack.heerwisch.api.spec.ChartSpecBuilder;
+import org.hatrack.heerwisch.api.spec.Indicator;
 import org.hatrack.heerwisch.api.spec.LayoutSpec;
+import org.hatrack.heerwisch.api.spec.Pane;
 import org.hatrack.heerwisch.jfreechart.JFreeChartRenderer;
+import org.hatrack.indicators.Indicators;
 
 import java.io.IOException;
 import java.math.BigDecimal;
@@ -53,6 +60,10 @@ public final class HtmlReportGenerator {
 
     private static final MathContext DECIMAL = MathContext.DECIMAL64;
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
+    private static final Pattern INDICATOR_CALL =
+            Pattern.compile("^\\s*([a-z_][a-z0-9_]*)\\s*\\(([^)]*)\\)\\s*$");
+    private static final BigDecimal DEFAULT_RSI_OVERBOUGHT = BigDecimal.valueOf(70);
+    private static final BigDecimal DEFAULT_RSI_OVERSOLD = BigDecimal.valueOf(30);
 
     /**
      * Generates the report and returns the path written. The filename follows
@@ -184,7 +195,7 @@ public final class HtmlReportGenerator {
                 throw new ReportGenerationException(
                         "no series supplied for timeframe " + timeframe);
             }
-            html.append(renderChart(renderer, series, triggers, timeframe));
+            html.append(renderChart(renderer, series, triggers, timeframe, data));
         }
 
         List<StrategyStep> steps = scenario.conditionSteps();
@@ -225,9 +236,14 @@ public final class HtmlReportGenerator {
     }
 
     private String renderChart(ChartRenderer renderer, OHLCSeries series,
-                               List<Instant> markers, String timeframeLabel) {
+                               List<Instant> markers, String timeframeLabel, ReportData data) {
         try {
-            var builder = ChartSpec.builder().withSeries(series).withLayout(LayoutSpec.defaults());
+            // 900x350 leaves the main pane roomy enough to read individual
+            // candles while letting the SVG sub-panes below it (e.g. RSI)
+            // fit on the page without scrolling.
+            LayoutSpec layout = LayoutSpec.builder().withSize(900, 350).build();
+            var builder = ChartSpec.builder().withSeries(series).withLayout(layout);
+            addIndicatorsForTimeframe(builder, timeframeLabel, series, data);
             TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
             for (OHLCBar bar : series.bars()) {
                 closeByTime.put(bar.time(), bar.close());
@@ -250,11 +266,264 @@ public final class HtmlReportGenerator {
                     + "\" data-markers=\"" + placed + "\">"
                     + "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
                     + esc(image.contentType()) + ";base64," + base64 + "\"/>"
-                    + "<figcaption>" + esc(timeframeLabel) + "</figcaption></figure>";
+                    + "<figcaption>" + esc(timeframeLabel) + "</figcaption></figure>"
+                    + renderSubpanesForTimeframe(timeframeLabel, series, data);
         } catch (ChartRenderException e) {
             throw new ReportGenerationException(
                     "chart rendering failed for timeframe " + timeframeLabel, e);
         }
+    }
+
+    /**
+     * Wires every Background series whose timeframe matches the chart's
+     * timeframe into the ChartSpec as a heerwisch {@link Indicator}. Each
+     * indicator's default pane decides whether it overlays the price pane
+     * (SMA, EMA, BollingerBands) or renders as a subplot (RSI, ATR, MACD,
+     * ADX, Stochastic). Identifier args in the series expression resolve
+     * against the effective parameter map. Unsupported function names
+     * (window aggregates, MACD components, HA primitives, etc.) are
+     * skipped silently — the catalog covers more functions than heerwisch
+     * exposes as chart indicators.
+     */
+    private void addIndicatorsForTimeframe(ChartSpecBuilder builder, String timeframeLabel,
+                                            OHLCSeries underlying, ReportData data) {
+        int bars = underlying.bars().size();
+        for (BackgroundSeries series : seriesForTimeframe(timeframeLabel, data)) {
+            Indicator indicator = toIndicator(series.expression(), data.parameters());
+            // Only main-pane overlay indicators (SMA, EMA, BollingerBands)
+            // go through heerwisch. Sub-pane indicators are rendered as
+            // dedicated SVG sub-panes below the main chart image where we
+            // can pin the Y range and draw the overbought / oversold
+            // threshold lines that heerwisch does not emit.
+            if (indicator == null
+                    || indicator.defaultPane() != Pane.MAIN
+                    || bars < indicator.minBars()) {
+                continue;
+            }
+            builder.addIndicator(indicator);
+        }
+    }
+
+    /** Background series whose timeframe matches the chart being rendered. */
+    private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ReportData data) {
+        String primaryTf = data.strategy().primaryTimeframe().wire();
+        List<BackgroundSeries> hits = new ArrayList<>();
+        for (BackgroundSeries series : data.strategy().backgroundSeries()) {
+            String seriesTf = series.timeframe().map(Timeframe::wire).orElse(primaryTf);
+            if (seriesTf.equals(timeframeLabel)) {
+                hits.add(series);
+            }
+        }
+        return hits;
+    }
+
+    /**
+     * Renders each sub-pane indicator (currently RSI) as an SVG block below
+     * the main chart image, with a pinned 0–100 Y axis, threshold lines at
+     * the strategy's overbought / oversold parameters, pale danger-zone
+     * shading, and a monthly X axis that mirrors the main chart's range.
+     */
+    private String renderSubpanesForTimeframe(String timeframeLabel, OHLCSeries underlying,
+                                              ReportData data) {
+        int bars = underlying.bars().size();
+        StringBuilder out = new StringBuilder();
+        for (BackgroundSeries series : seriesForTimeframe(timeframeLabel, data)) {
+            Indicator indicator = toIndicator(series.expression(), data.parameters());
+            if (indicator instanceof Indicator.RSI rsi && bars > rsi.period()) {
+                out.append("<figure class=\"subpane\" data-indicator=\"rsi\">")
+                        .append(renderRsiSubpane(underlying, rsi.period(),
+                                rsi.overbought(), rsi.oversold()))
+                        .append("</figure>");
+            }
+        }
+        return out.toString();
+    }
+
+    private String renderRsiSubpane(OHLCSeries series, int period,
+                                    BigDecimal overbought, BigDecimal oversold) {
+        List<OHLCBar> bars = series.bars();
+        List<BigDecimal> closes = new ArrayList<>(bars.size());
+        Instant[] times = new Instant[bars.size()];
+        for (int i = 0; i < bars.size(); i++) {
+            closes.add(bars.get(i).close());
+            times[i] = bars.get(i).time();
+        }
+        BigDecimal[] rsi = Indicators.rsi(closes, period);
+
+        double vbW = 900.0;
+        double vbH = 140.0;
+        double padLeft = 50.0;
+        double padRight = 30.0;
+        double padTop = 22.0;
+        double padBottom = 36.0;
+        double plotW = vbW - padLeft - padRight;
+        double plotH = vbH - padTop - padBottom;
+
+        double obY = overbought.doubleValue();
+        double osY = oversold.doubleValue();
+        double obYpx = padTop + plotH - (obY / 100.0) * plotH;
+        double osYpx = padTop + plotH - (osY / 100.0) * plotH;
+
+        long t0 = times[0].toEpochMilli();
+        long t1 = times[times.length - 1].toEpochMilli();
+        long tSpan = Math.max(t1 - t0, 1L);
+
+        StringBuilder svg = new StringBuilder();
+        svg.append("<svg class=\"rsi-subpane\" viewBox=\"0 0 ")
+                .append((int) vbW).append(' ').append((int) vbH)
+                .append("\" width=\"100%\" preserveAspectRatio=\"xMidYMid meet\"")
+                .append(" xmlns=\"http://www.w3.org/2000/svg\">");
+
+        // Title.
+        svg.append("<text x=\"").append(round(padLeft))
+                .append("\" y=\"14\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#333\">RSI (")
+                .append(period).append(")</text>");
+
+        // Pale danger zones (red above overbought, green below oversold).
+        svg.append("<rect x=\"").append(round(padLeft)).append("\" y=\"").append(round(padTop))
+                .append("\" width=\"").append(round(plotW))
+                .append("\" height=\"").append(round(obYpx - padTop))
+                .append("\" fill=\"rgba(231,76,60,0.08)\"/>");
+        svg.append("<rect x=\"").append(round(padLeft)).append("\" y=\"").append(round(osYpx))
+                .append("\" width=\"").append(round(plotW))
+                .append("\" height=\"").append(round(padTop + plotH - osYpx))
+                .append("\" fill=\"rgba(39,174,96,0.08)\"/>");
+
+        // Y-axis grid + tick labels at 0 / 30 / 50 / 70 / 100.
+        int[] ticks = {0, 30, 50, 70, 100};
+        svg.append("<g font-size=\"10\" font-family=\"sans-serif\" fill=\"#555\">");
+        for (int yVal : ticks) {
+            double y = padTop + plotH - (yVal / 100.0) * plotH;
+            svg.append("<line x1=\"").append(round(padLeft))
+                    .append("\" x2=\"").append(round(padLeft + plotW))
+                    .append("\" y1=\"").append(round(y))
+                    .append("\" y2=\"").append(round(y))
+                    .append("\" stroke=\"#e6e6e6\"/>");
+            svg.append("<text x=\"").append(round(padLeft - 4))
+                    .append("\" y=\"").append(round(y + 3))
+                    .append("\" text-anchor=\"end\">").append(yVal).append("</text>");
+        }
+        svg.append("</g>");
+
+        // Dashed threshold lines at overbought / oversold.
+        svg.append("<line x1=\"").append(round(padLeft))
+                .append("\" x2=\"").append(round(padLeft + plotW))
+                .append("\" y1=\"").append(round(obYpx))
+                .append("\" y2=\"").append(round(obYpx))
+                .append("\" stroke=\"#999\" stroke-dasharray=\"3 3\" stroke-width=\"1\"/>");
+        svg.append("<line x1=\"").append(round(padLeft))
+                .append("\" x2=\"").append(round(padLeft + plotW))
+                .append("\" y1=\"").append(round(osYpx))
+                .append("\" y2=\"").append(round(osYpx))
+                .append("\" stroke=\"#999\" stroke-dasharray=\"3 3\" stroke-width=\"1\"/>");
+
+        // Monthly X-axis ticks, mirroring the main pane.
+        YearMonth startYm = YearMonth.from(times[0].atOffset(ZoneOffset.UTC).toLocalDate());
+        YearMonth endYm = YearMonth.from(
+                times[times.length - 1].atOffset(ZoneOffset.UTC).toLocalDate());
+        DateTimeFormatter monthFmt = DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
+        svg.append("<g font-size=\"10\" font-family=\"sans-serif\" fill=\"#555\">");
+        YearMonth ym = startYm;
+        while (!ym.isAfter(endYm)) {
+            Instant tickInstant = ym.atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+            long tickT = tickInstant.toEpochMilli();
+            if (tickT >= t0 && tickT <= t1) {
+                double px = padLeft + (double) (tickT - t0) / tSpan * plotW;
+                svg.append("<line x1=\"").append(round(px))
+                        .append("\" x2=\"").append(round(px))
+                        .append("\" y1=\"").append(round(padTop + plotH))
+                        .append("\" y2=\"").append(round(padTop + plotH + 4))
+                        .append("\" stroke=\"#888\"/>");
+                double labelY = padTop + plotH + 14;
+                svg.append("<text x=\"").append(round(px))
+                        .append("\" y=\"").append(round(labelY))
+                        .append("\" text-anchor=\"end\" transform=\"rotate(-45, ")
+                        .append(round(px)).append(',').append(round(labelY))
+                        .append(")\">").append(ym.format(monthFmt)).append("</text>");
+            }
+            ym = ym.plusMonths(1);
+        }
+        svg.append("</g>");
+
+        // Plot border.
+        svg.append("<rect x=\"").append(round(padLeft))
+                .append("\" y=\"").append(round(padTop))
+                .append("\" width=\"").append(round(plotW))
+                .append("\" height=\"").append(round(plotH))
+                .append("\" fill=\"none\" stroke=\"#888\"/>");
+
+        // RSI line (purple).
+        StringBuilder path = new StringBuilder();
+        boolean started = false;
+        for (int i = 0; i < rsi.length; i++) {
+            if (rsi[i] == null) {
+                continue;
+            }
+            double px = padLeft + (double) (times[i].toEpochMilli() - t0) / tSpan * plotW;
+            double py = padTop + plotH - (rsi[i].doubleValue() / 100.0) * plotH;
+            path.append(started ? "L" : "M").append(round(px)).append(' ')
+                    .append(round(py)).append(' ');
+            started = true;
+        }
+        svg.append("<path fill=\"none\" stroke=\"#7d3c98\" stroke-width=\"1.4\" d=\"")
+                .append(path.toString().strip()).append("\"/>");
+
+        svg.append("</svg>");
+        return svg.toString();
+    }
+
+    /**
+     * Maps a Background series expression like {@code "ema(trend_period)"}
+     * or {@code "rsi(rsi_period)"} to a heerwisch {@link Indicator}, with
+     * identifier args resolved against the effective parameter map. RSI
+     * thresholds come from {@code overbought} / {@code oversold} parameters
+     * if the strategy declared them, otherwise fall back to 70 / 30.
+     */
+    private static Indicator toIndicator(String expression, Map<String, BigDecimal> parameters) {
+        Matcher matcher = INDICATOR_CALL.matcher(expression);
+        if (!matcher.matches()) {
+            return null;
+        }
+        String function = matcher.group(1);
+        String rawArgs = matcher.group(2).trim();
+        String[] args = rawArgs.isEmpty() ? new String[0] : rawArgs.split("\\s*,\\s*");
+        try {
+            return switch (function) {
+                case "sma" -> new Indicator.SMA(resolveIntArg(args, 0, parameters),
+                        PriceSource.CLOSE);
+                case "ema" -> new Indicator.EMA(resolveIntArg(args, 0, parameters),
+                        PriceSource.CLOSE);
+                case "rsi" -> new Indicator.RSI(
+                        resolveIntArg(args, 0, parameters),
+                        parameters.getOrDefault("overbought", DEFAULT_RSI_OVERBOUGHT),
+                        parameters.getOrDefault("oversold", DEFAULT_RSI_OVERSOLD),
+                        PriceSource.CLOSE);
+                case "atr" -> new Indicator.ATR(resolveIntArg(args, 0, parameters));
+                default -> null;
+            };
+        } catch (IllegalArgumentException unresolvable) {
+            return null;
+        }
+    }
+
+    private static int resolveIntArg(String[] args, int index, Map<String, BigDecimal> parameters) {
+        if (index >= args.length) {
+            throw new IllegalArgumentException("missing arg");
+        }
+        String token = args[index].trim();
+        BigDecimal fromParam = parameters.get(token);
+        if (fromParam != null) {
+            try {
+                return fromParam.intValueExact();
+            } catch (ArithmeticException notInteger) {
+                // A non-integer override (e.g. 0.95) for an arg used in an
+                // integer slot — skip this indicator rather than crash the
+                // report. toIndicator() already catches IllegalArgumentException.
+                throw new IllegalArgumentException(
+                        "non-integer parameter value for arg '" + token + "': " + fromParam);
+            }
+        }
+        return Integer.parseInt(token);
     }
 
     private void appendTrailingSection(StringBuilder html, ReportData data) {

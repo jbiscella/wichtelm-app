@@ -99,7 +99,7 @@ public class ReportGenerationSteps {
 
     private ReportData reportData() {
         return new ReportData(configBasename, generatedAt, outputDirectory, strategy,
-                backtestResult(), primarySeries(), higherSeries, triggerTimes);
+                backtestResult(), primarySeries(), higherSeries, triggerTimes, Map.of());
     }
 
     @Given("a report for config basename {string} generated at {string}")
@@ -249,7 +249,7 @@ public class ReportGenerationSteps {
         triggerTimes = run.triggerTimes();
         result = run.result();
         ReportData data = new ReportData(configBasename, generatedAt, outputDirectory, strategy,
-                run.result(), new OHLCSeries(run.primarySeries()), Map.of(), triggerTimes);
+                run.result(), new OHLCSeries(run.primarySeries()), Map.of(), triggerTimes, Map.of());
         reportPath = new HtmlReportGenerator().generate(data);
         reportHtml = Files.readString(reportPath);
     }

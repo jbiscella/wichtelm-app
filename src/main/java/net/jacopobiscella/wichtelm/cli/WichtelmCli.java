@@ -122,7 +122,7 @@ public final class WichtelmCli {
             if (noReport) {
                 out.println("Backtest complete; report suppressed by --no-report.");
             } else {
-                Path report = writeReport(config, configFile, strategy, result, outputOverride);
+                Path report = writeReport(config, configFile, strategy, result, parameters, outputOverride);
                 out.println("Backtest complete; report written to " + report);
             }
             return EXIT_SUCCESS;
@@ -159,7 +159,8 @@ public final class WichtelmCli {
     }
 
     private Path writeReport(BacktestConfig config, Path configFile, ParsedStrategy strategy,
-                             BacktestRunResult result, Path outputOverride) {
+                             BacktestRunResult result, Map<String, BigDecimal> parameters,
+                             Path outputOverride) {
         String fileName = configFile.getFileName().toString();
         int dot = fileName.lastIndexOf('.');
         String basename = dot > 0 ? fileName.substring(0, dot) : fileName;
@@ -173,7 +174,7 @@ public final class WichtelmCli {
 
         ReportData data = new ReportData(basename, LocalDateTime.now(), outputDirectory, strategy,
                 result.result(), new OHLCSeries(result.primarySeries()), higherSeries,
-                result.triggerTimes());
+                result.triggerTimes(), parameters);
         return new HtmlReportGenerator().generate(data);
     }
 
