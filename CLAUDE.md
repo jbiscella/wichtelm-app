@@ -113,7 +113,7 @@ Expressions in Scenarios use the following syntax:
 | Comparison operators | English prose | `crosses below`, `crosses above`, `is above`, `is below`, `drops below`, `rises above`, `exceeds` |
 | Arithmetic operators | mathematical notation | `+`, `-`, `*`, `/`, parentheses `( )` with standard precedence (`*` and `/` before `+` and `-`) |
 | Variable references | unquoted identifiers | `entry_price`, `rsi_value`, `close`, `volume`, `trend` |
-| Function calls | unquoted with parentheses | `rsi(14)`, `ema(200)`, `atr(14)`, `highest(close, 10)` |
+| Function calls | unquoted with parentheses | `rsi(14)`, `ema(200)`, `atr(14)`, `highest_close(10)` |
 | Boolean composition between steps | Gherkin `And` / `But` | each step is implicitly AND-ed with the previous. OR-logic is expressed by duplicate Scenarios with the same `Then` |
 
 ### 3.7 Built-in DSL function/indicator catalog
@@ -123,7 +123,7 @@ Expressions in Scenarios use the following syntax:
 | Market variables (no parameters) | `open`, `high`, `low`, `close`, `volume`, `bar_time`, `bar_index` |
 | Base indicators (from `indicators` ha-track module) | `sma(period)`, `ema(period)`, `rsi(period)`, `atr(period)`, `stddev(period)` |
 | Composite indicators (decomposed — see note) | `macd_line(fast, slow, signal)`, `macd_signal(fast, slow, signal)`, `macd_histogram(fast, slow, signal)` |
-| Window aggregates | `highest(<expr>, period)`, `lowest(<expr>, period)`, `avg_volume(period)` |
+| Window aggregates (price-source variants — see note) | `highest_high(period)`, `lowest_low(period)`, `highest_close(period)`, `lowest_close(period)`, `avg_volume(period)` |
 | HA primitives (from nachtkrapp) | `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)`, `ha_strong(...)`, `ha_doji(...)` |
 | Price/MA primitives (from nachtkrapp) | `price_above_ma(...)`, `price_crosses_ma(...)` |
 | RSI level primitives (from nachtkrapp) | `rsi_crosses_50()`, `rsi_overbought(threshold)`, `rsi_oversold(threshold)` |
@@ -131,6 +131,8 @@ Expressions in Scenarios use the following syntax:
 | Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `entry_time`, `position_size` |
 
 Composite indicators are exposed as flat per-component functions in v1: there is no callable `macd` — its components are the three `macd_*` functions listed above, consistent with how every other indicator in the catalog is exposed flat. A field-accessor syntax (`macd(...).macd_line`) was considered and rejected: it would require a postfix-access layer in the expression parser plus indicator-specific parse-time validation, for no gain over flat functions. If field accessors are ever wanted, that is a general parser feature, not a MACD concern.
+
+Window aggregates likewise use hard-coded price-source variants (`highest_high`, `lowest_low`, `highest_close`, `lowest_close`) rather than a generic expression-typed first argument, again consistent with the rest of the catalog being flat. Each takes a single `period` argument and reduces a fixed field over the last `period` bars. A generic expression-typed first argument (`highest(<expr>, period)`) is reserved for a future parser extension if real demand emerges.
 
 The catalog is closed in v1. Adding new built-ins requires a v1.x additive release (japicmp-validated).
 
@@ -652,6 +654,7 @@ The following are explicitly NOT implemented in v1:
 - Walk-forward optimization
 - Parameter sweep tooling
 - User-defined DSL functions and macros
+- Expression-typed first arguments for window aggregates (e.g. `highest(<expression>, period)` where the first arg is computed bar-by-bar). v1 covers the common cases via hard-coded variants (`highest_high`, `lowest_low`, `highest_close`, `lowest_close`). Generic expression-typed args may be introduced if Tier B's boolean primitives or future features require them.
 - Output formats beyond HTML (PDF, JSON, CSV trade export)
 - Boolean and String parameter types
 - Indicators and window aggregates in `And with stop_loss at` / `And with take_profit at` clauses (only constants, parameters, and trade-context variables allowed)
