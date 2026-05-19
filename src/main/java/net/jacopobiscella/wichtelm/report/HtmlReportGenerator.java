@@ -21,6 +21,7 @@ import org.hatrack.heerwisch.jfreechart.JFreeChartRenderer;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.MathContext;
+import java.math.RoundingMode;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Instant;
@@ -75,7 +76,8 @@ public final class HtmlReportGenerator {
         StringBuilder html = new StringBuilder();
         html.append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/>")
                 .append("<title>Backtest report — ").append(esc(data.configBasename()))
-                .append("</title></head><body>");
+                .append("</title>").append(reportStylesheet())
+                .append("</head><body>");
 
         html.append("<header><h1>Backtest report</h1><p>Strategy: ")
                 .append(esc(data.strategy().featureName())).append("</p></header>");
@@ -101,23 +103,55 @@ public final class HtmlReportGenerator {
     }
 
     private void appendMetrics(StringBuilder html, BacktestMetrics metrics) {
-        html.append("<section class=\"aggregate-metrics\"><h2>Aggregate metrics</h2><dl>");
-        metricRow(html, "totalReturn", metrics.totalReturn().toPlainString());
-        metricRow(html, "numTrades", Integer.toString(metrics.numTrades()));
-        metricRow(html, "winRate", metrics.winRate().toPlainString());
-        metricRow(html, "maxDrawdown", metrics.maxDrawdown().toPlainString());
-        metricRow(html, "sharpeRatio", metrics.sharpeRatio().toPlainString());
-        metricRow(html, "sortinoRatio", metrics.sortinoRatio().toPlainString());
-        metricRow(html, "calmarRatio", metrics.calmarRatio().toPlainString());
-        metricRow(html, "profitFactor", metrics.profitFactor().signum() == 0
-                ? "undefined" : metrics.profitFactor().toPlainString());
-        metricRow(html, "avgWin", metrics.avgWin().toPlainString());
-        metricRow(html, "avgLoss", metrics.avgLoss().toPlainString());
-        html.append("</dl></section>");
+        html.append("<section class=\"aggregate-metrics\"><h2>Aggregate metrics</h2>")
+                .append("<table class=\"metrics-table\"><tbody>");
+        formattedMetricRow(html, "Total return", formatPercent(metrics.totalReturn()));
+        formattedMetricRow(html, "Number of trades", Integer.toString(metrics.numTrades()));
+        formattedMetricRow(html, "Win rate", formatPercent(metrics.winRate()));
+        formattedMetricRow(html, "Max drawdown", formatPercent(metrics.maxDrawdown()));
+        formattedMetricRow(html, "Sharpe ratio", formatRatio(metrics.sharpeRatio()));
+        formattedMetricRow(html, "Sortino ratio", formatRatio(metrics.sortinoRatio()));
+        formattedMetricRow(html, "Calmar ratio", formatRatio(metrics.calmarRatio()));
+        formattedMetricRow(html, "Profit factor", metrics.profitFactor().signum() == 0
+                ? "undefined" : formatRatio(metrics.profitFactor()));
+        formattedMetricRow(html, "Average win", formatAmount(metrics.avgWin()));
+        formattedMetricRow(html, "Average loss", formatAmount(metrics.avgLoss()));
+        html.append("</tbody></table></section>");
+    }
+
+    private void formattedMetricRow(StringBuilder html, String label, String value) {
+        html.append("<tr><td class=\"metric-name\">").append(esc(label))
+                .append("</td><td class=\"metric-value\">").append(esc(value))
+                .append("</td></tr>");
     }
 
     private void metricRow(StringBuilder html, String name, String value) {
         html.append("<dt>").append(name).append("</dt><dd>").append(esc(value)).append("</dd>");
+    }
+
+    private static String formatPercent(BigDecimal value) {
+        return value.movePointRight(2).setScale(2, RoundingMode.HALF_UP).toPlainString() + "%";
+    }
+
+    private static String formatRatio(BigDecimal value) {
+        return value.setScale(4, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static String formatAmount(BigDecimal value) {
+        return value.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static String reportStylesheet() {
+        return "<style>"
+                + "body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;"
+                + "max-width:1000px;margin:1.5em auto;padding:0 1em;color:#222;line-height:1.4;}"
+                + "h1{margin:0 0 .2em 0;}h2{margin-top:1.8em;border-bottom:1px solid #ddd;padding-bottom:.2em;}"
+                + ".metrics-table{border-collapse:collapse;margin:.6em 0 1.4em 0;min-width:340px;}"
+                + ".metrics-table td{padding:6px 18px;border-bottom:1px solid #eee;}"
+                + ".metrics-table tr:last-child td{border-bottom:none;}"
+                + ".metrics-table .metric-name{color:#555;}"
+                + ".metrics-table .metric-value{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;}"
+                + "</style>";
     }
 
     private void appendScenarioBoxes(StringBuilder html, ReportData data, ChartRenderer renderer) {
