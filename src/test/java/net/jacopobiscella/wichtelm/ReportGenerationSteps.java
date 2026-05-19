@@ -64,7 +64,7 @@ public class ReportGenerationSteps {
     private Path reportPath;
     private String reportHtml;
     private Path dataDir;
-    private Map<String, Integer> triggerCounts = Map.of();
+    private Map<String, List<Instant>> triggerTimes = Map.of();
 
     private static OHLCSeries series(Instant start, Duration step, int count) {
         List<OHLCBar> bars = new ArrayList<>();
@@ -99,7 +99,7 @@ public class ReportGenerationSteps {
 
     private ReportData reportData() {
         return new ReportData(configBasename, generatedAt, outputDirectory, strategy,
-                backtestResult(), primarySeries(), higherSeries, Map.of(), triggerCounts);
+                backtestResult(), primarySeries(), higherSeries, triggerTimes);
     }
 
     @Given("a report for config basename {string} generated at {string}")
@@ -231,23 +231,70 @@ public class ReportGenerationSteps {
                 DataSource.CSV, BigDecimal.valueOf(50), true, Map.of(), Optional.empty(),
                 Optional.of(dataDir.resolve("{symbol}_{timeframe}.csv")), Optional.empty(), List.of());
         BacktestRunResult run = new BacktestRunner().run(strategy, config, Map.of());
-        triggerCounts = run.triggerCounts();
+        triggerTimes = run.triggerTimes();
         result = run.result();
         ReportData data = new ReportData(configBasename, generatedAt, outputDirectory, strategy,
-                run.result(), new OHLCSeries(run.primarySeries()), Map.of(), Map.of(), triggerCounts);
+                run.result(), new OHLCSeries(run.primarySeries()), Map.of(), triggerTimes);
         reportPath = new HtmlReportGenerator().generate(data);
         reportHtml = Files.readString(reportPath);
     }
 
     @Then("the box for {string} shows {string}")
     public void theBoxForScenarioShows(String scenarioName, String expectedText) {
+        String box = boxFor(scenarioName);
+        assertTrue(box.contains(expectedText),
+                () -> "box for " + scenarioName + " did not contain '" + expectedText + "': " + box);
+    }
+
+    @Then("the box for {string} has {int} chart markers")
+    public void theBoxForScenarioHasChartMarkers(String scenarioName, int expected) {
+        assertEquals(expected, markerCount(boxFor(scenarioName)),
+                () -> "unexpected chart marker count in box for " + scenarioName);
+    }
+
+    @Then("the box for {string} has {int} sub-report rows")
+    public void theBoxForScenarioHasSubReportRows(String scenarioName, int expected) {
+        assertEquals(expected, subReportRowCount(boxFor(scenarioName)),
+                () -> "unexpected sub-report row count in box for " + scenarioName);
+    }
+
+    @Then("the chart markers and sub-report rows of the {string} box correspond to the same trigger count")
+    public void theMarkersAndRowsCorrespond(String scenarioName) {
+        String box = boxFor(scenarioName);
+        int markers = markerCount(box);
+        int rows = subReportRowCount(box);
+        assertEquals(markers, rows,
+                () -> "chart markers (" + markers + ") and sub-report rows (" + rows
+                        + ") disagree for box " + scenarioName);
+        assertTrue(box.contains("Trigger count: " + markers),
+                () -> "trigger count does not match the " + markers + " markers/rows in box "
+                        + scenarioName);
+    }
+
+    private String boxFor(String scenarioName) {
         String marker = "data-scenario=\"" + scenarioName + "\"";
         int start = reportHtml.indexOf(marker);
         assertTrue(start >= 0, () -> "no box for scenario " + scenarioName);
         int end = reportHtml.indexOf("</section>", start);
-        String box = reportHtml.substring(start, end < 0 ? reportHtml.length() : end);
-        assertTrue(box.contains(expectedText),
-                () -> "box for " + scenarioName + " did not contain '" + expectedText + "': " + box);
+        return reportHtml.substring(start, end < 0 ? reportHtml.length() : end);
+    }
+
+    private static int markerCount(String box) {
+        int total = 0;
+        Matcher matcher = Pattern.compile("data-markers=\"(\\d+)\"").matcher(box);
+        while (matcher.find()) {
+            total += Integer.parseInt(matcher.group(1));
+        }
+        return total;
+    }
+
+    private static int subReportRowCount(String box) {
+        int bodyStart = box.indexOf("<tbody>");
+        int bodyEnd = box.indexOf("</tbody>", bodyStart);
+        if (bodyStart < 0 || bodyEnd < 0) {
+            return 0;
+        }
+        return countMatches(box.substring(bodyStart, bodyEnd), "<tr>");
     }
 
     private String focusBox() {

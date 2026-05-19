@@ -124,7 +124,7 @@ public final class HtmlReportGenerator {
         html.append("<section class=\"scenario-box\" data-scenario=\"")
                 .append(esc(scenario.name())).append("\"><h3>").append(esc(scenario.name()))
                 .append("</h3><p class=\"trigger-count\">Trigger count: ")
-                .append(data.triggerCounts().getOrDefault(scenario.name(), 0)).append("</p>");
+                .append(triggers.size()).append("</p>");
 
         for (String timeframe : timeframesFor(data, scenario)) {
             OHLCSeries series = timeframe.equals(data.strategy().primaryTimeframe().wire())
@@ -137,9 +137,19 @@ public final class HtmlReportGenerator {
             html.append(renderChart(renderer, series, triggers, timeframe));
         }
 
-        html.append("<table class=\"sub-report\"><thead><tr><th>Trigger time</th></tr></thead><tbody>");
+        List<StrategyStep> steps = scenario.conditionSteps();
+        html.append("<table class=\"sub-report\"><thead><tr><th>Trigger time</th>");
+        for (StrategyStep step : steps) {
+            html.append("<th>").append(esc(step.text())).append("</th>");
+        }
+        html.append("</tr></thead><tbody>");
         for (Instant trigger : triggers) {
-            html.append("<tr><td>").append(esc(trigger.toString())).append("</td></tr>");
+            html.append("<tr><td>").append(esc(trigger.toString())).append("</td>");
+            // Every When/And step held at a trigger bar — that is what a trigger is.
+            for (int i = 0; i < steps.size(); i++) {
+                html.append("<td class=\"sub-condition-held\">✓</td>");
+            }
+            html.append("</tr>");
         }
         html.append("</tbody></table></section>");
     }
@@ -172,15 +182,18 @@ public final class HtmlReportGenerator {
             for (OHLCBar bar : series.bars()) {
                 closeByTime.put(bar.time(), bar.close());
             }
+            int placed = 0;
             for (Instant marker : markers) {
                 BigDecimal price = closeByTime.get(marker);
                 if (price != null) {
                     builder.addAnnotation(new Annotation.BarHighlight(marker, price, "trigger"));
+                    placed++;
                 }
             }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
-            return "<figure class=\"chart\" data-timeframe=\"" + esc(timeframeLabel) + "\">"
+            return "<figure class=\"chart\" data-timeframe=\"" + esc(timeframeLabel)
+                    + "\" data-markers=\"" + placed + "\">"
                     + "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
                     + esc(image.contentType()) + ";base64," + base64 + "\"/>"
                     + "<figcaption>" + esc(timeframeLabel) + "</figcaption></figure>";

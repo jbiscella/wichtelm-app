@@ -37,3 +37,12 @@ Feature: HTML report generation
     And the report output directory is a fresh temporary directory
     When a backtest is run and its report is generated
     Then the box for "Always enter" shows "Trigger count: 3"
+
+  Scenario: A Scenario box renders one chart marker and one sub-report row per trigger
+    Given a pyramiding strategy whose entry Scenario always fires
+    And a CSV dataset of 3 primary bars
+    And the report output directory is a fresh temporary directory
+    When a backtest is run and its report is generated
+    Then the box for "Always enter" has 3 chart markers
+    And the box for "Always enter" has 3 sub-report rows
+    And the chart markers and sub-report rows of the "Always enter" box correspond to the same trigger count

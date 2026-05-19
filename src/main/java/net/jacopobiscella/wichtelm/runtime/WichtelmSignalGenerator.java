@@ -62,7 +62,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private final Map<String, BackgroundSeries> seriesByName = new LinkedHashMap<>();
     private final Map<String, List<OHLCBar>> higherTimeframeBars = new HashMap<>();
     private final Map<String, HigherTimeframeSeries> higherResolvers = new HashMap<>();
-    private final Map<String, Integer> triggerCounts = new LinkedHashMap<>();
+    private final Map<String, List<Instant>> triggerTimes = new LinkedHashMap<>();
 
     /** Generator for a strategy without higher-timeframe Background series. */
     public WichtelmSignalGenerator(ParsedStrategy strategy, Map<String, BigDecimal> parameters,
@@ -122,7 +122,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         for (StrategyScenario scenario : strategy.scenarios()) {
             if (scenario.precondition() == exitPrecondition
                     && conjunctionHolds(scenario, evaluator, current, previous)) {
-                recordTrigger(scenario);
+                recordTrigger(scenario, bar.time());
                 return new Signal.ClosePosition();
             }
         }
@@ -135,7 +135,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 if (scenario.precondition() == PositionPrecondition.NO_OPEN_POSITION
                         && scenario.terminalCondition() == sameDirectionEntry
                         && conjunctionHolds(scenario, evaluator, current, previous)) {
-                    recordTrigger(scenario);
+                    recordTrigger(scenario, bar.time());
                     return new Signal.AddToPosition(quantity(context), position.direction());
                 }
             }
@@ -151,7 +151,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 continue;
             }
             if (conjunctionHolds(scenario, evaluator, current, previous)) {
-                recordTrigger(scenario);
+                recordTrigger(scenario, context.currentBar().time());
                 BigDecimal quantity = quantity(context);
                 return scenario.terminalCondition() == FirstClassCondition.LONG_ENTRY
                         ? new Signal.Buy(quantity)
@@ -161,13 +161,19 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         return new Signal.Hold();
     }
 
-    /** Trigger count per Scenario name, accumulated across the backtest (CLAUDE.md section 7.3). */
-    public Map<String, Integer> triggerCounts() {
-        return Map.copyOf(triggerCounts);
+    /**
+     * Trigger bar times per Scenario name, in chronological order, accumulated
+     * across the backtest. The report derives the trigger count, chart markers
+     * and sub-report rows from this list (CLAUDE.md section 7.3).
+     */
+    public Map<String, List<Instant>> triggerTimes() {
+        Map<String, List<Instant>> copy = new LinkedHashMap<>();
+        triggerTimes.forEach((name, times) -> copy.put(name, List.copyOf(times)));
+        return Map.copyOf(copy);
     }
 
-    private void recordTrigger(StrategyScenario scenario) {
-        triggerCounts.merge(scenario.name(), 1, Integer::sum);
+    private void recordTrigger(StrategyScenario scenario, Instant barTime) {
+        triggerTimes.computeIfAbsent(scenario.name(), name -> new ArrayList<>()).add(barTime);
     }
 
     /** Snapshotted stop_loss price for an open position, if its entry Scenario declared one. */

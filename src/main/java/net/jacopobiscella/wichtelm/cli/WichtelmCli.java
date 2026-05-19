@@ -168,7 +168,7 @@ public final class WichtelmCli {
 
         ReportData data = new ReportData(basename, LocalDateTime.now(), outputDirectory, strategy,
                 result.result(), new OHLCSeries(result.primarySeries()), higherSeries,
-                Map.of(), result.triggerCounts());
+                result.triggerTimes());
         return new HtmlReportGenerator().generate(data);
     }
 
