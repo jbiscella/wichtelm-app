@@ -58,6 +58,12 @@ Feature: Strategy parser parse-time validation
     Then StrategyParseException is thrown
     And violatedRule is "P13"
 
+  Scenario: A function call with the wrong arity is rejected by P14
+    Given a strategy file with "When macd_line(12, 26) is above 0"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P14"
+
   Scenario: A well-formed canonical strategy parses successfully
     Given the canonical example strategy from section 3.9
     When the parser reads the file
