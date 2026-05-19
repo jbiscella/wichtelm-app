@@ -293,24 +293,43 @@ public final class HtmlReportGenerator {
         }
         int max = 0;
         for (String name : referenced) {
-            Indicator ind = toIndicator(seriesByName.get(name).expression(), data.parameters());
-            if (ind == null) {
-                continue;
-            }
-            int period = switch (ind) {
-                case Indicator.SMA s -> s.period();
-                case Indicator.EMA e -> e.period();
-                case Indicator.RSI r -> r.period();
-                case Indicator.ATR a -> a.period();
-                case Indicator.BollingerBands b -> b.period();
-                case Indicator.MACD m -> m.slowPeriod() + m.signalPeriod();
-                case Indicator.ADX a -> a.period();
-                case Indicator.Stochastic s -> s.kPeriod() + s.dPeriod() + s.smoothing();
-                case Indicator.VolumePane v -> 1;
-            };
-            max = Math.max(max, period);
+            max = Math.max(max,
+                    indicatorPeriodOf(seriesByName.get(name).expression(), data.parameters()));
         }
         return max;
+    }
+
+    /**
+     * Extracts the lookback period of a Background series expression so the
+     * local window can be sized to honour it. Recognises the full v1 catalog,
+     * not just the heerwisch-renderable subset that {@link #toIndicator}
+     * returns — window aggregates ({@code highest_close} etc.) and MACD
+     * component functions ({@code macd_line} etc.) are also accounted for.
+     */
+    private static int indicatorPeriodOf(String expression,
+                                         Map<String, BigDecimal> parameters) {
+        Matcher matcher = INDICATOR_CALL.matcher(expression);
+        if (!matcher.matches()) {
+            return 0;
+        }
+        String function = matcher.group(1);
+        String rawArgs = matcher.group(2).trim();
+        String[] args = rawArgs.isEmpty() ? new String[0] : rawArgs.split("\\s*,\\s*");
+        try {
+            return switch (function) {
+                case "sma", "ema", "rsi", "atr", "stddev",
+                     "highest_high", "lowest_low", "highest_close", "lowest_close",
+                     "avg_volume" -> resolveIntArg(args, 0, parameters);
+                case "macd_line", "macd_signal", "macd_histogram" -> {
+                    int slow = resolveIntArg(args, 1, parameters);
+                    int signal = resolveIntArg(args, 2, parameters);
+                    yield slow + signal;
+                }
+                default -> 0;
+            };
+        } catch (IllegalArgumentException | ArrayIndexOutOfBoundsException ignored) {
+            return 0;
+        }
     }
 
     /**
