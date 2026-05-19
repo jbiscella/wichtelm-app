@@ -1,0 +1,3 @@
+# Ignore timestamped reports produced by re-running the demo;
+# the committed demo-backtest-report.html is the stable reference copy.
+demo-backtest_*.html

@@ -35,6 +35,7 @@ published to Maven Central under the `net.jacopobiscella` namespace.
 - [The HTML report](#the-html-report)
 - [Exit codes and errors](#exit-codes-and-errors)
 - [Worked example](#worked-example)
+- [Demo](#demo)
 - [Limitations (v1 scope)](#limitations-v1-scope)
 - [Development](#development)
 
@@ -552,6 +553,22 @@ wichtelm run backtests/aapl-2024.toml
 ```
 
 Open the resulting HTML file in any browser.
+
+---
+
+## Demo
+
+The [`demo/`](demo/) directory is a complete, runnable example — a
+multi-timeframe strategy, synthetic CSV data, a config file, and the HTML
+report the tool produced from them. Run the whole pipeline end to end with:
+
+```sh
+./demo/run_demo.sh
+```
+
+See [`demo/README.md`](demo/README.md) for details, and
+[`demo/reports/demo-backtest-report.html`](demo/reports/demo-backtest-report.html)
+for a sample report.
 
 ---
 
