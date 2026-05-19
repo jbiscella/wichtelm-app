@@ -40,6 +40,7 @@
     <shade.plugin.version>3.6.2</shade.plugin.version>
     <antrun.plugin.version>3.2.0</antrun.plugin.version>
     <license.plugin.version>2.5.0</license.plugin.version>
+    <dependency.plugin.version>3.8.1</dependency.plugin.version>
   </properties>
 
   <dependencyManagement>
@@ -184,6 +185,31 @@
         </configuration>
       </plugin>
 
+      <!-- JFreeChart is LGPL-2.1: it must NOT be merged into the shaded
+           uber-JAR (LGPL section 6 requires the end user be able to relink
+           a modified copy). It is instead copied next to the JAR as a
+           separate, user-replaceable artifact and referenced via the
+           manifest Class-Path. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>${dependency.plugin.version}</version>
+        <executions>
+          <execution>
+            <id>copy-lgpl-jfreechart</id>
+            <phase>prepare-package</phase>
+            <goals>
+              <goal>copy-dependencies</goal>
+            </goals>
+            <configuration>
+              <includeArtifactIds>jfreechart</includeArtifactIds>
+              <outputDirectory>${project.build.directory}/lib</outputDirectory>
+              <stripVersion>true</stripVersion>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-shade-plugin</artifactId>
@@ -195,9 +221,19 @@
               <goal>shade</goal>
             </goals>
             <configuration>
+              <!-- LGPL JFreeChart stays out of the uber-JAR; it is loaded
+                   at runtime from the sibling lib/jfreechart.jar. -->
+              <artifactSet>
+                <excludes>
+                  <exclude>org.jfree:jfreechart</exclude>
+                </excludes>
+              </artifactSet>
               <transformers>
                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
                   <mainClass>net.jacopobiscella.wichtelm.cli.WichtelmCli</mainClass>
+                  <manifestEntries>
+                    <Class-Path>lib/jfreechart.jar</Class-Path>
+                  </manifestEntries>
                 </transformer>
               </transformers>
             </configuration>
@@ -226,6 +262,12 @@
                 <mkdir dir="${project.build.directory}/jpackage-input"/>
                 <copy file="${project.build.directory}/${project.build.finalName}.jar"
                       todir="${project.build.directory}/jpackage-input"/>
+                <!-- Ship the LGPL JFreeChart JAR alongside the uber-JAR so
+                     the manifest Class-Path resolves and the library stays
+                     separately replaceable. -->
+                <copy todir="${project.build.directory}/jpackage-input/lib">
+                  <fileset dir="${project.build.directory}/lib"/>
+                </copy>
                 <exec executable="${java.home}/bin/jpackage" failonerror="true">
                   <arg value="--type"/>
                   <arg value="app-image"/>

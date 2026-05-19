@@ -657,5 +657,10 @@ and regulations in their jurisdiction.
 
 `wichtelm-app` is released under the **BSD Zero Clause License (0BSD)** — a
 permissive, public-domain-equivalent license. See the [`LICENSE`](LICENSE)
-file for the full text. A generated [`THIRD-PARTY.txt`](THIRD-PARTY.txt)
-lists the licenses of all bundled dependencies.
+file for the full text, and the generated
+[`THIRD-PARTY.txt`](THIRD-PARTY.txt) for the licenses of every dependency.
+
+One dependency, **JFreeChart**, is licensed under the LGPL 2.1. It is
+therefore *not* merged into the executable JAR: it ships as a separate
+`lib/jfreechart.jar` referenced from the JAR's manifest `Class-Path`, so it
+stays independently replaceable as the LGPL requires.
