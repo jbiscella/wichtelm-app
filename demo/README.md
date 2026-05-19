@@ -15,7 +15,7 @@ pipeline (build → parse → load CSV → backtest → render report).
 | `data/DEMO_1h.csv` | Hourly OHLC bars — the primary timeframe (2880 bars, 120 days) |
 | `data/DEMO_1d.csv` | Daily OHLC bars — the higher timeframe used by the trend filter (120 bars) |
 | `demo-backtest.toml` | The per-backtest config that ties strategy + data + date range together |
-| `generate_data.py` | Deterministic generator for the two CSV files |
+| `GenerateData.java` | Deterministic generator for the two CSV files (single-file Java program) |
 | `run_demo.sh` | One-shot end-to-end run (build, generate, validate, backtest) |
 | `reports/demo-backtest-report.html` | The committed HTML report produced by the run below |
 
@@ -31,7 +31,7 @@ Or step by step:
 
 ```sh
 mvn clean package -DskipTests          # build target/wichtelm.jar
-python3 demo/generate_data.py          # (re)create the CSV data
+java demo/GenerateData.java            # (re)create the CSV data
 java -jar target/wichtelm.jar validate demo/strategies/mean-reversion-trend.strat
 java -jar target/wichtelm.jar run demo/demo-backtest.toml
 ```
@@ -80,7 +80,7 @@ the report handles a scenario with zero triggers.
 
 ## The data
 
-`generate_data.py` produces a deterministic synthetic price path: a slow
+`GenerateData.java` produces a deterministic synthetic price path: a slow
 trend regime (a rise then a fall, so the trend filter admits longs early and
 shorts late) plus three beating oscillations that drive the RSI across its
 thresholds with varying swing sizes. The 1d series is aggregated from the 1h

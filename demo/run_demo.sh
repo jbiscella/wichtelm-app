@@ -25,7 +25,7 @@ else
 fi
 
 echo "==> regenerating synthetic OHLC data"
-python3 demo/generate_data.py
+java demo/GenerateData.java
 
 echo "==> validating the demo strategy"
 java -jar "$JAR" validate demo/strategies/mean-reversion-trend.strat
