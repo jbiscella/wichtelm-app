@@ -1,3 +1,5 @@
-# Ignore timestamped reports produced by re-running the demo;
-# the committed demo-backtest-report.html is the stable reference copy.
+# Ignore timestamped reports produced by re-running the demos;
+# the committed *-report.html files are the stable reference copies.
 demo-backtest_*.html
+spx2020-backtest_*.html
+spx2022-backtest_*.html

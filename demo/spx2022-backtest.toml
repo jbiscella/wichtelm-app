@@ -1,0 +1,29 @@
+# wichtelm-app SPX 2022 backtest — the mean-reversion-with-trend-filter
+# strategy run against the synthetic SPX 2022 (bear market) dataset.
+# Run from the repository root:
+#   wichtelm run demo/spx2022-backtest.toml
+# Paths below are resolved relative to this config file (the demo/ directory).
+
+strategy    = "strategies/mean-reversion-trend.strat"
+symbol      = "SPX2022"
+data_source = "csv"
+
+[date_range]
+from = 2022-01-01
+to   = 2022-12-31
+
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+
+[parameters]
+oversold       = 30
+overbought     = 70
+trend_period   = 20
+stop_loss_pct  = 5
+
+[output]
+directory = "reports"
+
+[csv]
+file = "data/{symbol}_{timeframe}.csv"
