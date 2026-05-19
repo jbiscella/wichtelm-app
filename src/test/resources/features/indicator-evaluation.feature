@@ -33,6 +33,12 @@ Feature: Indicator function evaluation
     When the SignalGenerator evaluates the bar
     Then an entry signal is emitted
 
+  Scenario: a window aggregate with insufficient history emits no entry
+    Given a strategy whose entry condition is "highest_high(20) exceeds 0"
+    And a rising price history of 8 bars
+    When the SignalGenerator evaluates the bar
+    Then no entry signal is emitted
+
   Scenario: a condition that does not hold emits no entry
     Given a strategy whose entry condition is "close is below sma(3)"
     And a rising price history of 16 bars

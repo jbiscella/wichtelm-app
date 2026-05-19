@@ -9,6 +9,7 @@ import java.math.BigDecimal;
 import java.math.MathContext;
 import java.time.Instant;
 import java.util.List;
+import java.util.function.Function;
 
 /**
  * Evaluates indicator function calls against the bars visible up to and
@@ -16,12 +17,13 @@ import java.util.List;
  * {@code indicators} module where it provides the calculator.
  *
  * <p>This covers the §3.7 base indicators {@code sma}, {@code ema},
- * {@code rsi}, {@code atr}, {@code stddev} and the MACD components
- * {@code macd_line}, {@code macd_signal} and {@code macd_histogram}.
- * {@code stddev} is computed here (population standard deviation of the close
- * window) because the {@code indicators} module exposes no standalone
- * {@code stddev} calculator. The remaining catalog entries (the window
- * aggregates and the nachtkrapp pattern primitives) raise a
+ * {@code rsi}, {@code atr}, {@code stddev}, the MACD components
+ * {@code macd_line}, {@code macd_signal}, {@code macd_histogram} and the
+ * window aggregates {@code highest_high}, {@code lowest_low},
+ * {@code highest_close}, {@code lowest_close} and {@code avg_volume}.
+ * {@code stddev} and the window aggregates are computed here because the
+ * {@code indicators} module exposes no standalone calculator for them. The
+ * remaining catalog entries (the nachtkrapp pattern primitives) raise a
  * {@link DslEvaluationException} until their own increment lands.
  */
 public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSource {
@@ -53,6 +55,15 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
             case "macd_line" -> latest(functionName, macd(functionName, arguments).macdLine());
             case "macd_signal" -> latest(functionName, macd(functionName, arguments).signalLine());
             case "macd_histogram" -> latest(functionName, macd(functionName, arguments).histogram());
+            case "highest_high" -> windowExtreme(
+                    window(functionName, period(functionName, arguments)), OHLCBar::high, true);
+            case "lowest_low" -> windowExtreme(
+                    window(functionName, period(functionName, arguments)), OHLCBar::low, false);
+            case "highest_close" -> windowExtreme(
+                    window(functionName, period(functionName, arguments)), OHLCBar::close, true);
+            case "lowest_close" -> windowExtreme(
+                    window(functionName, period(functionName, arguments)), OHLCBar::close, false);
+            case "avg_volume" -> avgVolume(window(functionName, period(functionName, arguments)));
             default -> throw fail(functionName,
                     "indicator '" + functionName + "' is not implemented in this increment");
         };
@@ -130,6 +141,38 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
             varianceSum = varianceSum.add(deviation.multiply(deviation, DECIMAL), DECIMAL);
         }
         return varianceSum.divide(divisor, DECIMAL).sqrt(DECIMAL);
+    }
+
+    /** The last {@code period} bars ending at (and including) the current bar. */
+    private List<OHLCBar> window(String functionName, int period) {
+        if (bars.size() < period) {
+            throw new IndicatorWarmupException(
+                    "insufficient bar history to evaluate " + functionName + " at this bar");
+        }
+        return bars.subList(bars.size() - period, bars.size());
+    }
+
+    /** Maximum (when {@code max}) or minimum of {@code field} over {@code window}. */
+    private static BigDecimal windowExtreme(List<OHLCBar> window,
+                                            Function<OHLCBar, BigDecimal> field, boolean max) {
+        BigDecimal result = field.apply(window.getFirst());
+        for (OHLCBar bar : window) {
+            BigDecimal value = field.apply(bar);
+            if (max ? value.compareTo(result) > 0 : value.compareTo(result) < 0) {
+                result = value;
+            }
+        }
+        return result;
+    }
+
+    /** Mean bar volume over {@code window}; volume must be present on every bar. */
+    private BigDecimal avgVolume(List<OHLCBar> window) {
+        BigDecimal sum = BigDecimal.ZERO;
+        for (OHLCBar bar : window) {
+            sum = sum.add(bar.volume().orElseThrow(() -> fail("avg_volume",
+                    "avg_volume requires volume data, absent for a bar in the window")), DECIMAL);
+        }
+        return sum.divide(BigDecimal.valueOf(window.size()), DECIMAL);
     }
 
     private List<BigDecimal> closes() {
