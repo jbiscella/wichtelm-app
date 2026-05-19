@@ -304,12 +304,24 @@ public class ReportGenerationSteps {
     }
 
     private static int subReportRowCount(String box) {
-        int bodyStart = box.indexOf("<tbody>");
-        int bodyEnd = box.indexOf("</tbody>", bodyStart);
-        if (bodyStart < 0 || bodyEnd < 0) {
-            return 0;
+        // With Task D's per-trigger nested layout each trigger renders its
+        // own sub-report mini-table, so the row count is summed across every
+        // <tbody> block in the box.
+        int total = 0;
+        int cursor = 0;
+        while (true) {
+            int bodyStart = box.indexOf("<tbody>", cursor);
+            if (bodyStart < 0) {
+                break;
+            }
+            int bodyEnd = box.indexOf("</tbody>", bodyStart);
+            if (bodyEnd < 0) {
+                break;
+            }
+            total += countMatches(box.substring(bodyStart, bodyEnd), "<tr>");
+            cursor = bodyEnd + "</tbody>".length();
         }
-        return countMatches(box.substring(bodyStart, bodyEnd), "<tr>");
+        return total;
     }
 
     private String focusBox() {

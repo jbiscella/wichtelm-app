@@ -165,6 +165,17 @@ public final class HtmlReportGenerator {
                 + ".metrics-table tr:last-child td{border-bottom:none;}"
                 + ".metrics-table .metric-name{color:#555;}"
                 + ".metrics-table .metric-value{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;}"
+                + ".scenario-box{margin:1.4em 0;padding:.4em 0;}"
+                + ".scenario-box>h3{margin-bottom:.1em;}"
+                + ".scenario-box .trigger-count{margin:0 0 .6em 0;color:#666;font-size:.9em;}"
+                + ".trigger-block{border:1px solid #ddd;border-radius:4px;padding:.6em .8em;"
+                + "margin:.5em 0 1em 0;background:#fafafa;}"
+                + ".trigger-block h4{margin:0 0 .4em 0;font-size:.95em;color:#333;font-weight:600;}"
+                + ".trigger-block figure{margin:.3em 0;}"
+                + ".sub-report{border-collapse:collapse;margin-top:.5em;font-size:.85em;}"
+                + ".sub-report th,.sub-report td{border:1px solid #ddd;padding:4px 10px;text-align:left;}"
+                + ".sub-report th{background:#f0f0f0;color:#444;font-weight:600;}"
+                + ".sub-report td.sub-condition-held{color:#27ae60;font-weight:600;text-align:center;}"
                 + "</style>";
     }
 
@@ -187,32 +198,109 @@ public final class HtmlReportGenerator {
                 .append("</h3><p class=\"trigger-count\">Trigger count: ")
                 .append(triggers.size()).append("</p>");
 
-        for (String timeframe : timeframesFor(data, scenario)) {
-            OHLCSeries series = timeframe.equals(data.strategy().primaryTimeframe().wire())
+        List<String> timeframes = timeframesFor(data, scenario);
+        List<StrategyStep> steps = scenario.conditionSteps();
+        for (int n = 0; n < triggers.size(); n++) {
+            Instant trigger = triggers.get(n);
+            appendTriggerBlock(html, data, renderer, trigger, n + 1, timeframes, steps);
+        }
+
+        html.append("</section>");
+    }
+
+    /**
+     * Renders one block for a single trigger: chart(s) zoomed around the
+     * trigger, any sub-pane indicators clipped to the same window, and a
+     * one-row sub-table listing the values that made the conjunction true
+     * at that bar. CLAUDE.md section 7.3 describes the layout.
+     */
+    private void appendTriggerBlock(StringBuilder html, ReportData data, ChartRenderer renderer,
+                                     Instant trigger, int ordinal, List<String> timeframes,
+                                     List<StrategyStep> steps) {
+        html.append("<div class=\"trigger-block\" data-trigger=\"")
+                .append(esc(trigger.toString())).append("\">")
+                .append("<h4>Trigger #").append(ordinal).append(" — ")
+                .append(esc(trigger.toString())).append("</h4>");
+
+        for (String timeframe : timeframes) {
+            OHLCSeries fullSeries = timeframe.equals(data.strategy().primaryTimeframe().wire())
                     ? data.primarySeries()
                     : data.higherTimeframeSeries().get(timeframe);
-            if (series == null) {
+            if (fullSeries == null) {
                 throw new ReportGenerationException(
                         "no series supplied for timeframe " + timeframe);
             }
-            html.append(renderChart(renderer, series, triggers, timeframe, data));
+            int periodOnTf = maxIndicatorPeriodForTimeframe(timeframe, data);
+            int before = Math.max(30, (int) Math.ceil(periodOnTf * 1.5));
+            int after = 10;
+            OHLCSeries window = sliceAround(fullSeries, trigger, before, after);
+            if (window.bars().isEmpty()) {
+                continue;
+            }
+            html.append(renderLocalChart(renderer, window, trigger, timeframe, data));
+            Instant windowStart = window.bars().getFirst().time();
+            Instant windowEnd = window.bars().getLast().time();
+            html.append(renderSubpanesForTimeframe(
+                    timeframe, fullSeries, windowStart, windowEnd, trigger, data));
         }
 
-        List<StrategyStep> steps = scenario.conditionSteps();
         html.append("<table class=\"sub-report\"><thead><tr><th>Trigger time</th>");
         for (StrategyStep step : steps) {
             html.append("<th>").append(esc(step.text())).append("</th>");
         }
         html.append("</tr></thead><tbody>");
-        for (Instant trigger : triggers) {
-            html.append("<tr><td>").append(esc(trigger.toString())).append("</td>");
-            // Every When/And step held at a trigger bar — that is what a trigger is.
-            for (int i = 0; i < steps.size(); i++) {
-                html.append("<td class=\"sub-condition-held\">✓</td>");
-            }
-            html.append("</tr>");
+        html.append("<tr><td>").append(esc(trigger.toString())).append("</td>");
+        for (int i = 0; i < steps.size(); i++) {
+            html.append("<td class=\"sub-condition-held\">✓</td>");
         }
-        html.append("</tbody></table></section>");
+        html.append("</tr></tbody></table></div>");
+    }
+
+    /** Largest indicator period among Background series on the given timeframe. */
+    private int maxIndicatorPeriodForTimeframe(String timeframe, ReportData data) {
+        int max = 0;
+        for (BackgroundSeries bg : seriesForTimeframe(timeframe, data)) {
+            Indicator ind = toIndicator(bg.expression(), data.parameters());
+            if (ind == null) {
+                continue;
+            }
+            int period = switch (ind) {
+                case Indicator.SMA s -> s.period();
+                case Indicator.EMA e -> e.period();
+                case Indicator.RSI r -> r.period();
+                case Indicator.ATR a -> a.period();
+                case Indicator.BollingerBands b -> b.period();
+                case Indicator.MACD m -> m.slowPeriod() + m.signalPeriod();
+                case Indicator.ADX a -> a.period();
+                case Indicator.Stochastic s -> s.kPeriod() + s.dPeriod() + s.smoothing();
+                case Indicator.VolumePane v -> 1;
+            };
+            max = Math.max(max, period);
+        }
+        return max;
+    }
+
+    /** Sub-series of {@code full} centred on the bar at or just before {@code triggerTime}. */
+    private OHLCSeries sliceAround(OHLCSeries full, Instant triggerTime,
+                                    int beforeBars, int afterBars) {
+        List<OHLCBar> bars = full.bars();
+        int idx = -1;
+        for (int i = 0; i < bars.size(); i++) {
+            if (!bars.get(i).time().isAfter(triggerTime)) {
+                idx = i;
+            } else {
+                break;
+            }
+        }
+        if (idx < 0) {
+            idx = 0;
+        }
+        int from = Math.max(0, idx - beforeBars);
+        int to = Math.min(bars.size(), idx + afterBars + 1);
+        if (from >= to) {
+            return new OHLCSeries(List.of());
+        }
+        return new OHLCSeries(bars.subList(from, to));
     }
 
     /** Primary timeframe plus every higher timeframe a Scenario's steps reference. */
@@ -235,30 +323,29 @@ public final class HtmlReportGenerator {
         return List.copyOf(timeframes);
     }
 
-    private String renderChart(ChartRenderer renderer, OHLCSeries series,
-                               List<Instant> markers, String timeframeLabel, ReportData data) {
+    /**
+     * Renders one local chart for a single trigger, showing only the bars
+     * inside the zoom window plus a single BarHighlight annotation on the
+     * trigger bar itself.
+     */
+    private String renderLocalChart(ChartRenderer renderer, OHLCSeries window, Instant trigger,
+                                     String timeframeLabel, ReportData data) {
         try {
-            // 900x350 leaves the main pane roomy enough to read individual
-            // candles while letting the SVG sub-panes below it (e.g. RSI)
-            // fit on the page without scrolling.
-            LayoutSpec layout = LayoutSpec.builder().withSize(900, 350).build();
-            var builder = ChartSpec.builder().withSeries(series).withLayout(layout);
-            addIndicatorsForTimeframe(builder, timeframeLabel, series, data);
+            LayoutSpec layout = LayoutSpec.builder().withSize(900, 300).build();
+            var builder = ChartSpec.builder().withSeries(window).withLayout(layout);
+            addIndicatorsForTimeframe(builder, timeframeLabel, window, data);
             TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
-            for (OHLCBar bar : series.bars()) {
+            for (OHLCBar bar : window.bars()) {
                 closeByTime.put(bar.time(), bar.close());
             }
             int placed = 0;
-            for (Instant marker : markers) {
-                // A trigger time is a primary-TF instant. On a higher-TF chart
-                // it falls inside a wider bar, so the marker is placed on the
-                // bar that was open at the trigger (greatest bar time <= marker).
-                Map.Entry<Instant, BigDecimal> bar = closeByTime.floorEntry(marker);
-                if (bar != null) {
-                    builder.addAnnotation(
-                            new Annotation.BarHighlight(bar.getKey(), bar.getValue(), "trigger"));
-                    placed++;
-                }
+            // On a higher-TF chart the primary-TF trigger time lands inside
+            // a wider bar; mark the bar that was open at the trigger.
+            Map.Entry<Instant, BigDecimal> bar = closeByTime.floorEntry(trigger);
+            if (bar != null) {
+                builder.addAnnotation(
+                        new Annotation.BarHighlight(bar.getKey(), bar.getValue(), "trigger"));
+                placed = 1;
             }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
@@ -266,8 +353,7 @@ public final class HtmlReportGenerator {
                     + "\" data-markers=\"" + placed + "\">"
                     + "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
                     + esc(image.contentType()) + ";base64," + base64 + "\"/>"
-                    + "<figcaption>" + esc(timeframeLabel) + "</figcaption></figure>"
-                    + renderSubpanesForTimeframe(timeframeLabel, series, data);
+                    + "<figcaption>" + esc(timeframeLabel) + "</figcaption></figure>";
         } catch (ChartRenderException e) {
             throw new ReportGenerationException(
                     "chart rendering failed for timeframe " + timeframeLabel, e);
@@ -321,27 +407,36 @@ public final class HtmlReportGenerator {
      * Renders each sub-pane indicator (currently RSI) as an SVG block below
      * the main chart image, with a pinned 0–100 Y axis, threshold lines at
      * the strategy's overbought / oversold parameters, pale danger-zone
-     * shading, and a monthly X axis that mirrors the main chart's range.
+     * shading, and an X axis clipped to the local trigger window.
+     *
+     * <p>The RSI itself is computed from the full series so the line is
+     * already warmed up when it enters the window; only the bars in
+     * {@code [windowStart, windowEnd]} are plotted. The trigger bar gets a
+     * vertical reference line so the trigger lines up visually with the
+     * main chart's BarHighlight above.
      */
-    private String renderSubpanesForTimeframe(String timeframeLabel, OHLCSeries underlying,
-                                              ReportData data) {
-        int bars = underlying.bars().size();
+    private String renderSubpanesForTimeframe(String timeframeLabel, OHLCSeries fullSeries,
+                                              Instant windowStart, Instant windowEnd,
+                                              Instant trigger, ReportData data) {
         StringBuilder out = new StringBuilder();
         for (BackgroundSeries series : seriesForTimeframe(timeframeLabel, data)) {
             Indicator indicator = toIndicator(series.expression(), data.parameters());
-            if (indicator instanceof Indicator.RSI rsi && bars > rsi.period()) {
+            if (indicator instanceof Indicator.RSI rsi
+                    && fullSeries.bars().size() > rsi.period()) {
                 out.append("<figure class=\"subpane\" data-indicator=\"rsi\">")
-                        .append(renderRsiSubpane(underlying, rsi.period(),
-                                rsi.overbought(), rsi.oversold()))
+                        .append(renderRsiSubpane(fullSeries, rsi.period(),
+                                rsi.overbought(), rsi.oversold(),
+                                windowStart, windowEnd, trigger))
                         .append("</figure>");
             }
         }
         return out.toString();
     }
 
-    private String renderRsiSubpane(OHLCSeries series, int period,
-                                    BigDecimal overbought, BigDecimal oversold) {
-        List<OHLCBar> bars = series.bars();
+    private String renderRsiSubpane(OHLCSeries fullSeries, int period,
+                                    BigDecimal overbought, BigDecimal oversold,
+                                    Instant windowStart, Instant windowEnd, Instant trigger) {
+        List<OHLCBar> bars = fullSeries.bars();
         List<BigDecimal> closes = new ArrayList<>(bars.size());
         Instant[] times = new Instant[bars.size()];
         for (int i = 0; i < bars.size(); i++) {
@@ -364,8 +459,8 @@ public final class HtmlReportGenerator {
         double obYpx = padTop + plotH - (obY / 100.0) * plotH;
         double osYpx = padTop + plotH - (osY / 100.0) * plotH;
 
-        long t0 = times[0].toEpochMilli();
-        long t1 = times[times.length - 1].toEpochMilli();
+        long t0 = windowStart.toEpochMilli();
+        long t1 = windowEnd.toEpochMilli();
         long tSpan = Math.max(t1 - t0, 1L);
 
         StringBuilder svg = new StringBuilder();
@@ -417,31 +512,27 @@ public final class HtmlReportGenerator {
                 .append("\" y2=\"").append(round(osYpx))
                 .append("\" stroke=\"#999\" stroke-dasharray=\"3 3\" stroke-width=\"1\"/>");
 
-        // Monthly X-axis ticks, mirroring the main pane.
-        YearMonth startYm = YearMonth.from(times[0].atOffset(ZoneOffset.UTC).toLocalDate());
-        YearMonth endYm = YearMonth.from(
-                times[times.length - 1].atOffset(ZoneOffset.UTC).toLocalDate());
-        DateTimeFormatter monthFmt = DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
+        // X-axis: five evenly-spaced ticks across the window, with the
+        // label granularity chosen from the span (hours / days / months).
+        DateTimeFormatter xFmt = adaptiveTickFormatter(tSpan);
         svg.append("<g font-size=\"10\" font-family=\"sans-serif\" fill=\"#555\">");
-        YearMonth ym = startYm;
-        while (!ym.isAfter(endYm)) {
-            Instant tickInstant = ym.atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();
-            long tickT = tickInstant.toEpochMilli();
-            if (tickT >= t0 && tickT <= t1) {
-                double px = padLeft + (double) (tickT - t0) / tSpan * plotW;
-                svg.append("<line x1=\"").append(round(px))
-                        .append("\" x2=\"").append(round(px))
-                        .append("\" y1=\"").append(round(padTop + plotH))
-                        .append("\" y2=\"").append(round(padTop + plotH + 4))
-                        .append("\" stroke=\"#888\"/>");
-                double labelY = padTop + plotH + 14;
-                svg.append("<text x=\"").append(round(px))
-                        .append("\" y=\"").append(round(labelY))
-                        .append("\" text-anchor=\"end\" transform=\"rotate(-45, ")
-                        .append(round(px)).append(',').append(round(labelY))
-                        .append(")\">").append(ym.format(monthFmt)).append("</text>");
-            }
-            ym = ym.plusMonths(1);
+        int tickCount = 5;
+        for (int k = 0; k <= tickCount; k++) {
+            long tickT = t0 + (long) ((double) tSpan * k / tickCount);
+            double px = padLeft + (double) (tickT - t0) / tSpan * plotW;
+            svg.append("<line x1=\"").append(round(px))
+                    .append("\" x2=\"").append(round(px))
+                    .append("\" y1=\"").append(round(padTop + plotH))
+                    .append("\" y2=\"").append(round(padTop + plotH + 4))
+                    .append("\" stroke=\"#888\"/>");
+            double labelY = padTop + plotH + 14;
+            String label = Instant.ofEpochMilli(tickT)
+                    .atOffset(ZoneOffset.UTC).format(xFmt);
+            svg.append("<text x=\"").append(round(px))
+                    .append("\" y=\"").append(round(labelY))
+                    .append("\" text-anchor=\"end\" transform=\"rotate(-45, ")
+                    .append(round(px)).append(',').append(round(labelY))
+                    .append(")\">").append(esc(label)).append("</text>");
         }
         svg.append("</g>");
 
@@ -452,14 +543,30 @@ public final class HtmlReportGenerator {
                 .append("\" height=\"").append(round(plotH))
                 .append("\" fill=\"none\" stroke=\"#888\"/>");
 
-        // RSI line (purple).
+        // Vertical line at the trigger time so the RSI bar visually aligns
+        // with the BarHighlight on the main chart above.
+        long triggerT = trigger.toEpochMilli();
+        if (triggerT >= t0 && triggerT <= t1) {
+            double triggerPx = padLeft + (double) (triggerT - t0) / tSpan * plotW;
+            svg.append("<line x1=\"").append(round(triggerPx))
+                    .append("\" x2=\"").append(round(triggerPx))
+                    .append("\" y1=\"").append(round(padTop))
+                    .append("\" y2=\"").append(round(padTop + plotH))
+                    .append("\" stroke=\"#f1c40f\" stroke-width=\"1.5\"/>");
+        }
+
+        // RSI line — plot only the points inside the window.
         StringBuilder path = new StringBuilder();
         boolean started = false;
         for (int i = 0; i < rsi.length; i++) {
             if (rsi[i] == null) {
                 continue;
             }
-            double px = padLeft + (double) (times[i].toEpochMilli() - t0) / tSpan * plotW;
+            long ti = times[i].toEpochMilli();
+            if (ti < t0 || ti > t1) {
+                continue;
+            }
+            double px = padLeft + (double) (ti - t0) / tSpan * plotW;
             double py = padTop + plotH - (rsi[i].doubleValue() / 100.0) * plotH;
             path.append(started ? "L" : "M").append(round(px)).append(' ')
                     .append(round(py)).append(' ');
@@ -470,6 +577,18 @@ public final class HtmlReportGenerator {
 
         svg.append("</svg>");
         return svg.toString();
+    }
+
+    /** Choose a date/time tick label format based on the visible time span. */
+    private static DateTimeFormatter adaptiveTickFormatter(long spanMillis) {
+        long days = spanMillis / (1000L * 60 * 60 * 24);
+        if (days <= 3) {
+            return DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.ENGLISH);
+        }
+        if (days <= 60) {
+            return DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH);
+        }
+        return DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
     }
 
     /**
