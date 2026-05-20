@@ -16,8 +16,12 @@ public final class BuiltinCatalog {
     public static final Set<String> MARKET_VARIABLES =
             Set.of("open", "high", "low", "close", "volume", "bar_time", "bar_index");
 
+    // entry_time intentionally omitted — see CLAUDE.md §15 (reserved pending
+    // a time-typed expression sub-language). Numeric epoch exposure is poor
+    // UX and the runtime has never resolved it; keeping it parser-accepted
+    // would crash any strategy that referenced it at evaluation time.
     public static final Set<String> TRADE_CONTEXT_VARIABLES =
-            Set.of("entry_price", "entry_time", "position_size");
+            Set.of("entry_price", "position_size");
 
     /** English-prose comparison-operator words; never treated as identifiers. */
     public static final Set<String> OPERATOR_WORDS =
