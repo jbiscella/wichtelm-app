@@ -872,21 +872,46 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             Instant rangeEnd = null;
             if (entryBar != null) {
                 // EntryExitMarkerAuto positions the glyph relative to the bar's
-                // high/low (entries below low, exits above high), matching the
-                // industry convention. No price parameter required.
+                // high/low (entries below low, exits above high) — auto-position
+                // per industry convention.
+                //
+                // Glyph points in the direction of capital flow:
+                //   LONG_ENTRY  = buying  → UP_TRIANGLE
+                //   SHORT_ENTRY = selling → DOWN_TRIANGLE
+                // Entries in wichtelm-app are always Scenario-driven (no
+                // forced entries exist), so the entry is always a triangle —
+                // no ARROW_* variant for entry.
+                GlyphStyle entryGlyph = isLong
+                        ? GlyphStyle.UP_TRIANGLE
+                        : GlyphStyle.DOWN_TRIANGLE;
                 builder.addAnnotation(new Annotation.EntryExitMarkerAuto(
                         entryBar.getKey(),
                         isLong ? MarkerDirection.LONG_ENTRY : MarkerDirection.SHORT_ENTRY,
-                        GlyphStyle.UP_TRIANGLE));
+                        entryGlyph));
                 rangeStart = entryBar.getKey();
             }
             if (exitMarker != null && !openTrade) {
                 Map.Entry<Instant, BigDecimal> exitBar = closeByTime.floorEntry(exitMarker);
                 if (exitBar != null) {
+                    // Exit glyph also points in the direction of capital flow,
+                    // with ARROW_* substituting for TRIANGLE when the close
+                    // was forced (stop_loss / take_profit / end-of-series):
+                    //   LONG_EXIT  = selling to close   → DOWN_TRIANGLE / ARROW_DOWN
+                    //   SHORT_EXIT = buying to close    → UP_TRIANGLE   / ARROW_UP
+                    GlyphStyle exitGlyph;
+                    if (isLong) {
+                        exitGlyph = exitScheduled
+                                ? GlyphStyle.DOWN_TRIANGLE
+                                : GlyphStyle.ARROW_DOWN;
+                    } else {
+                        exitGlyph = exitScheduled
+                                ? GlyphStyle.UP_TRIANGLE
+                                : GlyphStyle.ARROW_UP;
+                    }
                     builder.addAnnotation(new Annotation.EntryExitMarkerAuto(
                             exitBar.getKey(),
                             isLong ? MarkerDirection.LONG_EXIT : MarkerDirection.SHORT_EXIT,
-                            exitScheduled ? GlyphStyle.DOWN_TRIANGLE : GlyphStyle.ARROW_DOWN));
+                            exitGlyph));
                     rangeEnd = exitBar.getKey();
                 }
             }
@@ -898,18 +923,19 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             // trade rendered on a 1d series), so skip the highlight when the
             // snapped instants coincide.
             if (rangeStart != null && rangeEnd != null && rangeStart.isBefore(rangeEnd)) {
-                // Shade the held interval by OUTCOME, not by direction, to
-                // match the TradingView convention: green band = winning
-                // trade, red band = losing trade, neutral = still open. The
-                // marker colors above stay direction-based (the industry
-                // standard for entry / exit markers).
+                // Shade the held interval by OUTCOME using FillColor.WIN /
+                // FillColor.LOSS / FillColor.OPEN per the TradingView
+                // convention: green band = winning trade, red band = losing
+                // trade, muted band = still-open trade. The marker colors
+                // stay direction-based (industry standard for entry / exit
+                // markers).
                 FillColor fill;
                 if (openTrade) {
-                    fill = FillColor.NEUTRAL;
+                    fill = FillColor.OPEN;
                 } else if (isWin) {
-                    fill = FillColor.LONG_POSITION;
+                    fill = FillColor.WIN;
                 } else {
-                    fill = FillColor.SHORT_POSITION;
+                    fill = FillColor.LOSS;
                 }
                 builder.addAnnotation(new Annotation.TimeRangeHighlight(
                         rangeStart, rangeEnd, fill, new BigDecimal("0.15")));
