@@ -1,0 +1,65 @@
+# Changelog
+
+All notable changes to `wichtelm-app` are documented here. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project adheres
+to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+
+### Fixed
+
+- **Stop/take ownership (Concern 1)** — `WichtelmSignalGenerator` now binds each
+  open position to the scenario that emitted its Buy/Sell signal, keyed by
+  `Position.entryTime()`. Two competing `long_entry` scenarios with different
+  stop_loss / take_profit expressions previously fell back to a
+  direction-and-presence `findFirst` heuristic, so the wrong stop could fire
+  against a position opened by the unrelated scenario. The binding is
+  established on the bar after the entry signal and evicted when the position
+  closes; protective-exit lookup is now O(1) by `entryTime`. A direction-based
+  fallback is retained for positions never observed through `generate` (unit
+  tests that synthesise a `Position` directly).
+
+### Removed
+
+- **`entry_time` trade-context variable (Concern 2)** — removed from the
+  parser-accepted set in `BuiltinCatalog.TRADE_CONTEXT_VARIABLES`. The runtime
+  never resolved `entry_time`, so any strategy referencing it parsed cleanly
+  and then threw `IllegalStateException` at the first evaluation. Reintroduction
+  is reserved for a future time-typed expression sub-language — see CLAUDE.md
+  §15. The parser now rejects `entry_time` references via P13
+  (undeclared identifier).
+
+### Documented
+
+- **Same-bar stop_loss vs take_profit (Concern 3)** — CLAUDE.md §6.3 now spells
+  out the existing-and-correct behaviour: when both stop_loss and take_profit
+  prices fall inside the same OHLC bar's `[low, high]` range, stop_loss wins
+  (pessimistic convention, mirroring industry tooling). A pair of Gherkin
+  scenarios in `signal-emission.feature` exercise the rule for long and short
+  positions; the implementation in `WichtelmSignalGenerator.protectiveExit`
+  carries a comment pointing at the spec section.
+- **Stop/take ownership semantic (Concern 1)** — CLAUDE.md §3.4 now states
+  that each open position is bound at fill time to the originating scenario.
+
+### Added
+
+- **Lookahead-causality regression test (Concern 4)** —
+  `NachtkrappPrepassCausalityTest` builds the Tier B prepass twice (once on
+  `series.subList(0, k)`, once on the full series) and asserts identical match
+  sets at every `Instant <= prefix.getLast().time()`. Parameterised over four
+  prefix sizes that cover warmup, mid-series and end-of-series boundaries.
+  Failure of this test implies a non-causal nachtkrapp rule and warrants a
+  ha-track issue with the failing reproducer.
+
+### Changed (housekeeping)
+
+- **Report metrics annotation (Concern 5a)** — added a `TODO(ha-track)` next
+  to `HtmlReportGenerator.winsAndLosses` documenting that frau-holle's
+  `BacktestMetrics` (v0.47.0-alpha) exposes only `winRate` and `numTrades`;
+  the rounding reconstruction stays in place until explicit wins/losses
+  accessors land upstream.
+- **Trigger-collision diagnostic (Concern 5b)** — the silent `putIfAbsent`
+  in `HtmlReportGenerator.buildTriggerByFillTime` now emits a
+  `Logger.fine` message when two scenarios resolve to the same fill `Instant`,
+  citing CLAUDE.md §6.3's source-order tiebreaker. Behaviour is unchanged;
+  the drop is now observable under `-Djava.util.logging.config.file=...`.

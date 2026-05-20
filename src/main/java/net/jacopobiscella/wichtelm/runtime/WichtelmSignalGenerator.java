@@ -60,9 +60,26 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private final boolean pyramiding;
     private final Timeframe timeframe;
     private final Map<String, BackgroundSeries> seriesByName = new LinkedHashMap<>();
+    private final Map<String, StrategyScenario> scenariosByName = new LinkedHashMap<>();
     private final Map<String, List<OHLCBar>> higherTimeframeBars = new HashMap<>();
     private final Map<String, HigherTimeframeSeries> higherResolvers = new HashMap<>();
     private final Map<String, List<Instant>> triggerTimes = new LinkedHashMap<>();
+    /**
+     * Binds an open position to the scenario that emitted its entry signal,
+     * keyed by {@link Position#entryTime()}. Populated on the bar AFTER the
+     * Buy/Sell fires (when the BarContext first surfaces the new position) and
+     * evicted when the position closes. Resolves Concern 1 from the external
+     * review: without this map, protective-exit lookup picked any same-direction
+     * entry scenario carrying a stop/take, so two competing long_entry
+     * scenarios would silently apply the wrong stop.
+     */
+    private final Map<Instant, String> openPositionEntryScenario = new HashMap<>();
+    /**
+     * Last entry scenario name whose Buy/Sell signal has been emitted but whose
+     * resulting Position has not yet been observed in a subsequent BarContext.
+     * Cleared on the next {@code generate} call.
+     */
+    private String pendingEntryScenarioName;
     private NachtkrappMatchIndex matchIndex = NachtkrappMatchIndex.empty();
 
     /** Generator for a strategy without higher-timeframe Background series. */
@@ -94,6 +111,9 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         for (BackgroundSeries series : strategy.backgroundSeries()) {
             seriesByName.put(series.name(), series);
         }
+        for (StrategyScenario scenario : strategy.scenarios()) {
+            scenariosByName.put(scenario.name(), scenario);
+        }
         higherTimeframeBars.forEach((wire, bars) -> {
             List<OHLCBar> sorted = new ArrayList<>(bars);
             sorted.sort(Comparator.comparing(OHLCBar::time));
@@ -111,6 +131,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 new ExpressionEvaluator(strategy.featureName(), bar.time(), context.barIndex());
 
         Optional<Position> open = context.currentPosition();
+        reconcileEntryOwnership(open);
         Scope current = scopeFor(context, bar, open, context.barIndex());
         Scope previous = previousBar == null
                 ? null : scopeFor(context, previousBar, open, context.barIndex() - 1);
@@ -161,6 +182,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
             }
             if (conjunctionHolds(scenario, evaluator, current, previous)) {
                 recordTrigger(scenario, context.currentBar().time());
+                pendingEntryScenarioName = scenario.name();
                 BigDecimal quantity = quantity(context);
                 return scenario.terminalCondition() == FirstClassCondition.LONG_ENTRY
                         ? new Signal.Buy(quantity)
@@ -168,6 +190,35 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
             }
         }
         return new Signal.Hold();
+    }
+
+    /**
+     * Maintains the {@link #openPositionEntryScenario} side-map at the start
+     * of every {@link #generate} call:
+     * <ul>
+     *   <li>If a position is open and a pending entry-scenario name is
+     *       recorded but not yet bound to this position's entryTime, bind it.
+     *       The Buy/Sell fires at bar T; frau-holle fills at bar T+1's open,
+     *       so the binding always happens on the next {@code generate} call.
+     *   <li>If no position is open, evict any stale bindings — at most one
+     *       position can be open at a time, so an empty {@code currentPosition}
+     *       means every entry tracked so far is closed.
+     *   <li>Pyramiding keeps the same {@link Position#entryTime()}, so the
+     *       binding survives subsequent same-direction entries.
+     * </ul>
+     */
+    private void reconcileEntryOwnership(Optional<Position> open) {
+        if (open.isEmpty()) {
+            openPositionEntryScenario.clear();
+            pendingEntryScenarioName = null;
+            return;
+        }
+        Instant entryTime = open.get().entryTime();
+        if (pendingEntryScenarioName != null
+                && !openPositionEntryScenario.containsKey(entryTime)) {
+            openPositionEntryScenario.put(entryTime, pendingEntryScenarioName);
+        }
+        pendingEntryScenarioName = null;
     }
 
     /**
@@ -187,25 +238,30 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
 
     /** Snapshotted stop_loss price for an open position, if its entry Scenario declared one. */
     public Optional<BigDecimal> stopLossPriceFor(Position position) {
-        return entryScenarioFor(position.direction())
+        return entryScenarioFor(position)
                 .flatMap(StrategyScenario::stopLossExpression)
                 .map(expression -> evaluateProtective(expression, position));
     }
 
     /** Snapshotted take_profit price for an open position, if its entry Scenario declared one. */
     public Optional<BigDecimal> takeProfitPriceFor(Position position) {
-        return entryScenarioFor(position.direction())
+        return entryScenarioFor(position)
                 .flatMap(StrategyScenario::takeProfitExpression)
                 .map(expression -> evaluateProtective(expression, position));
     }
 
     private Optional<Signal> protectiveExit(Position position, OHLCBar bar) {
-        Optional<StrategyScenario> entry = entryScenarioFor(position.direction());
+        Optional<StrategyScenario> entry = entryScenarioFor(position);
         if (entry.isEmpty()) {
             return Optional.empty();
         }
         boolean isLong = position.direction() == Direction.LONG;
 
+        // CLAUDE.md §6.3 same-bar rule: when both stop_loss and take_profit
+        // would fire within the same [low, high] bar range, stop_loss wins.
+        // Pessimistic convention — the backtest assumes the worse fill. The
+        // check order here encodes that rule: stop first; if hit, return
+        // immediately without evaluating take_profit.
         Optional<BigDecimal> stop = entry.get().stopLossExpression()
                 .map(expression -> evaluateProtective(expression, position));
         if (stop.isPresent()) {
@@ -234,8 +290,26 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         return evaluator.arithmetic(expression, new Scope(positionValues(position), NO_INDICATORS));
     }
 
-    private Optional<StrategyScenario> entryScenarioFor(Direction direction) {
-        FirstClassCondition entryCondition = direction == Direction.LONG
+    /**
+     * Resolves the scenario that opened {@code position}. Consults the
+     * {@link #openPositionEntryScenario} side-map first (populated by
+     * {@link #reconcileEntryOwnership} when a Buy/Sell fires and the resulting
+     * position appears on the next bar). Falls back to a direction-based
+     * lookup for positions that were never observed through {@code generate}
+     * (e.g. positions constructed directly in unit tests); the fallback
+     * preserves backward compatibility but does NOT disambiguate between two
+     * competing same-direction entry scenarios — which is the very situation
+     * the side-map exists to fix.
+     */
+    private Optional<StrategyScenario> entryScenarioFor(Position position) {
+        String name = openPositionEntryScenario.get(position.entryTime());
+        if (name != null) {
+            StrategyScenario tracked = scenariosByName.get(name);
+            if (tracked != null) {
+                return Optional.of(tracked);
+            }
+        }
+        FirstClassCondition entryCondition = position.direction() == Direction.LONG
                 ? FirstClassCondition.LONG_ENTRY
                 : FirstClassCondition.SHORT_ENTRY;
         return strategy.scenarios().stream()

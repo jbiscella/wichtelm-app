@@ -205,6 +205,12 @@ public final class HtmlReportGenerator {
         html.append("</div>");
     }
 
+    // TODO(ha-track): frau-holle's BacktestMetrics (v0.47.0-alpha) exposes
+    // winRate (BigDecimal) and numTrades (int) but no direct wins/losses
+    // counters, so we round-trip through winRate to reconstruct them. If a
+    // future frau-holle release adds explicit `int wins()` / `int losses()`
+    // accessors, replace the rounding with direct field reads — see
+    // Concern 5(a) from the external review.
     private static String winsAndLosses(BacktestMetrics m) {
         int wins = (int) Math.round(m.winRate().doubleValue() * m.numTrades());
         int losses = m.numTrades() - wins;
@@ -315,12 +321,25 @@ public final class HtmlReportGenerator {
             for (Instant t : times) {
                 Instant fillTime = nextBarOpenAfter(bars, t);
                 if (fillTime != null) {
-                    result.putIfAbsent(fillTime, new TriggerHit(name, t));
+                    // Same-fill-time collision: putIfAbsent keeps the FIRST
+                    // trigger in source order, per CLAUDE.md §6.3 tiebreaker.
+                    // If a second trigger fires at the exact same Instant, it
+                    // is silently dropped here; the engine attributes the trade
+                    // to the source-order-earlier scenario.
+                    TriggerHit previous = result.putIfAbsent(fillTime, new TriggerHit(name, t));
+                    if (previous != null && !previous.scenarioName().equals(name)) {
+                        TRIGGER_LOG.fine(() -> "trigger collision at fill time " + fillTime
+                                + ": kept '" + previous.scenarioName() + "', dropped '"
+                                + name + "' (source-order tiebreaker)");
+                    }
                 }
             }
         });
         return result;
     }
+
+    private static final java.util.logging.Logger TRIGGER_LOG =
+            java.util.logging.Logger.getLogger(HtmlReportGenerator.class.getName());
 
     private static Instant nextBarOpenAfter(List<OHLCBar> bars, Instant t) {
         for (OHLCBar bar : bars) {
