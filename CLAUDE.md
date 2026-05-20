@@ -368,40 +368,59 @@ Where:
 
 Reports are NEVER overwritten — every run produces a new file.
 
-### 7.2 Top section: aggregate metrics
+The report is styled against the finalized design system in `src/main/resources/report/template.css`: Inter sans for body, JetBrains Mono for numerics, off-white surface (`#fafaf7`), oklch-defined semantic colours (`--win`, `--loss`, `--long`, `--short`, `--accent`). The CSS targets the page chrome — header, metrics grid, equity / drawdown panels, trade summary rows, expanded body, chart frames, footer — **not the chart contents themselves**. Chart contents are produced by the heerwisch-jfreechart driver and embedded as raster images inside the styled frames, deliberately accepting a visual mismatch between the polished template typography and the JFreeChart-native chart palette.
 
-The report begins with a header summarizing the backtest, followed by the 10 aggregate metrics from `frau-holle.BacktestResult.metrics`: `totalReturn`, `numTrades`, `winRate`, `maxDrawdown`, `sharpeRatio`, `sortinoRatio`, `calmarRatio`, `profitFactor`, `avgWin`, `avgLoss`.
+### 7.2 Header band
 
-`profitFactor == 0` is rendered as "undefined" with a tooltip explaining the sentinel value.
+The header carries the inline monochrome wichtelm-app logo, the wordmark `wichtelm-app · backtest report · v<version>`, the page title `Backtest report`, and a single mono-spaced line `Strategy <name> · Symbol <symbol> · Window <from → to> · Bars <primary tf>(<multi-TF descriptor>)`. The right edge of the title row shows the generation timestamp. A condensed `NOT financial advice · Past performance is not indicative of future results · Use at your own risk` disclaimer sits below the row.
 
-### 7.3 Body section: chronological trade list
+### 7.3 Aggregate metrics
 
-The body is a **single chronological list of every trade** in the backtest — closed trades first, sorted strictly by entry timestamp ascending, with the still-open position at the end of the series (if any) appended last. The Scenario name is a per-trade property exposed on each trade block, no longer the top-level grouping principle.
+Ten cards in a 2 × 5 grid, each with a small uppercase label, a large monospace primary value (semantic-coloured for total return and max drawdown), and a small muted context line. Cards: Total return, Trades, Win rate, Max drawdown, Sharpe, Sortino, Calmar, Profit factor, Avg win, Avg loss. Profit factor renders as `—` when `numTrades == 0`.
 
-Each trade is rendered as one "trade block" with a coloured left edge — green (winning closed trade), red (losing closed trade), or amber (still-open position). The block header carries the **trade ordinal** (zero-padded to the digit count of the total, e.g. `Trade #01` … `Trade #34`), the **direction** (`LONG` / `SHORT`), the entry → exit timestamps, and the **PnL %**. A small metadata dl directly under the header lists the entry Scenario name, the exit Scenario name (or `(forced close — stop-loss / take-profit / end-of-series)` when the exit time matched no Scenario trigger), and the entry / exit prices. Then the trade's body contains one **per-event block** per side of the trade — `Entry — <scenario name> @ <timestamp>` and `Exit — <scenario name> @ <timestamp>` — each using the per-trigger block layout described below.
+### 7.4 Equity curve and drawdown
 
-A per-event block contains:
+Two panel frames stacked vertically immediately after the metrics. Each frame has a panel header (title left, context label right — `indexed · base 100.0` for the equity curve, `% from peak` for the drawdown). The chart bodies are hand-rendered SVG (these predate the JFreeChart integration and match the template aesthetic): monthly X-axis ticks, 5%-step Y grid, dashed reference line at 100 for the equity curve, filled red area under the drawdown curve.
 
-| Element | Content |
+### 7.5 Trade-by-trade breakdown — chronological list
+
+The body is a **single chronological list of every trade** in the backtest, all rendered as native HTML5 `<details>` elements collapsed by default. **Zero JavaScript.**
+
+Closed trades come first, sorted strictly by entry timestamp ascending; the still-open position at end-of-series, if any, is appended last with a `still open` tag. Trade ordinals (`#01`, `#02`, …) are zero-padded to the digit count of the total.
+
+#### Collapsed summary row
+
+| Cell | Content |
 |---|---|
-| Block header | the event label (`Entry` or `Exit`) followed by the Scenario name and the event timestamp |
-| Local primary-TF chart | bars inside the window `[event − max(P × 1.5, 30), event + 10]` where `P` is the largest indicator period referenced by the Scenario at the primary TF. The chart carries HA candles plus SMA / EMA overlays on the main pane (matching what `HtmlReportGenerator.toIndicator(...)` currently maps), with RSI rendered as a separate SVG sub-pane. Other indicator types in the v1 catalog (BollingerBands, ATR, MACD components, ADX, Stochastic) are reserved for future enhancements — when a Background series declares one of those, the indicator is silently skipped in the chart but its lookback still feeds the window sizing. The event bar itself is annotated via heerwisch `Annotation.BarHighlight` |
-| Local higher-TF chart(s) | rendered once per **distinct higher timeframe** referenced by the Scenario (multiple Background series on the same higher TF — e.g. a 1d EMA and a 1d ATR — share a single 1d chart with both indicators added as overlays / sub-panes), with the same windowing rule applied at that timeframe |
-| RSI sub-pane | below each chart whose timeframe declares an `rsi(...)` Background series. The RSI is computed on the full series for accurate values and clipped to the chart's window; the Y axis is pinned to 0–100 with grid ticks at 0/30/50/70/100, the strategy's `overbought` / `oversold` parameter values are drawn as dashed threshold lines with pale danger-zone shading, and a vertical reference line marks the event time so it lines up with the main chart above |
-| Sub-report mini-table | one row: the event timestamp followed by one cell per `When` / `And` step of the Scenario, marked when that sub-condition held at the event bar. By construction every step holds at the event — that is what caused the Scenario to fire — so the cells document which sub-conditions composed the Scenario |
+| Ordinal | `#NN` |
+| Direction pill | `long` (green soft fill) or `short` (red soft fill) — both monospace, uppercase |
+| Time range | `YYYY-MM-DDTHH:MMZ → YYYY-MM-DDTHH:MMZ` over a duration line `N sessions · Mh in position` |
+| Price range | `<entry> → <exit>` |
+| P/L | signed percent, semantic-coloured, with a `price <±X.XX%>` sub-line. For open trades, replaces the sub-line with a `STILL OPEN` tag |
+| Chevron | rotates 180° when expanded |
 
-When the exit time matches no Scenario trigger (forced close — stop-loss, take-profit, or end-of-series), the trade block omits its exit event block; the metadata dl already documents the exit timestamp and price. When the trade is the still-open position at the end of the series, the block has no exit event and the header shows `still open at end of series` in place of an exit time and PnL.
+Directly under the summary, a compact monospace **conditions row** lists the entry Scenario's When/And step expressions and the exit Scenario's, separated by `→`. Each step is followed by a green `✓` (every step holds at trigger time by construction). For forced-close exits the exit term shows `stop_loss / take_profit`; for open trades it shows `still open at window end`.
 
-The still-open position appears as the **last** trade block in the chronological list, after all closed trades. Trade ordinals are continuous: closed trades are #1 … #N and the open one is #N+1.
+#### Expanded body
 
-### 7.4 Trailing section: full trade list and equity curve
+Per-trade stats grid (6 columns): **Entry · Exit · Hold · P/L · MFE · MAE**. Hold is rendered as `N × <tf> bars`. **MFE** (maximum favourable excursion) and **MAE** (maximum adverse excursion) are computed at report generation time by walking the primary bars within the trade window:
+- LONG: `MFE = max((bar.high − entry) / entry)`, `MAE = min((bar.low − entry) / entry)`
+- SHORT: `MFE = max((entry − bar.low) / entry)`, `MAE = min((entry − bar.high) / entry)`
 
-After the per-Scenario boxes, the report includes:
+Both rendered as signed percent, MFE in semantic green, MAE in semantic red, P/L semantic.
 
-- The full equity curve as a chart (`BacktestResult.equityCurve`)
-- The full drawdown curve derived from the equity curve
-- A tabular trade list with `entryTime`, `exitTime`, `direction`, `entryPrice`, `exitPrice`, `pnl_pct` for every closed trade (`BacktestResult.trades`)
-- A summary of diagnostic counters (`BacktestDiagnostics`)
+Below the stats, a scenario row spells out the full entry and exit Scenario names. For open trades the exit name is `still open`; for forced-close exits it is `stop_loss / take_profit` in monospace.
+
+Below the scenario row come **one or two chart frames**:
+
+- **Price · primary** — the primary-TF chart over the window `[entry − max(P × 1.5, 30) bars, exit + 10 bars]` where `P` is the largest indicator period referenced by the entry / exit Scenarios on the primary timeframe. Frame header lists the chart contents (HA candles + main-pane overlays + RSI sub-pane when applicable). The chart image itself is produced by heerwisch-jfreechart with main-pane indicators added via `addIndicator(...)`; entry and exit bars are annotated via `Annotation.BarHighlight`. An RSI sub-pane SVG (Y pinned to 0–100, dashed threshold lines, danger-zone shading, vertical reference lines at entry and exit) is appended below the heerwisch image when a Background series declares `rsi(...)`. The frame's footer shows `▲ entry <ts> · in position · Mh · exit <ts> ▼` (or the open-trade variant `mark <ts> · window end`).
+- **Background · higher-TF** (rendered once per distinct higher timeframe referenced by either Scenario): the higher-TF chart over the equivalent window on that timeframe. Frame footer shows the date span and `<uptrend|downtrend> filter satisfied at entry`.
+
+The heerwisch chart images are deliberately produced **as the chart engine renders them today**. The styled frame around the image — header, footer, typography, palette — matches the design system; the chart contents themselves carry JFreeChart's native rendering. This is an accepted visual mismatch.
+
+### 7.6 Footer
+
+`Strategy · Symbol · Bars` left, `wichtelm-app <version> · <date>` right. Below: the full disclaimer covering hypothetical-results / past-performance / look-ahead-bias / no-liability language.
 
 ## 8. Exception hierarchy
 

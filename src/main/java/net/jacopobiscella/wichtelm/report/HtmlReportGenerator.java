@@ -4,16 +4,13 @@ import net.jacopobiscella.wichtelm.error.ReportGenerationException;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
-import net.jacopobiscella.wichtelm.strategy.Timeframes;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.commons.PriceSource;
 import org.hatrack.commons.Timeframe;
-import org.hatrack.frauholle.model.Direction;
 import org.hatrack.frauholle.model.EquityPoint;
 import org.hatrack.frauholle.model.Position;
 import org.hatrack.frauholle.model.Trade;
-import org.hatrack.frauholle.result.BacktestDiagnostics;
 import org.hatrack.frauholle.result.BacktestMetrics;
 import org.hatrack.heerwisch.api.error.ChartRenderException;
 import org.hatrack.heerwisch.api.error.DriverInternalException;
@@ -29,12 +26,17 @@ import org.hatrack.heerwisch.jfreechart.JFreeChartRenderer;
 import org.hatrack.indicators.Indicators;
 
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.math.MathContext;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
@@ -42,22 +44,33 @@ import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Renders a self-contained HTML backtest report (CLAUDE.md section 7).
+ * Renders a self-contained HTML backtest report against the finalized design
+ * template (CLAUDE.md section 7).
  *
- * <p>Per-Scenario price charts are rendered via the heerwisch-jfreechart
- * driver. The equity and drawdown curves are rendered as inline SVG line
- * charts: the heerwisch {@code Series} contract accepts only OHLC/HA price
- * data and cannot represent an equity curve.
+ * <p>The frames, header, footer, metrics grid and trade-detail layout are
+ * styled per the design system. The per-trade price / higher-TF chart images
+ * inside those frames are produced by the heerwisch-jfreechart driver — the
+ * chart engine is not touched by this generator; it just embeds the driver's
+ * output as a {@code <img>} inside the styled frame. The equity-curve and
+ * drawdown panels remain hand-rendered SVG (they predate the JFreeChart
+ * integration and match the template aesthetic closely).
+ *
+ * <p>RSI sub-panes are still emitted as a separate SVG block below the price
+ * chart image: heerwisch's native RSI rendering cannot pin the Y-axis to
+ * 0–100 or draw the overbought / oversold threshold lines, which is the
+ * minimum the strategy author needs to read the signal.
  */
 public final class HtmlReportGenerator {
 
@@ -67,6 +80,22 @@ public final class HtmlReportGenerator {
             Pattern.compile("^\\s*([a-z_][a-z0-9_]*)\\s*\\(([^)]*)\\)\\s*$");
     private static final BigDecimal DEFAULT_RSI_OVERBOUGHT = BigDecimal.valueOf(70);
     private static final BigDecimal DEFAULT_RSI_OVERSOLD = BigDecimal.valueOf(30);
+    private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
+
+    private static final String TEMPLATE_CSS = loadResource("/report/template.css");
+    private static final String LOGO_SVG = loadResource("/report/logo.svg");
+
+    private static final String VERSION = "1.0.0";
+
+    private static final String DISCLAIMER_FULL =
+            "This report is a backtest of a hypothetical trading strategy on historical "
+            + "data. It is NOT financial advice, investment advice, or a solicitation to "
+            + "buy or sell any security. Past performance is not indicative of, and does "
+            + "not guarantee, future results. Backtests are subject to survivorship bias, "
+            + "look-ahead bias, and modelling assumptions that may not hold in live "
+            + "trading; slippage, commissions, taxes and liquidity constraints are "
+            + "simplified or excluded. Use at your own risk. The author and wichtelm-app "
+            + "accept no liability for losses incurred from acting on this material.";
 
     /**
      * Generates the report and returns the path written. The filename follows
@@ -91,136 +120,162 @@ public final class HtmlReportGenerator {
     private String buildHtml(ReportData data) {
         ChartRenderer renderer = newRenderer();
         StringBuilder html = new StringBuilder();
-        html.append("<!DOCTYPE html><html lang=\"en\"><head><meta charset=\"utf-8\"/>")
-                .append("<title>Backtest report — ").append(esc(data.configBasename()))
-                .append("</title>").append(reportStylesheet())
-                .append("</head><body>");
+        html.append("<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"/>")
+                .append("<title>Backtest report — ").append(esc(data.strategy().featureName()))
+                .append(" — ").append(esc(data.symbol())).append("</title>")
+                .append("<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"/>")
+                .append("<style>").append(TEMPLATE_CSS).append("</style>")
+                .append("</head><body><div class=\"page\">");
 
-        html.append("<header><h1>Backtest report</h1><p>Strategy: ")
-                .append(esc(data.strategy().featureName())).append("</p></header>");
+        appendHeader(html, data);
+        appendAggregateMetrics(html, data.result().metrics());
+        appendEquityAndDrawdown(html, data);
+        appendTradeList(html, data, renderer);
+        appendFooter(html, data);
 
-        appendMetrics(html, data.result().metrics());
-        appendChronologicalTradeList(html, data, renderer);
-        appendTrailingSection(html, data);
-        appendDisclaimerFooter(html);
-
-        html.append("</body></html>");
+        html.append("</div></body></html>");
         return html.toString();
     }
 
-    private void appendDisclaimerFooter(StringBuilder html) {
-        html.append("<footer style=\"font-size: 0.85em; color: #666; margin-top: 2em; ")
-                .append("padding: 1em; border-top: 1px solid #ccc;\">")
-                .append("<p><strong>Disclaimer:</strong> This report contains hypothetical ")
-                .append("results on historical data. Past performance is not indicative ")
-                .append("of future results. Results have inherent limitations and do not ")
-                .append("account for all market conditions. This is NOT financial advice. ")
-                .append("Use at your own risk. Generated by wichtelm-app, provided \"AS IS\" ")
-                .append("under its open-source license with no warranties.</p></footer>");
+    // ─── Header ──────────────────────────────────────────────────────────────
+
+    private void appendHeader(StringBuilder html, ReportData data) {
+        List<OHLCBar> bars = data.primarySeries().bars();
+        String windowFrom = bars.isEmpty() ? "—"
+                : bars.getFirst().time().atOffset(ZoneOffset.UTC).toLocalDate().toString();
+        String windowTo = bars.isEmpty() ? "—"
+                : bars.getLast().time().atOffset(ZoneOffset.UTC).toLocalDate().toString();
+        String tfWire = data.strategy().primaryTimeframe().wire();
+        String multiTf = data.higherTimeframeSeries().isEmpty()
+                ? ""
+                : " (multi-TF, " + describeHigherTfs(data) + " background)";
+        String generated = data.generatedAt()
+                .format(DateTimeFormatter.ofPattern("yyyy-MM-dd · HH:mm 'UTC'", Locale.ENGLISH));
+
+        html.append("<header class=\"doc-header\">")
+                .append("<div class=\"masthead\">").append(LOGO_SVG)
+                .append("<div class=\"wordmark\">wichtelm-app")
+                .append("<span class=\"v\">backtest report · v").append(VERSION).append("</span>")
+                .append("</div></div>")
+                .append("<div class=\"top\"><div>")
+                .append("<h1>Backtest report</h1>")
+                .append("<div class=\"sub\">Strategy <b>")
+                .append(esc(data.strategy().featureName())).append("</b> · Symbol <b>")
+                .append(esc(data.symbol())).append("</b> · Window <b>")
+                .append(esc(windowFrom)).append(" → ").append(esc(windowTo))
+                .append("</b> · Bars <b>").append(esc(tfWire)).append(esc(multiTf))
+                .append("</b></div></div>")
+                .append("<div class=\"meta\"><div>wichtelm-app ").append(VERSION).append("</div>")
+                .append("<div class=\"gen\">Generated ").append(esc(generated)).append("</div>")
+                .append("</div></div>")
+                .append("<div class=\"disclaim\">NOT financial advice · Past performance is not "
+                        + "indicative of future results · Use at your own risk</div>")
+                .append("</header>");
     }
 
-    private void appendMetrics(StringBuilder html, BacktestMetrics metrics) {
-        html.append("<section class=\"aggregate-metrics\"><h2>Aggregate metrics</h2>")
-                .append("<table class=\"metrics-table\"><tbody>");
-        formattedMetricRow(html, "Total return", formatPercent(metrics.totalReturn()));
-        formattedMetricRow(html, "Number of trades", Integer.toString(metrics.numTrades()));
-        formattedMetricRow(html, "Win rate", formatPercent(metrics.winRate()));
-        formattedMetricRow(html, "Max drawdown", formatPercent(metrics.maxDrawdown()));
-        formattedMetricRow(html, "Sharpe ratio", formatRatio(metrics.sharpeRatio()));
-        formattedMetricRow(html, "Sortino ratio", formatRatio(metrics.sortinoRatio()));
-        formattedMetricRow(html, "Calmar ratio", formatRatio(metrics.calmarRatio()));
-        formattedMetricRow(html, "Profit factor", metrics.profitFactor().signum() == 0
-                ? "undefined" : formatRatio(metrics.profitFactor()));
-        formattedMetricRow(html, "Average win", formatAmount(metrics.avgWin()));
-        formattedMetricRow(html, "Average loss", formatAmount(metrics.avgLoss()));
-        html.append("</tbody></table></section>");
+    private static String describeHigherTfs(ReportData data) {
+        List<String> wires = new ArrayList<>(data.higherTimeframeSeries().keySet());
+        return String.join(" + ", wires);
     }
 
-    private void formattedMetricRow(StringBuilder html, String label, String value) {
-        html.append("<tr><td class=\"metric-name\">").append(esc(label))
-                .append("</td><td class=\"metric-value\">").append(esc(value))
-                .append("</td></tr>");
+    // ─── Aggregate metrics ───────────────────────────────────────────────────
+
+    private void appendAggregateMetrics(StringBuilder html, BacktestMetrics m) {
+        html.append("<div class=\"section-title\"><h2>Aggregate metrics</h2>"
+                + "<div class=\"rule\"></div></div>");
+        html.append("<div class=\"metrics\">");
+        metricCard(html, "Total return", formatSignedPercent(m.totalReturn()),
+                signOfReturn(m.totalReturn()), "");
+        metricCard(html, "Trades", Integer.toString(m.numTrades()), "", "");
+        metricCard(html, "Win rate", formatPercent(m.winRate()), "",
+                m.numTrades() == 0 ? "no trades"
+                        : winsAndLosses(m));
+        metricCard(html, "Max drawdown", formatSignedPercent(m.maxDrawdown().negate()),
+                m.maxDrawdown().signum() > 0 ? "neg" : "", "");
+        metricCard(html, "Sharpe", formatRatio(m.sharpeRatio()), "", "annualised");
+        metricCard(html, "Sortino", formatRatio(m.sortinoRatio()), "", "downside-only σ");
+        metricCard(html, "Calmar", formatRatio(m.calmarRatio()), "", "return / max DD");
+        metricCard(html, "Profit factor",
+                m.profitFactor().signum() == 0 ? "—" : formatRatio(m.profitFactor()), "",
+                m.profitFactor().signum() == 0 ? "no closed trades" : "gross win / loss");
+        metricCard(html, "Avg win", formatSignedAmount(m.avgWin()), "pos", "per winning trade");
+        metricCard(html, "Avg loss", formatSignedAmount(m.avgLoss()), "neg", "per losing trade");
+        html.append("</div>");
     }
 
-    private void metricRow(StringBuilder html, String name, String value) {
-        html.append("<dt>").append(name).append("</dt><dd>").append(esc(value)).append("</dd>");
+    private static String winsAndLosses(BacktestMetrics m) {
+        int wins = (int) Math.round(m.winRate().doubleValue() * m.numTrades());
+        int losses = m.numTrades() - wins;
+        return wins + " wins · " + losses + " losses";
     }
 
-    private static String formatPercent(BigDecimal value) {
-        return value.movePointRight(2).setScale(2, RoundingMode.HALF_UP).toPlainString() + "%";
+    private static String signOfReturn(BigDecimal value) {
+        if (value.signum() > 0) {
+            return "pos";
+        }
+        if (value.signum() < 0) {
+            return "neg";
+        }
+        return "";
     }
 
-    private static String formatRatio(BigDecimal value) {
-        return value.setScale(4, RoundingMode.HALF_UP).toPlainString();
+    private void metricCard(StringBuilder html, String label, String value, String valueClass,
+                            String delta) {
+        html.append("<div class=\"metric\"><div class=\"label\">").append(esc(label))
+                .append("</div><div class=\"value");
+        if (!valueClass.isEmpty()) {
+            html.append(' ').append(valueClass);
+        }
+        html.append("\">").append(esc(value)).append("</div>");
+        if (!delta.isEmpty()) {
+            html.append("<div class=\"delta\">").append(esc(delta)).append("</div>");
+        }
+        html.append("</div>");
     }
 
-    private static String formatAmount(BigDecimal value) {
-        return value.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    // ─── Equity & drawdown ───────────────────────────────────────────────────
+
+    private void appendEquityAndDrawdown(StringBuilder html, ReportData data) {
+        List<EquityPoint> curve = data.result().equityCurve();
+        String windowLabel = "";
+        if (!curve.isEmpty()) {
+            windowLabel = curve.getFirst().time().atOffset(ZoneOffset.UTC)
+                    .toLocalDate() + " → "
+                    + curve.getLast().time().atOffset(ZoneOffset.UTC).toLocalDate();
+        }
+        html.append("<div class=\"section-title\"><h2>Equity curve &amp; drawdown</h2>"
+                + "<div class=\"rule\"></div><span class=\"count\">")
+                .append(esc(windowLabel)).append("</span></div>");
+        html.append("<div class=\"equity\">");
+        html.append("<div class=\"panel\"><div class=\"ph-head\">"
+                + "<span class=\"t\">Equity curve</span>"
+                + "<span class=\"tf\">indexed · base 100.0</span></div>"
+                + "<div class=\"ph-body\">").append(equityCurveSvg(curve))
+                .append("</div></div>");
+        html.append("<div class=\"panel\"><div class=\"ph-head\">"
+                + "<span class=\"t\">Drawdown</span>"
+                + "<span class=\"tf\">% from peak</span></div>"
+                + "<div class=\"ph-body\">").append(drawdownCurveSvg(curve))
+                .append("</div></div>");
+        html.append("</div>");
     }
 
-    private static String reportStylesheet() {
-        return "<style>"
-                + "body{font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;"
-                + "max-width:1000px;margin:1.5em auto;padding:0 1em;color:#222;line-height:1.4;}"
-                + "h1{margin:0 0 .2em 0;}h2{margin-top:1.8em;border-bottom:1px solid #ddd;padding-bottom:.2em;}"
-                + ".metrics-table{border-collapse:collapse;margin:.6em 0 1.4em 0;min-width:340px;}"
-                + ".metrics-table td{padding:6px 18px;border-bottom:1px solid #eee;}"
-                + ".metrics-table tr:last-child td{border-bottom:none;}"
-                + ".metrics-table .metric-name{color:#555;}"
-                + ".metrics-table .metric-value{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;}"
-                + ".trades-list>h2{margin-bottom:.4em;}"
-                + ".trade-block{margin:1.2em 0;padding:.8em 1em;border:1px solid #ccc;"
-                + "border-left:4px solid #888;border-radius:5px;background:#fff;}"
-                + ".trade-block.win{border-left-color:#27ae60;}"
-                + ".trade-block.loss{border-left-color:#c0392b;}"
-                + ".trade-block.open{border-left-color:#f39c12;}"
-                + ".trade-block>h3{margin:0 0 .5em 0;font-size:1.05em;color:#222;}"
-                + ".trade-block .pnl{font-variant-numeric:tabular-nums;font-weight:700;}"
-                + ".trade-block .pnl.win{color:#27ae60;}"
-                + ".trade-block .pnl.loss{color:#c0392b;}"
-                + ".trade-block .pnl.open{color:#f39c12;font-weight:600;}"
-                + ".trade-meta{display:grid;grid-template-columns:max-content 1fr;column-gap:.8em;"
-                + "row-gap:.15em;font-size:.85em;color:#555;margin:0 0 .8em 0;}"
-                + ".trade-meta dt{color:#666;font-weight:600;}"
-                + ".trade-meta dd{margin:0;font-variant-numeric:tabular-nums;}"
-                + ".trigger-block{border:1px solid #e0e0e0;border-radius:4px;padding:.6em .8em;"
-                + "margin:.5em 0 1em 0;background:#fafafa;}"
-                + ".trigger-block h4{margin:0 0 .4em 0;font-size:.95em;color:#333;font-weight:600;}"
-                + ".trigger-block figure{margin:.3em 0;}"
-                + ".sub-report{border-collapse:collapse;margin-top:.5em;font-size:.85em;}"
-                + ".sub-report th,.sub-report td{border:1px solid #ddd;padding:4px 10px;text-align:left;}"
-                + ".sub-report th{background:#f0f0f0;color:#444;font-weight:600;}"
-                + ".sub-report td.sub-condition-held{color:#27ae60;font-weight:600;text-align:center;}"
-                + "</style>";
-    }
+    // ─── Trade list (chronological) ──────────────────────────────────────────
 
-    /**
-     * Renders a single chronological list of every trade in the backtest,
-     * ordered strictly by entry timestamp ascending. The Scenario name is a
-     * per-trade property exposed on each trade's header, no longer the
-     * top-level grouping principle (CLAUDE.md section 7.3).
-     *
-     * <p>Each trade block contains the entry event followed by the exit event,
-     * each rendered with the per-trigger block layout from Task D (charts
-     * zoomed around the event, RSI sub-pane, sub-conditions table). When the
-     * exit time matches no Scenario trigger — the runtime forced the close at
-     * an explicit price (stop-loss / take-profit) — the exit label says so
-     * and only the entry block is rendered as a chart context.
-     *
-     * <p>The still-open position at the end of the series, if any, is
-     * appended last with a "still open" indicator and no exit block.
-     */
-    /**
-     * One Scenario trigger event: the Scenario that fired and the primary-TF
-     * bar time at which it fired. Distinct from the trade fill time, which
-     * is the next primary bar's open.
-     */
     private record TriggerHit(String scenarioName, Instant triggerTime) {
     }
 
-    private void appendChronologicalTradeList(StringBuilder html, ReportData data,
-                                              ChartRenderer renderer) {
-        html.append("<section class=\"trades-list\"><h2>Trades (chronological)</h2>");
+    private void appendTradeList(StringBuilder html, ReportData data, ChartRenderer renderer) {
+        List<Trade> trades = new ArrayList<>(data.result().trades());
+        trades.sort(Comparator.comparing(Trade::entryTime));
+        int totalEntries = trades.size()
+                + (data.result().openPositionAtEnd().isPresent() ? 1 : 0);
+        int width = Math.max(2, Integer.toString(totalEntries).length());
+
+        html.append("<div class=\"section-title\"><h2>Trade-by-trade breakdown</h2>"
+                + "<div class=\"rule\"></div><span class=\"count\">")
+                .append(totalEntries).append(" trades · chronological</span></div>");
+        html.append("<div class=\"triggers\">");
 
         Map<Instant, TriggerHit> triggerByFillTime = buildTriggerByFillTime(data);
         Map<String, StrategyScenario> scenarioByName = new HashMap<>();
@@ -228,43 +283,28 @@ public final class HtmlReportGenerator {
             scenarioByName.put(s.name(), s);
         }
 
-        List<Trade> trades = new ArrayList<>(data.result().trades());
-        trades.sort(Comparator.comparing(Trade::entryTime));
-
-        int totalEntries = trades.size()
-                + (data.result().openPositionAtEnd().isPresent() ? 1 : 0);
-        int width = Math.max(2, Integer.toString(totalEntries).length());
-
         int ordinal = 0;
         for (Trade trade : trades) {
             ordinal++;
             TriggerHit entry = triggerByFillTime.get(trade.entryTime());
             TriggerHit exit = triggerByFillTime.get(trade.exitTime());
-            appendTradeBlock(html, data, renderer, ordinal, width, trade,
-                    entry, exit, scenarioByName);
+            appendClosedTrade(html, data, renderer, ordinal, width, trade, entry, exit,
+                    scenarioByName);
         }
-
         data.result().openPositionAtEnd().ifPresent(open -> {
             int n = trades.size() + 1;
             TriggerHit entry = triggerByFillTime.get(open.entryTime());
-            appendOpenPositionBlock(html, data, renderer, n, width, open,
-                    entry, scenarioByName);
+            appendOpenTrade(html, data, renderer, n, width, open, entry, scenarioByName);
         });
 
-        html.append("</section>");
+        html.append("</div>");
     }
 
     /**
      * Reverse-index of trade fill times → trigger hit. Signals fire at bar T
-     * and the runtime fills at the next AVAILABLE primary bar's open.
-     * Looking up the fill time via the actual primary series (not a calendar
-     * advance) is what makes this work for datasets with overnight or weekend
-     * gaps: there is no Monday 16:30 bar to advance to from a Friday 16:00
-     * signal, so trade.entryTime() would be Monday 09:30 — the next bar that
-     * actually exists.
-     *
-     * <p>The trigger time is preserved on the value so the per-event chart
-     * can still anchor on the signal bar (the bar the Scenario evaluated).
+     * and the runtime fills at the next available primary bar's open; walk the
+     * primary series to find the actual fill bar so datasets with overnight /
+     * weekend gaps attribute trades correctly.
      */
     private Map<Instant, TriggerHit> buildTriggerByFillTime(ReportData data) {
         List<OHLCBar> bars = data.primarySeries().bars();
@@ -280,7 +320,6 @@ public final class HtmlReportGenerator {
         return result;
     }
 
-    /** First bar's open time strictly after {@code t}, or {@code null} when none. */
     private static Instant nextBarOpenAfter(List<OHLCBar> bars, Instant t) {
         for (OHLCBar bar : bars) {
             if (bar.time().isAfter(t)) {
@@ -290,168 +329,290 @@ public final class HtmlReportGenerator {
         return null;
     }
 
-    private void appendTradeBlock(StringBuilder html, ReportData data, ChartRenderer renderer,
-                                  int ordinal, int width, Trade trade,
-                                  TriggerHit entry, TriggerHit exit,
+    // ─── Closed trade <details> ──────────────────────────────────────────────
+
+    private void appendClosedTrade(StringBuilder html, ReportData data, ChartRenderer renderer,
+                                    int ordinal, int width, Trade trade,
+                                    TriggerHit entryHit, TriggerHit exitHit,
+                                    Map<String, StrategyScenario> scenarioByName) {
+        String idx = "#" + String.format(Locale.ROOT, "%0" + width + "d", ordinal);
+        String dirClass = trade.direction().toString().equalsIgnoreCase("LONG") ? "long" : "short";
+        Duration held = Duration.between(trade.entryTime(), trade.exitTime());
+        long holdHours = Math.max(1L, held.toHours());
+        long holdDays = Math.max(1L, (holdHours + 23L) / 24L);
+        int holdBars = countBarsBetween(data.primarySeries().bars(),
+                trade.entryTime(), trade.exitTime());
+
+        BigDecimal pnlPct = trade.pnlPercent();
+        boolean isWin = pnlPct.signum() >= 0;
+        BigDecimal priceMove = trade.exitPrice().subtract(trade.entryPrice(), DECIMAL)
+                .divide(trade.entryPrice(), DECIMAL).multiply(HUNDRED, DECIMAL);
+        BigDecimal[] mfeMae = computeMfeMae(data.primarySeries().bars(),
+                trade.entryTime(), trade.exitTime(), trade.entryPrice(),
+                trade.direction().toString());
+
+        html.append("<details class=\"trigger\"><summary><div class=\"sum-row\">")
+                .append("<span class=\"idx\">").append(esc(idx)).append("</span>")
+                .append("<span class=\"ttype ").append(dirClass).append("\"><span class=\"dot\"></span>")
+                .append(esc(trade.direction().toString().toLowerCase(Locale.ENGLISH))).append("</span>")
+                .append("<span class=\"ttime\">")
+                .append("<span class=\"range\">").append(esc(formatIsoMinute(trade.entryTime())))
+                .append(" → ").append(esc(formatIsoMinute(trade.exitTime()))).append("</span>")
+                .append("<span class=\"duration\">").append(holdDays).append(" sessions · ")
+                .append(holdHours).append("h in position</span></span>")
+                .append("<span class=\"px\"><b>").append(formatPrice(trade.entryPrice()))
+                .append("</b> → <b>").append(formatPrice(trade.exitPrice())).append("</b></span>")
+                .append("<span class=\"pnl ").append(isWin ? "pos" : "neg").append("\">")
+                .append(formatSignedPercent(pnlPct))
+                .append("<span class=\"pct\">price ").append(formatSignedPercentRaw(priceMove))
+                .append("</span></span>")
+                .append("<span class=\"chev\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\""
+                        + " fill=\"none\"><path d=\"M2.5 4.5L6 8L9.5 4.5\" stroke=\"currentColor\""
+                        + " stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>"
+                        + "</svg></span>")
+                .append("</div>");
+
+        appendConditionsRow(html, entryHit, exitHit, scenarioByName, "closed");
+        html.append("</summary>");
+
+        // ─── Expanded body ─────────────────────────────────────────────────
+        html.append("<div class=\"body\"><div class=\"stats\">")
+                .append(statCell("Entry", formatPrice(trade.entryPrice()), ""))
+                .append(statCell("Exit", formatPrice(trade.exitPrice()), ""))
+                .append(statCell("Hold", holdBars + " × " + data.strategy().primaryTimeframe().wire()
+                        + " bars", ""))
+                .append(statCell("P/L", formatSignedPercent(pnlPct), isWin ? "pos" : "neg"))
+                .append(statCell("MFE", formatSignedPercentRaw(mfeMae[0]), "pos"))
+                .append(statCell("MAE", formatSignedPercentRaw(mfeMae[1]), "neg"))
+                .append("</div>");
+
+        appendScenarioRow(html, entryHit, exitHit, "closed");
+        appendChartFrames(html, data, renderer, trade.entryTime(), trade.exitTime(),
+                entryHit, exitHit, scenarioByName, false, dirClass);
+
+        html.append("</div></details>");
+    }
+
+    // ─── Open trade <details> ───────────────────────────────────────────────
+
+    private void appendOpenTrade(StringBuilder html, ReportData data, ChartRenderer renderer,
+                                  int ordinal, int width, Position open,
+                                  TriggerHit entryHit,
                                   Map<String, StrategyScenario> scenarioByName) {
-        String pnlPct = formatPercent(trade.pnlPercent());
-        String numeric = String.format(Locale.ROOT, "%0" + width + "d", ordinal);
-        String pnlClass = trade.pnlPercent().signum() >= 0 ? "win" : "loss";
-        String exitLabel = exit != null
-                ? exit.scenarioName()
-                : "(forced close — stop-loss / take-profit / end-of-series)";
+        String idx = "#" + String.format(Locale.ROOT, "%0" + width + "d", ordinal);
+        String dirClass = open.direction().toString().equalsIgnoreCase("LONG") ? "long" : "short";
+        List<OHLCBar> bars = data.primarySeries().bars();
+        Instant windowEnd = bars.isEmpty() ? open.entryTime() : bars.getLast().time();
+        Duration held = Duration.between(open.entryTime(), windowEnd);
+        long holdHours = Math.max(1L, held.toHours());
+        long holdDays = Math.max(1L, (holdHours + 23L) / 24L);
+        int holdBars = countBarsBetween(bars, open.entryTime(), windowEnd);
 
-        html.append("<section class=\"trade-block ").append(pnlClass)
-                .append("\" data-trade-ordinal=\"").append(ordinal).append("\">")
-                .append("<h3>Trade #").append(numeric).append(" — ")
-                .append(esc(trade.direction().toString())).append(" · ")
-                .append(esc(trade.entryTime().toString())).append(" → ")
-                .append(esc(trade.exitTime().toString())).append(" · ")
-                .append("<span class=\"pnl ").append(pnlClass).append("\">")
-                .append(pnlPct).append("</span></h3>");
-
-        html.append("<dl class=\"trade-meta\">")
-                .append("<dt>Entry scenario</dt><dd>")
-                .append(esc(entry != null ? entry.scenarioName() : "—")).append("</dd>")
-                .append("<dt>Exit scenario</dt><dd>")
-                .append(esc(exitLabel)).append("</dd>")
-                .append("<dt>Entry price</dt><dd>")
-                .append(formatAmount(trade.entryPrice())).append("</dd>")
-                .append("<dt>Exit price</dt><dd>")
-                .append(formatAmount(trade.exitPrice())).append("</dd>")
-                .append("</dl>");
-
-        renderEvent(html, data, renderer, "Entry", entry, scenarioByName);
-        renderEvent(html, data, renderer, "Exit", exit, scenarioByName);
-
-        html.append("</section>");
-    }
-
-    private void appendOpenPositionBlock(StringBuilder html, ReportData data,
-                                         ChartRenderer renderer, int ordinal, int width,
-                                         Position open, TriggerHit entry,
-                                         Map<String, StrategyScenario> scenarioByName) {
-        String numeric = String.format(Locale.ROOT, "%0" + width + "d", ordinal);
-        html.append("<section class=\"trade-block open\" data-trade-ordinal=\"")
-                .append(ordinal).append("\">")
-                .append("<h3>Trade #").append(numeric).append(" — ")
-                .append(esc(open.direction().toString())).append(" · ")
-                .append(esc(open.entryTime().toString())).append(" → ")
-                .append("<span class=\"pnl open\">still open at end of series</span></h3>");
-
-        html.append("<dl class=\"trade-meta\">")
-                .append("<dt>Entry scenario</dt><dd>")
-                .append(esc(entry != null ? entry.scenarioName() : "—")).append("</dd>")
-                .append("<dt>Entry price</dt><dd>")
-                .append(formatAmount(open.entryPrice())).append("</dd>")
-                .append("</dl>");
-
-        renderEvent(html, data, renderer, "Entry", entry, scenarioByName);
-
-        html.append("</section>");
-    }
-
-    /**
-     * Renders one per-event block (entry or exit) using the per-trigger block
-     * layout. The chart anchors on the {@code triggerTime} of the originating
-     * signal — the bar at which the Scenario fired — not the fill bar, so the
-     * BarHighlight lands on the bar the strategy actually evaluated.
-     */
-    private void renderEvent(StringBuilder html, ReportData data, ChartRenderer renderer,
-                             String eventLabel, TriggerHit hit,
-                             Map<String, StrategyScenario> scenarioByName) {
-        if (hit == null) {
-            // No matching Scenario trigger (e.g. forced stop-loss close) —
-            // the trade-meta dl above already documents the event.
-            return;
+        BigDecimal lastClose = bars.isEmpty() ? open.entryPrice() : bars.getLast().close();
+        BigDecimal markPct = lastClose.subtract(open.entryPrice(), DECIMAL)
+                .divide(open.entryPrice(), DECIMAL).multiply(HUNDRED, DECIMAL);
+        if (open.direction().toString().equalsIgnoreCase("SHORT")) {
+            markPct = markPct.negate();
         }
-        StrategyScenario scenario = scenarioByName.get(hit.scenarioName());
-        if (scenario == null) {
-            return;
-        }
-        List<String> timeframes = timeframesFor(data, scenario);
-        List<StrategyStep> steps = scenario.conditionSteps();
-        appendTriggerBlock(html, data, renderer, scenario, hit.triggerTime(), eventLabel,
-                timeframes, steps);
+        BigDecimal[] mfeMae = computeMfeMae(bars, open.entryTime(), windowEnd,
+                open.entryPrice(), open.direction().toString());
+
+        html.append("<details class=\"trigger\"><summary><div class=\"sum-row\">")
+                .append("<span class=\"idx\">").append(esc(idx)).append("</span>")
+                .append("<span class=\"ttype ").append(dirClass).append("\"><span class=\"dot\"></span>")
+                .append(esc(open.direction().toString().toLowerCase(Locale.ENGLISH))).append("</span>")
+                .append("<span class=\"ttime\">")
+                .append("<span class=\"range\">").append(esc(formatIsoMinute(open.entryTime())))
+                .append(" → <span style=\"color:var(--ink-faint)\">window end</span></span>")
+                .append("<span class=\"duration\">").append(holdDays).append(" sessions · ")
+                .append(holdHours).append("h open at window end</span></span>")
+                .append("<span class=\"px\"><b>").append(formatPrice(open.entryPrice()))
+                .append("</b> → <b>").append(formatPrice(lastClose)).append("</b></span>")
+                .append("<span class=\"pnl ")
+                .append(markPct.signum() >= 0 ? "pos" : "neg").append("\">")
+                .append(formatSignedPercentRaw(markPct))
+                .append("<span class=\"open-tag\">still open</span></span>")
+                .append("<span class=\"chev\"><svg width=\"12\" height=\"12\" viewBox=\"0 0 12 12\""
+                        + " fill=\"none\"><path d=\"M2.5 4.5L6 8L9.5 4.5\" stroke=\"currentColor\""
+                        + " stroke-width=\"1.5\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/>"
+                        + "</svg></span>")
+                .append("</div>");
+
+        appendConditionsRow(html, entryHit, null, scenarioByName, "open");
+        html.append("</summary>");
+
+        html.append("<div class=\"body\"><div class=\"stats\">")
+                .append(statCell("Entry", formatPrice(open.entryPrice()), ""))
+                .append(statCell("Mark", formatPrice(lastClose), ""))
+                .append(statCell("Hold", holdBars + " × " + data.strategy().primaryTimeframe().wire()
+                        + " bars (open)", ""))
+                .append(statCell("Mark P/L", formatSignedPercentRaw(markPct),
+                        markPct.signum() >= 0 ? "pos" : "neg"))
+                .append(statCell("MFE", formatSignedPercentRaw(mfeMae[0]), "pos"))
+                .append(statCell("MAE", formatSignedPercentRaw(mfeMae[1]), "neg"))
+                .append("</div>");
+
+        appendScenarioRow(html, entryHit, null, "open");
+        appendChartFrames(html, data, renderer, open.entryTime(), windowEnd,
+                entryHit, null, scenarioByName, true, dirClass);
+
+        html.append("</div></details>");
     }
 
-    /**
-     * Renders one block for a single trigger: chart(s) zoomed around the
-     * trigger, any sub-pane indicators clipped to the same window, and a
-     * one-row sub-table listing the values that made the conjunction true
-     * at that bar. CLAUDE.md section 7.3 describes the layout.
-     */
-    private void appendTriggerBlock(StringBuilder html, ReportData data, ChartRenderer renderer,
-                                     StrategyScenario scenario, Instant trigger, String eventLabel,
-                                     List<String> timeframes, List<StrategyStep> steps) {
-        html.append("<div class=\"trigger-block\" data-trigger=\"")
-                .append(esc(trigger.toString())).append("\">")
-                .append("<h4>").append(esc(eventLabel)).append(" — ")
-                .append(esc(scenario.name())).append(" @ ")
-                .append(esc(trigger.toString())).append("</h4>");
+    private String statCell(String label, String value, String valueClass) {
+        return "<div class=\"s\"><div class=\"l\">" + esc(label) + "</div><div class=\"v"
+                + (valueClass.isEmpty() ? "" : " " + valueClass) + "\">"
+                + esc(value) + "</div></div>";
+    }
 
-        String primaryTfWire = data.strategy().primaryTimeframe().wire();
-        for (String timeframe : timeframes) {
-            boolean isPrimary = timeframe.equals(primaryTfWire);
-            OHLCSeries fullSeries = isPrimary
-                    ? data.primarySeries()
-                    : data.higherTimeframeSeries().get(timeframe);
-            if (fullSeries == null) {
-                throw new ReportGenerationException(
-                        "no series supplied for timeframe " + timeframe);
+    // ─── Conditions row & scenario header ────────────────────────────────────
+
+    private void appendConditionsRow(StringBuilder html, TriggerHit entryHit, TriggerHit exitHit,
+                                      Map<String, StrategyScenario> scenarioByName, String state) {
+        html.append("<div class=\"cond\">");
+        if (entryHit != null) {
+            StrategyScenario s = scenarioByName.get(entryHit.scenarioName());
+            if (s != null) {
+                html.append("<span class=\"lbl\">entry</span>")
+                        .append(formatConditionTerms(s.conditionSteps()));
+            } else {
+                html.append("<span class=\"lbl\">entry</span><span class=\"term\">—</span>");
             }
-            int periodOnTf = maxIndicatorPeriodForTimeframe(scenario, timeframe, data);
-            int before = Math.max(30, (int) Math.ceil(periodOnTf * 1.5));
+        } else {
+            html.append("<span class=\"lbl\">entry</span><span class=\"term\">—</span>");
+        }
+        if (state.equals("open")) {
+            html.append(" <span class=\"ar\">→</span> <span class=\"lbl\">exit</span>")
+                    .append("<span class=\"term\">still open at window end</span>");
+        } else if (exitHit != null) {
+            StrategyScenario s = scenarioByName.get(exitHit.scenarioName());
+            if (s != null) {
+                html.append(" <span class=\"ar\">→</span> <span class=\"lbl\">exit</span>")
+                        .append(formatConditionTerms(s.conditionSteps()));
+            } else {
+                html.append(" <span class=\"ar\">→</span> <span class=\"lbl\">exit</span>")
+                        .append("<span class=\"term\">—</span>");
+            }
+        } else {
+            html.append(" <span class=\"ar\">→</span> <span class=\"lbl\">exit</span>")
+                    .append("<span class=\"term\">stop_loss / take_profit</span>");
+        }
+        html.append("</div>");
+    }
+
+    private String formatConditionTerms(List<StrategyStep> steps) {
+        StringBuilder out = new StringBuilder();
+        boolean first = true;
+        for (StrategyStep step : steps) {
+            if (!first) {
+                out.append(" · ");
+            }
+            out.append("<span class=\"term\">").append(esc(step.text())).append("</span>")
+                    .append(" <span class=\"ok\">✓</span>");
+            first = false;
+        }
+        return out.toString();
+    }
+
+    private void appendScenarioRow(StringBuilder html, TriggerHit entryHit, TriggerHit exitHit,
+                                    String state) {
+        html.append("<div class=\"scenario\">")
+                .append("<div class=\"seg\"><span class=\"lbl\">entry</span><span class=\"nm\">")
+                .append(esc(entryHit != null ? entryHit.scenarioName() : "—"))
+                .append("</span></div>");
+        String exitName;
+        String exitNameClass = "nm";
+        if (state.equals("open")) {
+            exitName = "still open";
+            exitNameClass = "nm code";
+        } else if (exitHit != null) {
+            exitName = exitHit.scenarioName();
+        } else {
+            exitName = "stop_loss / take_profit";
+            exitNameClass = "nm code";
+        }
+        html.append("<div class=\"seg\"><span class=\"lbl\">exit</span><span class=\"")
+                .append(exitNameClass).append("\">").append(esc(exitName))
+                .append("</span></div></div>");
+    }
+
+    // ─── Chart frames ────────────────────────────────────────────────────────
+
+    private void appendChartFrames(StringBuilder html, ReportData data, ChartRenderer renderer,
+                                    Instant tradeEntry, Instant tradeExit,
+                                    TriggerHit entryHit, TriggerHit exitHit,
+                                    Map<String, StrategyScenario> scenarioByName,
+                                    boolean openTrade, String dirClass) {
+        html.append("<div class=\"charts\">");
+
+        Set<String> timeframes = collectScenarioTimeframes(entryHit, exitHit, scenarioByName, data);
+        String primaryTfWire = data.strategy().primaryTimeframe().wire();
+        for (String tf : timeframes) {
+            boolean isPrimary = tf.equals(primaryTfWire);
+            OHLCSeries fullSeries = isPrimary ? data.primarySeries()
+                    : data.higherTimeframeSeries().get(tf);
+            if (fullSeries == null) {
+                throw new ReportGenerationException("no series supplied for timeframe " + tf);
+            }
+            int period = maxIndicatorPeriodForTimeframe(entryHit, exitHit, scenarioByName, tf, data);
+            int before = Math.max(30, (int) Math.ceil(period * 1.5));
             int after = 10;
-            Timeframe tf = isPrimary
-                    ? data.strategy().primaryTimeframe()
-                    : Timeframe.fromWire(timeframe);
-            OHLCSeries window = sliceAround(fullSeries, trigger, tf, isPrimary,
-                    before, after);
+            Timeframe timeframe = isPrimary ? data.strategy().primaryTimeframe()
+                    : Timeframe.fromWire(tf);
+            OHLCSeries window = sliceTradeWindow(fullSeries, timeframe, isPrimary,
+                    tradeEntry, tradeExit, before, after);
             if (window.bars().isEmpty()) {
                 continue;
             }
-            // Snap the visual trigger marker to the highlighted bar's open
-            // time. On a primary chart the bar's open IS the trigger time;
-            // on a higher-TF chart it is the previously closed bar's open,
-            // so without this snap the RSI sub-pane's vertical reference
-            // line could drift by up to one higher-TF bar relative to the
-            // BarHighlight on the main chart above.
-            Instant markerTime = trigger;
-            for (OHLCBar b : window.bars()) {
-                if (!b.time().isAfter(trigger)) {
-                    markerTime = b.time();
-                } else {
-                    break;
-                }
-            }
-            html.append(renderLocalChart(renderer, window, markerTime, timeframe, data));
-            Instant windowStart = window.bars().getFirst().time();
-            Instant windowEnd = window.bars().getLast().time();
-            html.append(renderSubpanesForTimeframe(
-                    timeframe, fullSeries, windowStart, windowEnd, markerTime, data));
+            Instant entryMarker = snapToBar(window.bars(), tradeEntry);
+            Instant exitMarker = openTrade ? null : snapToBar(window.bars(), tradeExit);
+            html.append(renderChartFrame(renderer, window, tf, isPrimary, entryMarker,
+                    exitMarker, openTrade, dirClass, data, scenarioByName, entryHit, exitHit,
+                    tradeEntry, tradeExit));
         }
 
-        html.append("<table class=\"sub-report\"><thead><tr><th>Trigger time</th>");
-        for (StrategyStep step : steps) {
-            html.append("<th>").append(esc(step.text())).append("</th>");
-        }
-        html.append("</tr></thead><tbody>");
-        html.append("<tr><td>").append(esc(trigger.toString())).append("</td>");
-        for (int i = 0; i < steps.size(); i++) {
-            html.append("<td class=\"sub-condition-held\">✓</td>");
-        }
-        html.append("</tr></tbody></table></div>");
+        html.append("</div>");
     }
 
-    /**
-     * Largest indicator period among the Background series **referenced by
-     * the given Scenario** on the given timeframe. The scope-by-scenario rule
-     * matters when other Scenarios in the same strategy reference long-period
-     * indicators on the same timeframe: those should not inflate this
-     * Scenario's window.
-     */
-    private int maxIndicatorPeriodForTimeframe(StrategyScenario scenario, String timeframe,
+    private Set<String> collectScenarioTimeframes(TriggerHit entryHit, TriggerHit exitHit,
+                                                  Map<String, StrategyScenario> scenarioByName,
+                                                  ReportData data) {
+        Set<String> timeframes = new LinkedHashSet<>();
+        timeframes.add(data.strategy().primaryTimeframe().wire());
+        for (TriggerHit hit : List.of(
+                entryHit != null ? entryHit : new TriggerHit("", Instant.MIN),
+                exitHit != null ? exitHit : new TriggerHit("", Instant.MIN))) {
+            if (hit.scenarioName().isEmpty()) {
+                continue;
+            }
+            StrategyScenario s = scenarioByName.get(hit.scenarioName());
+            if (s == null) {
+                continue;
+            }
+            timeframes.addAll(timeframesFor(data, s));
+        }
+        return timeframes;
+    }
+
+    private int maxIndicatorPeriodForTimeframe(TriggerHit entryHit, TriggerHit exitHit,
+                                                Map<String, StrategyScenario> scenarioByName,
+                                                String timeframe, ReportData data) {
+        int max = 0;
+        for (TriggerHit hit : List.of(
+                entryHit != null ? entryHit : new TriggerHit("", Instant.MIN),
+                exitHit != null ? exitHit : new TriggerHit("", Instant.MIN))) {
+            if (hit.scenarioName().isEmpty()) {
+                continue;
+            }
+            StrategyScenario s = scenarioByName.get(hit.scenarioName());
+            if (s != null) {
+                max = Math.max(max, maxIndicatorPeriodForScenario(s, timeframe, data));
+            }
+        }
+        return max;
+    }
+
+    private int maxIndicatorPeriodForScenario(StrategyScenario scenario, String timeframe,
                                                ReportData data) {
         String primaryTf = data.strategy().primaryTimeframe().wire();
         Map<String, BackgroundSeries> seriesByName = new HashMap<>();
@@ -481,14 +642,332 @@ public final class HtmlReportGenerator {
     }
 
     /**
-     * Extracts the lookback period of a Background series expression so the
-     * local window can be sized to honour it. Recognises the full v1 catalog,
-     * not just the heerwisch-renderable subset that {@link #toIndicator}
-     * returns — window aggregates ({@code highest_close} etc.) and MACD
-     * component functions ({@code macd_line} etc.) are also accounted for.
+     * Sub-series of {@code full} covering the full trade window plus the
+     * indicator-lookback margin before and a fixed 10 bars after. For higher
+     * timeframes, the window endpoints are snapped to the nearest CLOSED bar
+     * so the local chart only shows data the runtime could see.
      */
-    private static int indicatorPeriodOf(String expression,
-                                         Map<String, BigDecimal> parameters) {
+    private OHLCSeries sliceTradeWindow(OHLCSeries full, Timeframe tf, boolean isPrimary,
+                                         Instant tradeEntry, Instant tradeExit,
+                                         int beforeBars, int afterBars) {
+        List<OHLCBar> bars = full.bars();
+        if (bars.isEmpty()) {
+            return new OHLCSeries(List.of());
+        }
+        int entryIdx = locateBar(bars, tf, isPrimary, tradeEntry);
+        int exitIdx = locateBar(bars, tf, isPrimary, tradeExit);
+        if (entryIdx < 0) {
+            entryIdx = 0;
+        }
+        if (exitIdx < 0) {
+            exitIdx = bars.size() - 1;
+        }
+        int from = Math.max(0, entryIdx - beforeBars);
+        int to = Math.min(bars.size(), exitIdx + afterBars + 1);
+        if (from >= to) {
+            return new OHLCSeries(List.of());
+        }
+        return new OHLCSeries(bars.subList(from, to));
+    }
+
+    private int locateBar(List<OHLCBar> bars, Timeframe tf, boolean isPrimary, Instant t) {
+        if (isPrimary) {
+            int idx = -1;
+            for (int i = 0; i < bars.size(); i++) {
+                if (!bars.get(i).time().isAfter(t)) {
+                    idx = i;
+                } else {
+                    break;
+                }
+            }
+            return idx;
+        }
+        int idx = -1;
+        for (int i = 0; i < bars.size(); i++) {
+            Instant closeTime = i + 1 < bars.size()
+                    ? bars.get(i + 1).time()
+                    : net.jacopobiscella.wichtelm.strategy.Timeframes.advance(bars.get(i).time(), tf);
+            if (!closeTime.isAfter(t)) {
+                idx = i;
+            } else {
+                break;
+            }
+        }
+        return idx;
+    }
+
+    private static Instant snapToBar(List<OHLCBar> bars, Instant t) {
+        Instant snapped = bars.getFirst().time();
+        for (OHLCBar b : bars) {
+            if (!b.time().isAfter(t)) {
+                snapped = b.time();
+            } else {
+                break;
+            }
+        }
+        return snapped;
+    }
+
+    private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, String timeframe,
+                                     boolean isPrimary, Instant entryMarker, Instant exitMarker,
+                                     boolean openTrade, String dirClass, ReportData data,
+                                     Map<String, StrategyScenario> scenarioByName,
+                                     TriggerHit entryHit, TriggerHit exitHit,
+                                     Instant tradeEntry, Instant tradeExit) {
+        String title = isPrimary ? "Price · primary" : "Background · higher-TF";
+        String indicatorLabel = describeChartIndicators(timeframe, window.bars().size(), data);
+        String tag = isPrimary ? "trade window + ctx" : "multi-TF context";
+        String img = renderHeerwischImage(renderer, window, timeframe, entryMarker, exitMarker, data);
+        Duration heldInWindow = Duration.between(tradeEntry, tradeExit);
+        long heldHours = Math.max(1L, heldInWindow.toHours());
+
+        StringBuilder out = new StringBuilder();
+        out.append("<div class=\"chart\"><div class=\"ch-head\">")
+                .append("<span class=\"t\">").append(esc(title));
+        if (!indicatorLabel.isEmpty()) {
+            out.append(" <span class=\"ind\">").append(esc(indicatorLabel)).append("</span>");
+        }
+        out.append("</span><span class=\"tf\">").append(esc(timeframe))
+                .append("<span class=\"tag\">").append(esc(tag)).append("</span></span></div>")
+                .append("<div class=\"ph-body\">").append(img);
+        if (isPrimary) {
+            String rsi = renderRsiSubpaneIfDeclared(timeframe, data.primarySeries(),
+                    window.bars().getFirst().time(), window.bars().getLast().time(),
+                    entryMarker, exitMarker, data);
+            if (!rsi.isEmpty()) {
+                out.append(rsi);
+            }
+        }
+        out.append("</div>");
+
+        // Footer annotations
+        out.append("<div class=\"ch-foot\">");
+        if (isPrimary) {
+            String entryTri = dirClass.equals("long") ? "up" : "dn";
+            String exitTri = dirClass.equals("long") ? "dn" : "up";
+            out.append("<span class=\"mk\"><span class=\"tri ").append(entryTri).append("\"></span>")
+                    .append("entry ").append(esc(formatIsoMinute(tradeEntry))).append("</span>");
+            if (openTrade) {
+                out.append("<span>in position · ").append(heldHours).append("h (open)</span>")
+                        .append("<span>mark ").append(esc(formatIsoMinute(tradeExit)))
+                        .append(" · window end</span>");
+            } else {
+                out.append("<span>in position · ").append(heldHours).append("h</span>")
+                        .append("<span class=\"mk\">exit ").append(esc(formatIsoMinute(tradeExit)))
+                        .append("<span class=\"tri ").append(exitTri).append("\"></span></span>");
+            }
+        } else {
+            String trendDir = dirClass.equals("long") ? "uptrend" : "downtrend";
+            out.append("<span>").append(esc(window.bars().getFirst().time().atOffset(ZoneOffset.UTC)
+                    .toLocalDate().toString())).append(" → ")
+                    .append(esc(window.bars().getLast().time().atOffset(ZoneOffset.UTC)
+                            .toLocalDate().toString())).append("</span>");
+            out.append("<span>").append(trendDir).append(" filter satisfied at entry");
+            if (openTrade) {
+                out.append("; trade still open");
+            }
+            out.append("</span>");
+        }
+        out.append("</div></div>");
+        return out.toString();
+    }
+
+    private String renderHeerwischImage(ChartRenderer renderer, OHLCSeries series,
+                                         String timeframeLabel, Instant entryMarker,
+                                         Instant exitMarker, ReportData data) {
+        try {
+            LayoutSpec layout = LayoutSpec.builder().withSize(900, 320).build();
+            ChartSpecBuilder builder = ChartSpec.builder().withSeries(series).withLayout(layout);
+            addIndicatorsForTimeframe(builder, timeframeLabel, series, data);
+            TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
+            for (OHLCBar bar : series.bars()) {
+                closeByTime.put(bar.time(), bar.close());
+            }
+            Map.Entry<Instant, BigDecimal> entryBar = closeByTime.floorEntry(entryMarker);
+            if (entryBar != null) {
+                builder.addAnnotation(new Annotation.BarHighlight(
+                        entryBar.getKey(), entryBar.getValue(), "entry"));
+            }
+            if (exitMarker != null) {
+                Map.Entry<Instant, BigDecimal> exitBar = closeByTime.floorEntry(exitMarker);
+                if (exitBar != null) {
+                    builder.addAnnotation(new Annotation.BarHighlight(
+                            exitBar.getKey(), exitBar.getValue(), "exit"));
+                }
+            }
+            ChartImage image = renderer.render(builder.build());
+            String base64 = Base64.getEncoder().encodeToString(image.bytes());
+            return "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
+                    + esc(image.contentType()) + ";base64," + base64 + "\"/>";
+        } catch (ChartRenderException e) {
+            throw new ReportGenerationException(
+                    "chart rendering failed for timeframe " + timeframeLabel, e);
+        }
+    }
+
+    private String describeChartIndicators(String timeframe, int barCount, ReportData data) {
+        List<String> parts = new ArrayList<>();
+        parts.add("HA candles");
+        Set<String> seen = new HashSet<>();
+        String primaryTf = data.strategy().primaryTimeframe().wire();
+        for (BackgroundSeries bg : data.strategy().backgroundSeries()) {
+            String tf = bg.timeframe().map(Timeframe::wire).orElse(primaryTf);
+            if (!tf.equals(timeframe)) {
+                continue;
+            }
+            Indicator ind = toIndicator(bg.expression(), data.parameters());
+            if (ind == null || barCount < ind.minBars()) {
+                continue;
+            }
+            if (ind instanceof Indicator.RSI rsi
+                    && data.primarySeries().bars().size() > rsi.period()
+                    && timeframe.equals(primaryTf)) {
+                if (seen.add("RSI:" + rsi.period())) {
+                    parts.add("RSI(" + rsi.period() + ") sub-pane");
+                }
+                continue;
+            }
+            String desc = describeIndicator(ind);
+            if (seen.add(desc)) {
+                parts.add(desc);
+            }
+        }
+        return String.join(" · ", parts);
+    }
+
+    private String describeIndicator(Indicator ind) {
+        return switch (ind) {
+            case Indicator.SMA s -> "SMA(" + s.period() + ")";
+            case Indicator.EMA e -> "EMA(" + e.period() + ")";
+            case Indicator.RSI r -> "RSI(" + r.period() + ")";
+            case Indicator.ATR a -> "ATR(" + a.period() + ")";
+            case Indicator.BollingerBands b -> "BB(" + b.period() + ")";
+            case Indicator.MACD m -> "MACD(" + m.fastPeriod() + "/" + m.slowPeriod() + "/"
+                    + m.signalPeriod() + ")";
+            case Indicator.ADX a -> "ADX(" + a.period() + ")";
+            case Indicator.Stochastic s -> "STOCH(" + s.kPeriod() + ")";
+            case Indicator.VolumePane v -> "VOL";
+        };
+    }
+
+    // ─── Indicator dispatch (unchanged from main) ────────────────────────────
+
+    private void addIndicatorsForTimeframe(ChartSpecBuilder builder, String timeframeLabel,
+                                            OHLCSeries underlying, ReportData data) {
+        Pane[] subPanes = { Pane.SUBPLOT_1, Pane.SUBPLOT_2, Pane.SUBPLOT_3, Pane.SUBPLOT_4,
+                Pane.SUBPLOT_5, Pane.SUBPLOT_6, Pane.SUBPLOT_7, Pane.SUBPLOT_8 };
+        int subPaneIdx = 0;
+        int bars = underlying.bars().size();
+        Set<String> addedKey = new HashSet<>();
+        for (BackgroundSeries series : seriesForTimeframe(timeframeLabel, data)) {
+            Indicator indicator = toIndicator(series.expression(), data.parameters());
+            if (indicator == null || bars < indicator.minBars()) {
+                continue;
+            }
+            // RSI is rendered as a custom SVG sub-pane below the heerwisch
+            // image (so we can pin the Y range and draw threshold lines that
+            // heerwisch does not emit). Skip it from the heerwisch ChartSpec.
+            if (indicator instanceof Indicator.RSI) {
+                continue;
+            }
+            // De-dup identical indicators that come from multiple Background
+            // series (e.g. macd_line + macd_signal + macd_histogram all map to
+            // the same Indicator.MACD record).
+            String key = indicator.toString();
+            if (!addedKey.add(key)) {
+                continue;
+            }
+            if (indicator.defaultPane() == Pane.MAIN) {
+                builder.addIndicator(indicator);
+            } else if (subPaneIdx < subPanes.length) {
+                builder.addIndicator(indicator, subPanes[subPaneIdx]);
+                subPaneIdx++;
+            }
+        }
+    }
+
+    private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ReportData data) {
+        String primaryTf = data.strategy().primaryTimeframe().wire();
+        List<BackgroundSeries> hits = new ArrayList<>();
+        for (BackgroundSeries series : data.strategy().backgroundSeries()) {
+            String seriesTf = series.timeframe().map(Timeframe::wire).orElse(primaryTf);
+            if (seriesTf.equals(timeframeLabel)) {
+                hits.add(series);
+            }
+        }
+        return hits;
+    }
+
+    private String renderRsiSubpaneIfDeclared(String timeframeLabel, OHLCSeries fullSeries,
+                                               Instant windowStart, Instant windowEnd,
+                                               Instant entryMarker, Instant exitMarker,
+                                               ReportData data) {
+        for (BackgroundSeries bg : seriesForTimeframe(timeframeLabel, data)) {
+            Indicator ind = toIndicator(bg.expression(), data.parameters());
+            if (ind instanceof Indicator.RSI rsi
+                    && fullSeries.bars().size() > rsi.period()) {
+                return renderRsiSubpane(fullSeries, rsi.period(), rsi.overbought(),
+                        rsi.oversold(), windowStart, windowEnd, entryMarker, exitMarker);
+            }
+        }
+        return "";
+    }
+
+
+    private static Indicator toIndicator(String expression, Map<String, BigDecimal> parameters) {
+        Matcher matcher = INDICATOR_CALL.matcher(expression);
+        if (!matcher.matches()) {
+            return null;
+        }
+        String function = matcher.group(1);
+        String rawArgs = matcher.group(2).trim();
+        String[] args = rawArgs.isEmpty() ? new String[0] : rawArgs.split("\\s*,\\s*");
+        try {
+            return switch (function) {
+                case "sma" -> new Indicator.SMA(resolveIntArg(args, 0, parameters),
+                        PriceSource.CLOSE);
+                case "ema" -> new Indicator.EMA(resolveIntArg(args, 0, parameters),
+                        PriceSource.CLOSE);
+                case "rsi" -> new Indicator.RSI(
+                        resolveIntArg(args, 0, parameters),
+                        parameters.getOrDefault("overbought", DEFAULT_RSI_OVERBOUGHT),
+                        parameters.getOrDefault("oversold", DEFAULT_RSI_OVERSOLD),
+                        PriceSource.CLOSE);
+                case "atr" -> new Indicator.ATR(resolveIntArg(args, 0, parameters));
+                case "macd_line", "macd_signal", "macd_histogram" -> new Indicator.MACD(
+                        resolveIntArg(args, 0, parameters),
+                        resolveIntArg(args, 1, parameters),
+                        resolveIntArg(args, 2, parameters),
+                        PriceSource.CLOSE);
+                case "stddev" -> new Indicator.BollingerBands(
+                        resolveIntArg(args, 0, parameters),
+                        BigDecimal.valueOf(2),
+                        PriceSource.CLOSE);
+                default -> null;
+            };
+        } catch (IllegalArgumentException unresolvable) {
+            return null;
+        }
+    }
+
+    private static int resolveIntArg(String[] args, int index, Map<String, BigDecimal> parameters) {
+        if (index >= args.length) {
+            throw new IllegalArgumentException("missing arg");
+        }
+        String token = args[index].trim();
+        BigDecimal fromParam = parameters.get(token);
+        if (fromParam != null) {
+            try {
+                return fromParam.intValueExact();
+            } catch (ArithmeticException notInteger) {
+                throw new IllegalArgumentException(
+                        "non-integer parameter value for arg '" + token + "': " + fromParam);
+            }
+        }
+        return Integer.parseInt(token);
+    }
+
+    private static int indicatorPeriodOf(String expression, Map<String, BigDecimal> parameters) {
         Matcher matcher = INDICATOR_CALL.matcher(expression);
         if (!matcher.matches()) {
             return 0;
@@ -513,61 +992,10 @@ public final class HtmlReportGenerator {
         }
     }
 
-    /**
-     * Sub-series of {@code full} centred on the bar visible to the runtime at
-     * {@code triggerTime}.
-     *
-     * <p>For the primary timeframe the trigger time IS the open time of the
-     * bar that fired the signal, so that bar (the latest with
-     * {@code time <= triggerTime}) is the anchor.
-     *
-     * <p>For higher timeframes the runtime resolves to the most recently
-     * CLOSED bar with {@code closeTime <= triggerTime} (CLAUDE.md section
-     * 3.5). The chart anchors on the same bar so the local window mirrors
-     * exactly what the strategy could see — the currently-open higher-TF bar
-     * containing the trigger is treated as future data and skipped.
-     */
-    private OHLCSeries sliceAround(OHLCSeries full, Instant triggerTime, Timeframe tf,
-                                    boolean isPrimary, int beforeBars, int afterBars) {
-        List<OHLCBar> bars = full.bars();
-        int idx = -1;
-        if (isPrimary) {
-            for (int i = 0; i < bars.size(); i++) {
-                if (!bars.get(i).time().isAfter(triggerTime)) {
-                    idx = i;
-                } else {
-                    break;
-                }
-            }
-        } else {
-            for (int i = 0; i < bars.size(); i++) {
-                Instant closeTime = i + 1 < bars.size()
-                        ? bars.get(i + 1).time()
-                        : Timeframes.advance(bars.get(i).time(), tf);
-                if (!closeTime.isAfter(triggerTime)) {
-                    idx = i;
-                } else {
-                    break;
-                }
-            }
-        }
-        if (idx < 0) {
-            idx = 0;
-        }
-        int from = Math.max(0, idx - beforeBars);
-        int to = Math.min(bars.size(), idx + afterBars + 1);
-        if (from >= to) {
-            return new OHLCSeries(List.of());
-        }
-        return new OHLCSeries(bars.subList(from, to));
-    }
-
-    /** Primary timeframe plus every higher timeframe a Scenario's steps reference. */
     private List<String> timeframesFor(ReportData data, StrategyScenario scenario) {
         Map<String, String> seriesTimeframe = new HashMap<>();
         data.strategy().backgroundSeries().forEach(series ->
                 series.timeframe().ifPresent(tf -> seriesTimeframe.put(series.name(), tf.wire())));
-
         Set<String> timeframes = new LinkedHashSet<>();
         timeframes.add(data.strategy().primaryTimeframe().wire());
         for (StrategyStep step : scenario.conditionSteps()) {
@@ -582,119 +1010,12 @@ public final class HtmlReportGenerator {
         return List.copyOf(timeframes);
     }
 
-    /**
-     * Renders one local chart for a single trigger, showing only the bars
-     * inside the zoom window plus a single BarHighlight annotation on the
-     * trigger bar itself.
-     */
-    private String renderLocalChart(ChartRenderer renderer, OHLCSeries window, Instant trigger,
-                                     String timeframeLabel, ReportData data) {
-        try {
-            LayoutSpec layout = LayoutSpec.builder().withSize(900, 300).build();
-            var builder = ChartSpec.builder().withSeries(window).withLayout(layout);
-            addIndicatorsForTimeframe(builder, timeframeLabel, window, data);
-            TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
-            for (OHLCBar bar : window.bars()) {
-                closeByTime.put(bar.time(), bar.close());
-            }
-            int placed = 0;
-            // On a higher-TF chart the primary-TF trigger time lands inside
-            // a wider bar; mark the bar that was open at the trigger.
-            Map.Entry<Instant, BigDecimal> bar = closeByTime.floorEntry(trigger);
-            if (bar != null) {
-                builder.addAnnotation(
-                        new Annotation.BarHighlight(bar.getKey(), bar.getValue(), "trigger"));
-                placed = 1;
-            }
-            ChartImage image = renderer.render(builder.build());
-            String base64 = Base64.getEncoder().encodeToString(image.bytes());
-            return "<figure class=\"chart\" data-timeframe=\"" + esc(timeframeLabel)
-                    + "\" data-markers=\"" + placed + "\">"
-                    + "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
-                    + esc(image.contentType()) + ";base64," + base64 + "\"/>"
-                    + "<figcaption>" + esc(timeframeLabel) + "</figcaption></figure>";
-        } catch (ChartRenderException e) {
-            throw new ReportGenerationException(
-                    "chart rendering failed for timeframe " + timeframeLabel, e);
-        }
-    }
-
-    /**
-     * Wires every Background series whose timeframe matches the chart's
-     * timeframe into the ChartSpec as a heerwisch {@link Indicator}. Each
-     * indicator's default pane decides whether it overlays the price pane
-     * (SMA, EMA, BollingerBands) or renders as a subplot (RSI, ATR, MACD,
-     * ADX, Stochastic). Identifier args in the series expression resolve
-     * against the effective parameter map. Unsupported function names
-     * (window aggregates, MACD components, HA primitives, etc.) are
-     * skipped silently — the catalog covers more functions than heerwisch
-     * exposes as chart indicators.
-     */
-    private void addIndicatorsForTimeframe(ChartSpecBuilder builder, String timeframeLabel,
-                                            OHLCSeries underlying, ReportData data) {
-        int bars = underlying.bars().size();
-        for (BackgroundSeries series : seriesForTimeframe(timeframeLabel, data)) {
-            Indicator indicator = toIndicator(series.expression(), data.parameters());
-            // Only main-pane overlay indicators (SMA, EMA, BollingerBands)
-            // go through heerwisch. Sub-pane indicators are rendered as
-            // dedicated SVG sub-panes below the main chart image where we
-            // can pin the Y range and draw the overbought / oversold
-            // threshold lines that heerwisch does not emit.
-            if (indicator == null
-                    || indicator.defaultPane() != Pane.MAIN
-                    || bars < indicator.minBars()) {
-                continue;
-            }
-            builder.addIndicator(indicator);
-        }
-    }
-
-    /** Background series whose timeframe matches the chart being rendered. */
-    private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ReportData data) {
-        String primaryTf = data.strategy().primaryTimeframe().wire();
-        List<BackgroundSeries> hits = new ArrayList<>();
-        for (BackgroundSeries series : data.strategy().backgroundSeries()) {
-            String seriesTf = series.timeframe().map(Timeframe::wire).orElse(primaryTf);
-            if (seriesTf.equals(timeframeLabel)) {
-                hits.add(series);
-            }
-        }
-        return hits;
-    }
-
-    /**
-     * Renders each sub-pane indicator (currently RSI) as an SVG block below
-     * the main chart image, with a pinned 0–100 Y axis, threshold lines at
-     * the strategy's overbought / oversold parameters, pale danger-zone
-     * shading, and an X axis clipped to the local trigger window.
-     *
-     * <p>The RSI itself is computed from the full series so the line is
-     * already warmed up when it enters the window; only the bars in
-     * {@code [windowStart, windowEnd]} are plotted. The trigger bar gets a
-     * vertical reference line so the trigger lines up visually with the
-     * main chart's BarHighlight above.
-     */
-    private String renderSubpanesForTimeframe(String timeframeLabel, OHLCSeries fullSeries,
-                                              Instant windowStart, Instant windowEnd,
-                                              Instant trigger, ReportData data) {
-        StringBuilder out = new StringBuilder();
-        for (BackgroundSeries series : seriesForTimeframe(timeframeLabel, data)) {
-            Indicator indicator = toIndicator(series.expression(), data.parameters());
-            if (indicator instanceof Indicator.RSI rsi
-                    && fullSeries.bars().size() > rsi.period()) {
-                out.append("<figure class=\"subpane\" data-indicator=\"rsi\">")
-                        .append(renderRsiSubpane(fullSeries, rsi.period(),
-                                rsi.overbought(), rsi.oversold(),
-                                windowStart, windowEnd, trigger))
-                        .append("</figure>");
-            }
-        }
-        return out.toString();
-    }
+    // ─── RSI sub-pane SVG (kept from Task C) ─────────────────────────────────
 
     private String renderRsiSubpane(OHLCSeries fullSeries, int period,
-                                    BigDecimal overbought, BigDecimal oversold,
-                                    Instant windowStart, Instant windowEnd, Instant trigger) {
+                                     BigDecimal overbought, BigDecimal oversold,
+                                     Instant windowStart, Instant windowEnd,
+                                     Instant entryMarker, Instant exitMarker) {
         List<OHLCBar> bars = fullSeries.bars();
         List<BigDecimal> closes = new ArrayList<>(bars.size());
         Instant[] times = new Instant[bars.size()];
@@ -704,77 +1025,63 @@ public final class HtmlReportGenerator {
         }
         BigDecimal[] rsi = Indicators.rsi(closes, period);
 
-        double vbW = 900.0;
-        double vbH = 140.0;
-        double padLeft = 50.0;
-        double padRight = 30.0;
-        double padTop = 22.0;
-        double padBottom = 36.0;
+        double vbW = 900;
+        double vbH = 140;
+        double padLeft = 50, padRight = 30, padTop = 22, padBottom = 36;
         double plotW = vbW - padLeft - padRight;
         double plotH = vbH - padTop - padBottom;
-
         double obY = overbought.doubleValue();
         double osY = oversold.doubleValue();
         double obYpx = padTop + plotH - (obY / 100.0) * plotH;
         double osYpx = padTop + plotH - (osY / 100.0) * plotH;
-
         long t0 = windowStart.toEpochMilli();
         long t1 = windowEnd.toEpochMilli();
         long tSpan = Math.max(t1 - t0, 1L);
 
         StringBuilder svg = new StringBuilder();
-        svg.append("<svg class=\"rsi-subpane\" viewBox=\"0 0 ")
-                .append((int) vbW).append(' ').append((int) vbH)
-                .append("\" width=\"100%\" preserveAspectRatio=\"xMidYMid meet\"")
-                .append(" xmlns=\"http://www.w3.org/2000/svg\">");
-
-        // Title.
+        svg.append("<svg viewBox=\"0 0 ").append((int) vbW).append(' ').append((int) vbH)
+                .append("\" preserveAspectRatio=\"xMidYMid meet\" xmlns=\"http://www.w3.org/2000/svg\""
+                        + " style=\"display:block;width:100%;height:auto;margin-top:8px\">");
         svg.append("<text x=\"").append(round(padLeft))
-                .append("\" y=\"14\" font-family=\"sans-serif\" font-size=\"11\" fill=\"#333\">RSI (")
-                .append(period).append(")</text>");
-
-        // Pale danger zones (red above overbought, green below oversold).
+                .append("\" y=\"14\" font-family=\"JetBrains Mono,monospace\" font-size=\"10\""
+                        + " fill=\"#58564e\">RSI(").append(period).append(")</text>");
+        // Danger zones
         svg.append("<rect x=\"").append(round(padLeft)).append("\" y=\"").append(round(padTop))
                 .append("\" width=\"").append(round(plotW))
                 .append("\" height=\"").append(round(obYpx - padTop))
-                .append("\" fill=\"rgba(231,76,60,0.08)\"/>");
+                .append("\" fill=\"oklch(0.58 0.16 28 / 0.08)\"/>");
         svg.append("<rect x=\"").append(round(padLeft)).append("\" y=\"").append(round(osYpx))
                 .append("\" width=\"").append(round(plotW))
                 .append("\" height=\"").append(round(padTop + plotH - osYpx))
-                .append("\" fill=\"rgba(39,174,96,0.08)\"/>");
-
-        // Y-axis grid + tick labels at 0 / 30 / 50 / 70 / 100.
+                .append("\" fill=\"oklch(0.58 0.13 155 / 0.08)\"/>");
         int[] ticks = {0, 30, 50, 70, 100};
-        svg.append("<g font-size=\"10\" font-family=\"sans-serif\" fill=\"#555\">");
+        svg.append("<g font-size=\"9\" font-family=\"JetBrains Mono,monospace\" fill=\"#8a8880\">");
         for (int yVal : ticks) {
             double y = padTop + plotH - (yVal / 100.0) * plotH;
             svg.append("<line x1=\"").append(round(padLeft))
                     .append("\" x2=\"").append(round(padLeft + plotW))
                     .append("\" y1=\"").append(round(y))
                     .append("\" y2=\"").append(round(y))
-                    .append("\" stroke=\"#e6e6e6\"/>");
+                    .append("\" stroke=\"#e6e4dc\"/>");
             svg.append("<text x=\"").append(round(padLeft - 4))
                     .append("\" y=\"").append(round(y + 3))
                     .append("\" text-anchor=\"end\">").append(yVal).append("</text>");
         }
         svg.append("</g>");
-
-        // Dashed threshold lines at overbought / oversold.
+        // Thresholds
         svg.append("<line x1=\"").append(round(padLeft))
                 .append("\" x2=\"").append(round(padLeft + plotW))
                 .append("\" y1=\"").append(round(obYpx))
                 .append("\" y2=\"").append(round(obYpx))
-                .append("\" stroke=\"#999\" stroke-dasharray=\"3 3\" stroke-width=\"1\"/>");
+                .append("\" stroke=\"#d6d3c7\" stroke-dasharray=\"3 3\" stroke-width=\"1\"/>");
         svg.append("<line x1=\"").append(round(padLeft))
                 .append("\" x2=\"").append(round(padLeft + plotW))
                 .append("\" y1=\"").append(round(osYpx))
                 .append("\" y2=\"").append(round(osYpx))
-                .append("\" stroke=\"#999\" stroke-dasharray=\"3 3\" stroke-width=\"1\"/>");
-
-        // X-axis: five evenly-spaced ticks across the window, with the
-        // label granularity chosen from the span (hours / days / months).
+                .append("\" stroke=\"#d6d3c7\" stroke-dasharray=\"3 3\" stroke-width=\"1\"/>");
+        // X axis adaptive
         DateTimeFormatter xFmt = adaptiveTickFormatter(tSpan);
-        svg.append("<g font-size=\"10\" font-family=\"sans-serif\" fill=\"#555\">");
+        svg.append("<g font-size=\"9\" font-family=\"JetBrains Mono,monospace\" fill=\"#8a8880\">");
         int tickCount = 5;
         for (int k = 0; k <= tickCount; k++) {
             long tickT = t0 + (long) ((double) tSpan * k / tickCount);
@@ -783,7 +1090,7 @@ public final class HtmlReportGenerator {
                     .append("\" x2=\"").append(round(px))
                     .append("\" y1=\"").append(round(padTop + plotH))
                     .append("\" y2=\"").append(round(padTop + plotH + 4))
-                    .append("\" stroke=\"#888\"/>");
+                    .append("\" stroke=\"#8a8880\"/>");
             double labelY = padTop + plotH + 14;
             String label = Instant.ofEpochMilli(tickT)
                     .atOffset(ZoneOffset.UTC).format(xFmt);
@@ -794,27 +1101,20 @@ public final class HtmlReportGenerator {
                     .append(")\">").append(esc(label)).append("</text>");
         }
         svg.append("</g>");
-
-        // Plot border.
+        // Plot border
         svg.append("<rect x=\"").append(round(padLeft))
                 .append("\" y=\"").append(round(padTop))
                 .append("\" width=\"").append(round(plotW))
                 .append("\" height=\"").append(round(plotH))
-                .append("\" fill=\"none\" stroke=\"#888\"/>");
-
-        // Vertical line at the trigger time so the RSI bar visually aligns
-        // with the BarHighlight on the main chart above.
-        long triggerT = trigger.toEpochMilli();
-        if (triggerT >= t0 && triggerT <= t1) {
-            double triggerPx = padLeft + (double) (triggerT - t0) / tSpan * plotW;
-            svg.append("<line x1=\"").append(round(triggerPx))
-                    .append("\" x2=\"").append(round(triggerPx))
-                    .append("\" y1=\"").append(round(padTop))
-                    .append("\" y2=\"").append(round(padTop + plotH))
-                    .append("\" stroke=\"#f1c40f\" stroke-width=\"1.5\"/>");
+                .append("\" fill=\"none\" stroke=\"#d6d3c7\"/>");
+        // Entry / exit reference lines
+        appendRsiMarker(svg, entryMarker, t0, t1, tSpan, padLeft, plotW, padTop, plotH,
+                "oklch(0.58 0.13 155)");
+        if (exitMarker != null) {
+            appendRsiMarker(svg, exitMarker, t0, t1, tSpan, padLeft, plotW, padTop, plotH,
+                    "oklch(0.58 0.16 28)");
         }
-
-        // RSI line — plot only the points inside the window.
+        // RSI line
         StringBuilder path = new StringBuilder();
         boolean started = false;
         for (int i = 0; i < rsi.length; i++) {
@@ -831,14 +1131,31 @@ public final class HtmlReportGenerator {
                     .append(round(py)).append(' ');
             started = true;
         }
-        svg.append("<path fill=\"none\" stroke=\"#7d3c98\" stroke-width=\"1.4\" d=\"")
+        svg.append("<path fill=\"none\" stroke=\"oklch(0.55 0.13 280)\" stroke-width=\"1.3\" d=\"")
                 .append(path.toString().strip()).append("\"/>");
-
         svg.append("</svg>");
         return svg.toString();
     }
 
-    /** Choose a date/time tick label format based on the visible time span. */
+    private static void appendRsiMarker(StringBuilder svg, Instant marker, long t0, long t1,
+                                         long tSpan, double padLeft, double plotW,
+                                         double padTop, double plotH, String color) {
+        if (marker == null) {
+            return;
+        }
+        long mt = marker.toEpochMilli();
+        if (mt < t0 || mt > t1) {
+            return;
+        }
+        double px = padLeft + (double) (mt - t0) / tSpan * plotW;
+        svg.append("<line x1=\"").append(round(px))
+                .append("\" x2=\"").append(round(px))
+                .append("\" y1=\"").append(round(padTop))
+                .append("\" y2=\"").append(round(padTop + plotH))
+                .append("\" stroke=\"").append(color)
+                .append("\" stroke-width=\"1.2\" stroke-dasharray=\"2 3\"/>");
+    }
+
     private static DateTimeFormatter adaptiveTickFormatter(long spanMillis) {
         long days = spanMillis / (1000L * 60 * 60 * 24);
         if (days <= 3) {
@@ -850,98 +1167,7 @@ public final class HtmlReportGenerator {
         return DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
     }
 
-    /**
-     * Maps a Background series expression like {@code "ema(trend_period)"}
-     * or {@code "rsi(rsi_period)"} to a heerwisch {@link Indicator}, with
-     * identifier args resolved against the effective parameter map. RSI
-     * thresholds come from {@code overbought} / {@code oversold} parameters
-     * if the strategy declared them, otherwise fall back to 70 / 30.
-     */
-    private static Indicator toIndicator(String expression, Map<String, BigDecimal> parameters) {
-        Matcher matcher = INDICATOR_CALL.matcher(expression);
-        if (!matcher.matches()) {
-            return null;
-        }
-        String function = matcher.group(1);
-        String rawArgs = matcher.group(2).trim();
-        String[] args = rawArgs.isEmpty() ? new String[0] : rawArgs.split("\\s*,\\s*");
-        try {
-            return switch (function) {
-                case "sma" -> new Indicator.SMA(resolveIntArg(args, 0, parameters),
-                        PriceSource.CLOSE);
-                case "ema" -> new Indicator.EMA(resolveIntArg(args, 0, parameters),
-                        PriceSource.CLOSE);
-                case "rsi" -> new Indicator.RSI(
-                        resolveIntArg(args, 0, parameters),
-                        parameters.getOrDefault("overbought", DEFAULT_RSI_OVERBOUGHT),
-                        parameters.getOrDefault("oversold", DEFAULT_RSI_OVERSOLD),
-                        PriceSource.CLOSE);
-                case "atr" -> new Indicator.ATR(resolveIntArg(args, 0, parameters));
-                default -> null;
-            };
-        } catch (IllegalArgumentException unresolvable) {
-            return null;
-        }
-    }
-
-    private static int resolveIntArg(String[] args, int index, Map<String, BigDecimal> parameters) {
-        if (index >= args.length) {
-            throw new IllegalArgumentException("missing arg");
-        }
-        String token = args[index].trim();
-        BigDecimal fromParam = parameters.get(token);
-        if (fromParam != null) {
-            try {
-                return fromParam.intValueExact();
-            } catch (ArithmeticException notInteger) {
-                // A non-integer override (e.g. 0.95) for an arg used in an
-                // integer slot — skip this indicator rather than crash the
-                // report. toIndicator() already catches IllegalArgumentException.
-                throw new IllegalArgumentException(
-                        "non-integer parameter value for arg '" + token + "': " + fromParam);
-            }
-        }
-        return Integer.parseInt(token);
-    }
-
-    private void appendTrailingSection(StringBuilder html, ReportData data) {
-        List<EquityPoint> curve = data.result().equityCurve();
-        html.append("<section class=\"equity-curve\"><h2>Equity curve (% of initial capital)</h2>")
-                .append(equityCurveSvg(curve))
-                .append("</section>");
-        html.append("<section class=\"drawdown-curve\"><h2>Drawdown (peak-to-current, %)</h2>")
-                .append(drawdownCurveSvg(curve))
-                .append("</section>");
-
-        html.append("<section class=\"trade-list\"><h2>Trades</h2>")
-                .append("<table><thead><tr><th>entryTime</th><th>exitTime</th><th>direction</th>")
-                .append("<th>entryPrice</th><th>exitPrice</th><th>pnl_pct</th></tr></thead><tbody>");
-        for (Trade trade : data.result().trades()) {
-            html.append("<tr><td>").append(esc(trade.entryTime().toString()))
-                    .append("</td><td>").append(esc(trade.exitTime().toString()))
-                    .append("</td><td>").append(trade.direction())
-                    .append("</td><td>").append(trade.entryPrice().toPlainString())
-                    .append("</td><td>").append(trade.exitPrice().toPlainString())
-                    .append("</td><td>").append(trade.pnlPercent().toPlainString())
-                    .append("</td></tr>");
-        }
-        html.append("</tbody></table></section>");
-
-        BacktestDiagnostics diagnostics = data.result().diagnostics();
-        html.append("<section class=\"diagnostics\"><h2>Diagnostics</h2><dl>");
-        metricRow(html, "ignoredBuySignals", Integer.toString(diagnostics.ignoredBuySignals()));
-        metricRow(html, "ignoredSellSignals", Integer.toString(diagnostics.ignoredSellSignals()));
-        metricRow(html, "noOpClosePositionSignals",
-                Integer.toString(diagnostics.noOpClosePositionSignals()));
-        metricRow(html, "unfilledSignalsAtEndOfSeries",
-                Integer.toString(diagnostics.unfilledSignalsAtEndOfSeries()));
-        metricRow(html, "forcedClosesAtExplicitPrice",
-                Integer.toString(diagnostics.forcedClosesAtExplicitPrice()));
-        metricRow(html, "addToPositionCount", Integer.toString(diagnostics.addToPositionCount()));
-        metricRow(html, "addToPositionOnNoPositionCount",
-                Integer.toString(diagnostics.addToPositionOnNoPositionCount()));
-        html.append("</dl></section>");
-    }
+    // ─── Equity & drawdown SVG (kept from Task B, palette-aligned) ───────────
 
     private String equityCurveSvg(List<EquityPoint> curve) {
         if (curve.isEmpty()) {
@@ -952,10 +1178,9 @@ public final class HtmlReportGenerator {
         double[] vals = new double[curve.size()];
         for (int i = 0; i < curve.size(); i++) {
             times[i] = curve.get(i).time();
-            vals[i] = curve.get(i).equity()
-                    .divide(initial, DECIMAL).doubleValue() * 100.0;
+            vals[i] = curve.get(i).equity().divide(initial, DECIMAL).doubleValue() * 100.0;
         }
-        return renderTimeSeries(times, vals, "equity", true);
+        return renderTimeSeries(times, vals, true);
     }
 
     private String drawdownCurveSvg(List<EquityPoint> curve) {
@@ -971,34 +1196,22 @@ public final class HtmlReportGenerator {
             peak = Math.max(peak, eq);
             vals[i] = peak == 0 ? 0 : (eq / peak - 1.0) * 100.0;
         }
-        return renderTimeSeries(times, vals, "drawdown", false);
+        return renderTimeSeries(times, vals, false);
     }
 
-    /**
-     * Renders a self-contained SVG time series chart with monthly X-axis
-     * ticks, a 5%-step Y-axis grid, an axis label, and padding on all sides.
-     * Equity charts get a dashed 100% reference line; drawdown charts get a
-     * light-red filled area under the curve and a dark-red line.
-     */
-    private String renderTimeSeries(Instant[] times, double[] vals,
-                                    String cssClass, boolean isEquity) {
-        double vbW = 880.0;
-        double vbH = 300.0;
-        double padLeft = 60.0;
-        double padRight = 40.0;
-        double padTop = 40.0;
-        double padBottom = 60.0;
+    private String renderTimeSeries(Instant[] times, double[] vals, boolean isEquity) {
+        double vbW = 880;
+        double vbH = isEquity ? 220 : 160;
+        double padLeft = 50, padRight = 24, padTop = 12, padBottom = 38;
         double plotW = vbW - padLeft - padRight;
         double plotH = vbH - padTop - padBottom;
-
         double minV = Double.POSITIVE_INFINITY;
         double maxV = Double.NEGATIVE_INFINITY;
         for (double v : vals) {
             minV = Math.min(minV, v);
             maxV = Math.max(maxV, v);
         }
-        double yMin;
-        double yMax;
+        double yMin, yMax;
         if (isEquity) {
             yMin = Math.min(100.0, Math.floor(minV / 5.0) * 5.0);
             yMax = Math.max(100.0, Math.ceil(maxV / 5.0) * 5.0);
@@ -1007,23 +1220,19 @@ public final class HtmlReportGenerator {
             yMax = Math.max(0.0, Math.ceil(maxV / 5.0) * 5.0);
         }
         if (yMin == yMax) {
-            yMin -= 5.0;
-            yMax += 5.0;
+            yMin -= 5;
+            yMax += 5;
         }
         double ySpan = yMax - yMin;
-
         long t0 = times[0].toEpochMilli();
         long t1 = times[times.length - 1].toEpochMilli();
         long tSpan = Math.max(t1 - t0, 1L);
 
         StringBuilder svg = new StringBuilder();
-        svg.append("<svg class=\"").append(cssClass)
-                .append("\" viewBox=\"0 0 ").append((int) vbW).append(' ').append((int) vbH)
-                .append("\" width=\"100%\" preserveAspectRatio=\"xMidYMid meet\"")
-                .append(" xmlns=\"http://www.w3.org/2000/svg\">");
-
-        // Horizontal grid lines every 5%.
-        svg.append("<g stroke=\"#e6e6e6\" stroke-width=\"1\">");
+        svg.append("<svg viewBox=\"0 0 ").append((int) vbW).append(' ').append((int) vbH)
+                .append("\" preserveAspectRatio=\"xMidYMid meet\" xmlns=\"http://www.w3.org/2000/svg\">");
+        // Horizontal grid lines every 5%
+        svg.append("<g stroke=\"#e6e4dc\" stroke-width=\"0.7\">");
         for (double y = yMin; y <= yMax + 0.001; y += 5.0) {
             double py = padTop + plotH - (y - yMin) / ySpan * plotH;
             svg.append("<line x1=\"").append(round(padLeft))
@@ -1032,34 +1241,51 @@ public final class HtmlReportGenerator {
                     .append("\" y2=\"").append(round(py)).append("\"/>");
         }
         svg.append("</g>");
-
-        // Y-axis tick labels.
-        svg.append("<g font-size=\"11\" font-family=\"sans-serif\" fill=\"#555\">");
+        // Y tick labels
+        svg.append("<g font-size=\"9\" font-family=\"JetBrains Mono,monospace\" fill=\"#8a8880\">");
         for (double y = yMin; y <= yMax + 0.001; y += 5.0) {
             double py = padTop + plotH - (y - yMin) / ySpan * plotH;
             svg.append("<text x=\"").append(round(padLeft - 6))
-                    .append("\" y=\"").append(round(py + 4))
+                    .append("\" y=\"").append(round(py + 3))
                     .append("\" text-anchor=\"end\">").append(formatPercentTick(y))
                     .append("</text>");
         }
         svg.append("</g>");
-
-        // Y-axis label, rotated.
-        double labelCy = padTop + plotH / 2.0;
-        svg.append("<text x=\"18\" y=\"").append(round(labelCy))
-                .append("\" transform=\"rotate(-90, 18, ").append(round(labelCy))
-                .append(")\" text-anchor=\"middle\" font-size=\"12\" font-family=\"sans-serif\" fill=\"#333\">")
-                .append(isEquity ? "Equity (% of initial)" : "Drawdown (%)")
-                .append("</text>");
-
-        // Reference line / filled area BEFORE the main path so the line sits on top.
+        // Monthly X ticks
+        YearMonth startYm = YearMonth.from(times[0].atOffset(ZoneOffset.UTC).toLocalDate());
+        YearMonth endYm = YearMonth.from(times[times.length - 1].atOffset(ZoneOffset.UTC).toLocalDate());
+        DateTimeFormatter monthFmt = DateTimeFormatter.ofPattern("MMM", Locale.ENGLISH);
+        svg.append("<g font-size=\"9\" font-family=\"JetBrains Mono,monospace\" fill=\"#8a8880\">");
+        YearMonth ym = startYm;
+        while (!ym.isAfter(endYm)) {
+            Instant tickInstant = ym.atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();
+            long tickT = tickInstant.toEpochMilli();
+            if (tickT >= t0 && tickT <= t1) {
+                double px = padLeft + (double) (tickT - t0) / tSpan * plotW;
+                svg.append("<line x1=\"").append(round(px)).append("\" x2=\"")
+                        .append(round(px)).append("\" y1=\"").append(round(padTop + plotH))
+                        .append("\" y2=\"").append(round(padTop + plotH + 3))
+                        .append("\" stroke=\"#8a8880\"/>");
+                svg.append("<text x=\"").append(round(px))
+                        .append("\" y=\"").append(round(padTop + plotH + 14))
+                        .append("\" text-anchor=\"middle\">").append(ym.format(monthFmt))
+                        .append("</text>");
+            }
+            ym = ym.plusMonths(1);
+        }
+        svg.append("</g>");
+        // Reference / fill
         if (isEquity) {
             double py100 = padTop + plotH - (100.0 - yMin) / ySpan * plotH;
             svg.append("<line x1=\"").append(round(padLeft))
                     .append("\" x2=\"").append(round(padLeft + plotW))
                     .append("\" y1=\"").append(round(py100))
                     .append("\" y2=\"").append(round(py100))
-                    .append("\" stroke=\"#888\" stroke-dasharray=\"4 4\" stroke-width=\"1\"/>");
+                    .append("\" stroke=\"#8a8880\" stroke-dasharray=\"3 4\" stroke-width=\"0.8\"/>");
+            svg.append("<text x=\"").append(round(padLeft + 4))
+                    .append("\" y=\"").append(round(py100 - 4))
+                    .append("\" font-family=\"JetBrains Mono,monospace\" font-size=\"9\""
+                            + " fill=\"#8a8880\">base 100</text>");
         } else {
             double py0 = padTop + plotH - (0.0 - yMin) / ySpan * plotH;
             StringBuilder area = new StringBuilder();
@@ -1073,45 +1299,10 @@ public final class HtmlReportGenerator {
             double lastPx = padLeft + (double) (times[times.length - 1].toEpochMilli() - t0)
                     / tSpan * plotW;
             area.append("L ").append(round(lastPx)).append(',').append(round(py0)).append(" Z");
-            svg.append("<path fill=\"rgba(192,57,43,0.18)\" stroke=\"none\" d=\"")
+            svg.append("<path fill=\"oklch(0.58 0.16 28 / 0.12)\" stroke=\"none\" d=\"")
                     .append(area).append("\"/>");
         }
-
-        // Monthly X-axis ticks, labels rotated 45 degrees.
-        YearMonth startYm = YearMonth.from(times[0].atOffset(ZoneOffset.UTC).toLocalDate());
-        YearMonth endYm = YearMonth.from(times[times.length - 1].atOffset(ZoneOffset.UTC).toLocalDate());
-        DateTimeFormatter monthFmt = DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
-        svg.append("<g font-size=\"11\" font-family=\"sans-serif\" fill=\"#555\">");
-        YearMonth ym = startYm;
-        while (!ym.isAfter(endYm)) {
-            Instant tick = ym.atDay(1).atStartOfDay(ZoneOffset.UTC).toInstant();
-            long tickT = tick.toEpochMilli();
-            if (tickT >= t0 && tickT <= t1) {
-                double px = padLeft + (double) (tickT - t0) / tSpan * plotW;
-                svg.append("<line x1=\"").append(round(px))
-                        .append("\" x2=\"").append(round(px))
-                        .append("\" y1=\"").append(round(padTop + plotH))
-                        .append("\" y2=\"").append(round(padTop + plotH + 5))
-                        .append("\" stroke=\"#888\"/>");
-                double labelY = padTop + plotH + 18;
-                svg.append("<text x=\"").append(round(px))
-                        .append("\" y=\"").append(round(labelY))
-                        .append("\" text-anchor=\"end\" transform=\"rotate(-45, ")
-                        .append(round(px)).append(',').append(round(labelY))
-                        .append(")\">").append(ym.format(monthFmt)).append("</text>");
-            }
-            ym = ym.plusMonths(1);
-        }
-        svg.append("</g>");
-
-        // Plot border.
-        svg.append("<rect x=\"").append(round(padLeft))
-                .append("\" y=\"").append(round(padTop))
-                .append("\" width=\"").append(round(plotW))
-                .append("\" height=\"").append(round(plotH))
-                .append("\" fill=\"none\" stroke=\"#888\" stroke-width=\"1\"/>");
-
-        // Main line on top of fill/grid/reference.
+        // Main line
         StringBuilder path = new StringBuilder();
         for (int i = 0; i < vals.length; i++) {
             double px = padLeft + (double) (times[i].toEpochMilli() - t0) / tSpan * plotW;
@@ -1119,13 +1310,123 @@ public final class HtmlReportGenerator {
             path.append(i == 0 ? "M" : "L").append(round(px)).append(' ')
                     .append(round(py)).append(' ');
         }
-        String stroke = isEquity ? "#1f77b4" : "#922b21";
+        String stroke = isEquity ? "oklch(0.55 0.13 240)" : "oklch(0.58 0.16 28)";
         svg.append("<path fill=\"none\" stroke=\"").append(stroke)
-                .append("\" stroke-width=\"2\" d=\"").append(path.toString().strip())
+                .append("\" stroke-width=\"1.6\" d=\"").append(path.toString().strip())
                 .append("\"/>");
-
         svg.append("</svg>");
         return svg.toString();
+    }
+
+    // ─── Footer ──────────────────────────────────────────────────────────────
+
+    private void appendFooter(StringBuilder html, ReportData data) {
+        String tf = data.strategy().primaryTimeframe().wire();
+        String higher = data.higherTimeframeSeries().isEmpty() ? ""
+                : " (multi-TF, " + describeHigherTfs(data) + " background)";
+        String date = data.generatedAt().toLocalDate().toString();
+        html.append("<footer class=\"doc-footer\"><div class=\"row\">")
+                .append("<div>Strategy: <b style=\"color:var(--ink-soft);font-weight:500\">")
+                .append(esc(data.strategy().featureName())).append("</b> · Symbol: ")
+                .append(esc(data.symbol())).append(" · Bars: ").append(esc(tf))
+                .append(esc(higher)).append("</div>")
+                .append("<div>wichtelm-app ").append(VERSION).append(" · ").append(esc(date))
+                .append("</div></div>")
+                .append("<div class=\"legal\">")
+                .append("<b style=\"color:var(--ink-soft);font-weight:600\">Disclaimer.</b> ")
+                .append(esc(DISCLAIMER_FULL)).append("</div></footer>");
+    }
+
+    // ─── MFE / MAE ───────────────────────────────────────────────────────────
+
+    private BigDecimal[] computeMfeMae(List<OHLCBar> bars, Instant entryTime, Instant exitTime,
+                                        BigDecimal entryPrice, String direction) {
+        BigDecimal mfe = BigDecimal.ZERO;
+        BigDecimal mae = BigDecimal.ZERO;
+        boolean isLong = direction.equalsIgnoreCase("LONG");
+        for (OHLCBar bar : bars) {
+            if (bar.time().isBefore(entryTime) || bar.time().isAfter(exitTime)) {
+                continue;
+            }
+            BigDecimal favorable;
+            BigDecimal adverse;
+            if (isLong) {
+                favorable = bar.high().subtract(entryPrice, DECIMAL)
+                        .divide(entryPrice, DECIMAL).multiply(HUNDRED, DECIMAL);
+                adverse = bar.low().subtract(entryPrice, DECIMAL)
+                        .divide(entryPrice, DECIMAL).multiply(HUNDRED, DECIMAL);
+            } else {
+                favorable = entryPrice.subtract(bar.low(), DECIMAL)
+                        .divide(entryPrice, DECIMAL).multiply(HUNDRED, DECIMAL);
+                adverse = entryPrice.subtract(bar.high(), DECIMAL)
+                        .divide(entryPrice, DECIMAL).multiply(HUNDRED, DECIMAL);
+            }
+            if (favorable.compareTo(mfe) > 0) {
+                mfe = favorable;
+            }
+            if (adverse.compareTo(mae) < 0) {
+                mae = adverse;
+            }
+        }
+        return new BigDecimal[] { mfe, mae };
+    }
+
+    private int countBarsBetween(List<OHLCBar> bars, Instant a, Instant b) {
+        int n = 0;
+        for (OHLCBar bar : bars) {
+            if (!bar.time().isBefore(a) && !bar.time().isAfter(b)) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    // ─── Formatters ──────────────────────────────────────────────────────────
+
+    private static String formatPercent(BigDecimal value) {
+        return value.movePointRight(2).setScale(2, RoundingMode.HALF_UP).toPlainString() + "%";
+    }
+
+    private static String formatSignedPercent(BigDecimal value) {
+        BigDecimal pct = value.movePointRight(2).setScale(2, RoundingMode.HALF_UP);
+        return (pct.signum() > 0 ? "+" : "") + pct.toPlainString() + "%";
+    }
+
+    private static String formatSignedPercentRaw(BigDecimal value) {
+        BigDecimal pct = value.setScale(2, RoundingMode.HALF_UP);
+        return (pct.signum() > 0 ? "+" : "") + pct.toPlainString() + "%";
+    }
+
+    private static String formatSignedAmount(BigDecimal value) {
+        BigDecimal scaled = value.setScale(2, RoundingMode.HALF_UP);
+        return (scaled.signum() > 0 ? "+" : "") + scaled.toPlainString();
+    }
+
+    private static String formatRatio(BigDecimal value) {
+        return value.setScale(2, RoundingMode.HALF_UP).toPlainString();
+    }
+
+    private static String formatPrice(BigDecimal value) {
+        BigDecimal rounded = value.setScale(2, RoundingMode.HALF_UP);
+        String[] parts = rounded.toPlainString().split("\\.");
+        StringBuilder out = new StringBuilder();
+        String integer = parts[0];
+        boolean neg = integer.startsWith("-");
+        if (neg) {
+            out.append('-');
+            integer = integer.substring(1);
+        }
+        int len = integer.length();
+        for (int i = 0; i < len; i++) {
+            if (i > 0 && (len - i) % 3 == 0) {
+                out.append(' ');
+            }
+            out.append(integer.charAt(i));
+        }
+        if (parts.length > 1) {
+            out.append('.').append(parts[1]);
+        }
+        return out.toString();
     }
 
     private static String formatPercentTick(double v) {
@@ -1135,15 +1436,33 @@ public final class HtmlReportGenerator {
         return String.format(Locale.ROOT, "%.0f%%", v);
     }
 
+    private static String formatIsoMinute(Instant t) {
+        return t.atOffset(ZoneOffset.UTC).format(
+                DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm'Z'", Locale.ENGLISH));
+    }
+
     private static double round(double value) {
         return Math.round(value * 100.0) / 100.0;
     }
+
+    // ─── Misc ────────────────────────────────────────────────────────────────
 
     private ChartRenderer newRenderer() {
         try {
             return new JFreeChartRenderer();
         } catch (DriverInternalException e) {
             throw new ReportGenerationException("could not initialize the chart renderer", e);
+        }
+    }
+
+    private static String loadResource(String path) {
+        try (InputStream in = HtmlReportGenerator.class.getResourceAsStream(path)) {
+            if (in == null) {
+                throw new ReportGenerationException("missing report resource: " + path);
+            }
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            throw new UncheckedIOException("could not load report resource " + path, e);
         }
     }
 

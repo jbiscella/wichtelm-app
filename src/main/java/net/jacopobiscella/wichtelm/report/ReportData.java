@@ -27,6 +27,8 @@ import java.util.Objects;
  * @param parameters           effective strategy parameter values (TOML overrides applied),
  *                             used to resolve identifier args in Background series
  *                             expressions when rendering indicator overlays
+ * @param symbol               instrument symbol (from the TOML config) — surfaced in
+ *                             the report header
  */
 public record ReportData(String configBasename,
                          LocalDateTime generatedAt,
@@ -36,7 +38,8 @@ public record ReportData(String configBasename,
                          OHLCSeries primarySeries,
                          Map<String, OHLCSeries> higherTimeframeSeries,
                          Map<String, List<Instant>> triggersByScenario,
-                         Map<String, BigDecimal> parameters) {
+                         Map<String, BigDecimal> parameters,
+                         String symbol) {
 
     public ReportData {
         Objects.requireNonNull(configBasename, "configBasename");
@@ -45,6 +48,7 @@ public record ReportData(String configBasename,
         Objects.requireNonNull(strategy, "strategy");
         Objects.requireNonNull(result, "result");
         Objects.requireNonNull(primarySeries, "primarySeries");
+        Objects.requireNonNull(symbol, "symbol");
         higherTimeframeSeries = Map.copyOf(higherTimeframeSeries);
         Map<String, List<Instant>> triggers = new java.util.LinkedHashMap<>();
         triggersByScenario.forEach((name, times) -> triggers.put(name, List.copyOf(times)));
