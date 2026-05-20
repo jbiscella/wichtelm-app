@@ -196,8 +196,8 @@ public final class HtmlReportGenerator {
         metricCard(html, "Sortino", formatRatio(m.sortinoRatio()), "", "downside-only σ");
         metricCard(html, "Calmar", formatRatio(m.calmarRatio()), "", "return / max DD");
         metricCard(html, "Profit factor",
-                m.profitFactor().signum() == 0 ? "—" : formatRatio(m.profitFactor()), "",
-                m.profitFactor().signum() == 0 ? "no closed trades" : "gross win / loss");
+                m.numTrades() == 0 ? "—" : formatRatio(m.profitFactor()), "",
+                m.numTrades() == 0 ? "no closed trades" : "gross win / loss");
         metricCard(html, "Avg win", formatSignedAmount(m.avgWin()), "pos", "per winning trade");
         metricCard(html, "Avg loss", formatSignedAmount(m.avgLoss()), "neg", "per losing trade");
         html.append("</div>");
@@ -406,7 +406,10 @@ public final class HtmlReportGenerator {
         Duration held = Duration.between(open.entryTime(), windowEnd);
         long holdHours = Math.max(1L, held.toHours());
         long holdDays = Math.max(1L, (holdHours + 23L) / 24L);
-        int holdBars = countBarsBetween(bars, open.entryTime(), windowEnd);
+        // countBarsBetween is exclusive on the upper bound (so closed-trade
+        // hold counts exclude the exit-fill bar). The open position is still
+        // held at the last bar, so bump the bound by 1ns to keep it counted.
+        int holdBars = countBarsBetween(bars, open.entryTime(), windowEnd.plusNanos(1));
 
         BigDecimal lastClose = bars.isEmpty() ? open.entryPrice() : bars.getLast().close();
         BigDecimal markPct = lastClose.subtract(open.entryPrice(), DECIMAL)
@@ -1383,9 +1386,13 @@ public final class HtmlReportGenerator {
     }
 
     private int countBarsBetween(List<OHLCBar> bars, Instant a, Instant b) {
+        // Count bars where a <= bar.time() < b. The exit-fill bar at b is
+        // excluded because the trade is closed at its open (close-evaluated
+        // exits fill at the next bar's open), matching the same convention
+        // used by computeMfeMae.
         int n = 0;
         for (OHLCBar bar : bars) {
-            if (!bar.time().isBefore(a) && !bar.time().isAfter(b)) {
+            if (!bar.time().isBefore(a) && bar.time().isBefore(b)) {
                 n++;
             }
         }
