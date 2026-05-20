@@ -26,7 +26,6 @@ import org.hatrack.heerwisch.api.spec.LayoutSpec;
 import org.hatrack.heerwisch.api.spec.MarkerDirection;
 import org.hatrack.heerwisch.api.spec.Pane;
 import org.hatrack.heerwisch.jfreechart.JFreeChartRenderer;
-import org.hatrack.indicators.Indicators;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -785,22 +784,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         }
         out.append("</span><span class=\"tf\">").append(esc(timeframe))
                 .append("<span class=\"tag\">").append(esc(tag)).append("</span></span></div>")
-                .append("<div class=\"ph-body\">").append(img);
-        // RSI sub-pane: render on whichever timeframe the strategy declared
-        // it on. Use the FULL series for that timeframe so RSI values are
-        // computed with proper warmup, then clip to the chart window.
-        OHLCSeries fullForTf = isPrimary
-                ? data.primarySeries()
-                : data.higherTimeframeSeries().get(timeframe);
-        if (fullForTf != null) {
-            String rsi = renderRsiSubpaneIfDeclared(timeframe, fullForTf,
-                    window.bars().getFirst().time(), window.bars().getLast().time(),
-                    entryMarker, exitMarker, data);
-            if (!rsi.isEmpty()) {
-                out.append(rsi);
-            }
-        }
-        out.append("</div>");
+                .append("<div class=\"ph-body\">").append(img).append("</div>");
 
         // Footer annotations
         out.append("<div class=\"ch-foot\">");
@@ -884,8 +868,11 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             Instant rangeStart = null;
             Instant rangeEnd = null;
             if (entryBar != null) {
-                builder.addAnnotation(new Annotation.EntryExitMarker(
-                        entryBar.getKey(), entryBar.getValue(),
+                // EntryExitMarkerAuto positions the glyph relative to the bar's
+                // high/low (entries below low, exits above high), matching the
+                // industry convention. No price parameter required.
+                builder.addAnnotation(new Annotation.EntryExitMarkerAuto(
+                        entryBar.getKey(),
                         isLong ? MarkerDirection.LONG_ENTRY : MarkerDirection.SHORT_ENTRY,
                         GlyphStyle.UP_TRIANGLE));
                 rangeStart = entryBar.getKey();
@@ -893,8 +880,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             if (exitMarker != null && !openTrade) {
                 Map.Entry<Instant, BigDecimal> exitBar = closeByTime.floorEntry(exitMarker);
                 if (exitBar != null) {
-                    builder.addAnnotation(new Annotation.EntryExitMarker(
-                            exitBar.getKey(), exitBar.getValue(),
+                    builder.addAnnotation(new Annotation.EntryExitMarkerAuto(
+                            exitBar.getKey(),
                             isLong ? MarkerDirection.LONG_EXIT : MarkerDirection.SHORT_EXIT,
                             exitScheduled ? GlyphStyle.DOWN_TRIANGLE : GlyphStyle.ARROW_DOWN));
                     rangeEnd = exitBar.getKey();
@@ -948,14 +935,6 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             if (ind == null || barCount < ind.minBars()) {
                 continue;
             }
-            if (ind instanceof Indicator.RSI rsi
-                    && data.primarySeries().bars().size() > rsi.period()
-                    && timeframe.equals(primaryTf)) {
-                if (seen.add("RSI:" + rsi.period())) {
-                    parts.add("RSI(" + rsi.period() + ") sub-pane");
-                }
-                continue;
-            }
             String desc = describeIndicator(ind);
             if (seen.add(desc)) {
                 parts.add(desc);
@@ -993,12 +972,6 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             if (indicator == null || bars < indicator.minBars()) {
                 continue;
             }
-            // RSI is rendered as a custom SVG sub-pane below the heerwisch
-            // image (so we can pin the Y range and draw threshold lines that
-            // heerwisch does not emit). Skip it from the heerwisch ChartSpec.
-            if (indicator instanceof Indicator.RSI) {
-                continue;
-            }
             // De-dup identical indicators that come from multiple Background
             // series (e.g. macd_line + macd_signal + macd_histogram all map to
             // the same Indicator.MACD record).
@@ -1027,37 +1000,6 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         return hits;
     }
 
-    /**
-     * Renders one RSI sub-pane per RSI Background series declared on the
-     * given timeframe. A strategy may declare multiple RSI series with
-     * different periods or thresholds; each gets its own sub-pane stacked
-     * below the chart image. De-duplicates identical RSI definitions so a
-     * strategy that references the same RSI under two different Background
-     * names does not draw the sub-pane twice.
-     */
-    private String renderRsiSubpaneIfDeclared(String timeframeLabel, OHLCSeries fullSeries,
-                                               Instant windowStart, Instant windowEnd,
-                                               Instant entryMarker, Instant exitMarker,
-                                               ReportData data) {
-        StringBuilder out = new StringBuilder();
-        Set<String> seen = new HashSet<>();
-        for (BackgroundSeries bg : seriesForTimeframe(timeframeLabel, data)) {
-            Indicator ind = toIndicator(bg.expression(), data.parameters());
-            if (!(ind instanceof Indicator.RSI rsi)) {
-                continue;
-            }
-            if (fullSeries.bars().size() <= rsi.period()) {
-                continue;
-            }
-            String key = rsi.period() + ":" + rsi.overbought() + ":" + rsi.oversold();
-            if (!seen.add(key)) {
-                continue;
-            }
-            out.append(renderRsiSubpane(fullSeries, rsi.period(), rsi.overbought(),
-                    rsi.oversold(), windowStart, windowEnd, entryMarker, exitMarker));
-        }
-        return out.toString();
-    }
 
 
     private static Indicator toIndicator(String expression, Map<String, BigDecimal> parameters) {
@@ -1078,7 +1020,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                         resolveIntArg(args, 0, parameters),
                         parameters.getOrDefault("overbought", DEFAULT_RSI_OVERBOUGHT),
                         parameters.getOrDefault("oversold", DEFAULT_RSI_OVERSOLD),
-                        PriceSource.CLOSE);
+                        PriceSource.CLOSE,
+                        Optional.of(Indicator.RsiVisualization.DANGER_ZONES_ON));
                 case "atr" -> new Indicator.ATR(resolveIntArg(args, 0, parameters));
                 case "macd_line", "macd_signal", "macd_histogram" -> new Indicator.MACD(
                         resolveIntArg(args, 0, parameters),
@@ -1154,195 +1097,6 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             }
         }
         return List.copyOf(timeframes);
-    }
-
-    // ─── RSI sub-pane SVG (kept from Task C) ─────────────────────────────────
-
-    private String renderRsiSubpane(OHLCSeries fullSeries, int period,
-                                     BigDecimal overbought, BigDecimal oversold,
-                                     Instant windowStart, Instant windowEnd,
-                                     Instant entryMarker, Instant exitMarker) {
-        List<OHLCBar> bars = fullSeries.bars();
-        List<BigDecimal> closes = new ArrayList<>(bars.size());
-        Instant[] times = new Instant[bars.size()];
-        for (int i = 0; i < bars.size(); i++) {
-            closes.add(bars.get(i).close());
-            times[i] = bars.get(i).time();
-        }
-        BigDecimal[] rsi = Indicators.rsi(closes, period);
-
-        double vbW = 900;
-        // 170 viewBox height gives a plot inner of ~112 px so the RSI line,
-        // threshold lines and danger-zone shading have enough vertical room
-        // to be read at a glance (was 140 / ~82 px before).
-        double vbH = 170;
-        double padLeft = 50, padRight = 30, padTop = 22, padBottom = 36;
-        double plotW = vbW - padLeft - padRight;
-        double plotH = vbH - padTop - padBottom;
-        double obY = overbought.doubleValue();
-        double osY = oversold.doubleValue();
-        double obYpx = padTop + plotH - (obY / 100.0) * plotH;
-        double osYpx = padTop + plotH - (osY / 100.0) * plotH;
-        long t0 = windowStart.toEpochMilli();
-        long t1 = windowEnd.toEpochMilli();
-        long tSpan = Math.max(t1 - t0, 1L);
-
-        StringBuilder svg = new StringBuilder();
-        // Lock the rendered height to the viewBox height so the plot inner
-        // stays ~112 px regardless of container width — without this, narrow
-        // browser windows shrink the sub-pane to an unreadable ~50-60 px and
-        // the threshold lines / danger zones collapse together.
-        svg.append("<svg viewBox=\"0 0 ").append((int) vbW).append(' ').append((int) vbH)
-                .append("\" preserveAspectRatio=\"xMidYMid meet\" xmlns=\"http://www.w3.org/2000/svg\""
-                        + " style=\"display:block;width:100%;height:").append((int) vbH)
-                .append("px;margin-top:8px\">");
-        svg.append("<text x=\"").append(round(padLeft))
-                .append("\" y=\"14\" font-family=\"JetBrains Mono,monospace\" font-size=\"10\""
-                        + " fill=\"#58564e\">RSI(").append(period).append(")</text>");
-        // Danger zones — overbought above 70 (--short hue), oversold below 30
-        // (--long hue). Alpha bumped from 0.08 to 0.16 so the band is visible
-        // at the chart's render size.
-        svg.append("<rect x=\"").append(round(padLeft)).append("\" y=\"").append(round(padTop))
-                .append("\" width=\"").append(round(plotW))
-                .append("\" height=\"").append(round(obYpx - padTop))
-                .append("\" fill=\"oklch(0.58 0.16 28 / 0.16)\"/>");
-        svg.append("<rect x=\"").append(round(padLeft)).append("\" y=\"").append(round(osYpx))
-                .append("\" width=\"").append(round(plotW))
-                .append("\" height=\"").append(round(padTop + plotH - osYpx))
-                .append("\" fill=\"oklch(0.58 0.13 155 / 0.16)\"/>");
-        int[] ticks = {0, 30, 50, 70, 100};
-        svg.append("<g font-size=\"9\" font-family=\"JetBrains Mono,monospace\" fill=\"#8a8880\">");
-        for (int yVal : ticks) {
-            double y = padTop + plotH - (yVal / 100.0) * plotH;
-            svg.append("<line x1=\"").append(round(padLeft))
-                    .append("\" x2=\"").append(round(padLeft + plotW))
-                    .append("\" y1=\"").append(round(y))
-                    .append("\" y2=\"").append(round(y))
-                    .append("\" stroke=\"#e6e4dc\"/>");
-            svg.append("<text x=\"").append(round(padLeft - 4))
-                    .append("\" y=\"").append(round(y + 3))
-                    .append("\" text-anchor=\"end\">").append(yVal).append("</text>");
-        }
-        svg.append("</g>");
-        // Thresholds — semantic-coloured, dashed, width 1.5. Overbought uses
-        // --short (red); oversold uses --long (green); matches the trade
-        // entry / exit pill palette so the threshold reads at a glance.
-        svg.append("<line x1=\"").append(round(padLeft))
-                .append("\" x2=\"").append(round(padLeft + plotW))
-                .append("\" y1=\"").append(round(obYpx))
-                .append("\" y2=\"").append(round(obYpx))
-                .append("\" stroke=\"oklch(0.58 0.16 28)\" stroke-dasharray=\"3 3\""
-                        + " stroke-width=\"1.5\"/>");
-        svg.append("<line x1=\"").append(round(padLeft))
-                .append("\" x2=\"").append(round(padLeft + plotW))
-                .append("\" y1=\"").append(round(osYpx))
-                .append("\" y2=\"").append(round(osYpx))
-                .append("\" stroke=\"oklch(0.58 0.13 155)\" stroke-dasharray=\"3 3\""
-                        + " stroke-width=\"1.5\"/>");
-        // X axis: ticks at round-time boundaries (midnight UTC + interval),
-        // matching the convention JFreeChart uses on the main chart above so
-        // the two axes visually align on the same date grid rather than at
-        // arbitrary 20-%-of-span positions.
-        long hourMs = 60L * 60 * 1000;
-        long dayMs = 24L * hourMs;
-        long spanHours = tSpan / hourMs;
-        long tickIntervalMs;
-        DateTimeFormatter xFmt;
-        if (spanHours <= 6) {
-            tickIntervalMs = hourMs;
-            xFmt = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH);
-        } else if (spanHours <= 24) {
-            tickIntervalMs = 4 * hourMs;
-            xFmt = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.ENGLISH);
-        } else if (spanHours <= 96) {
-            tickIntervalMs = 12 * hourMs;
-            xFmt = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.ENGLISH);
-        } else if (tSpan <= 14 * dayMs) {
-            tickIntervalMs = dayMs;
-            xFmt = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH);
-        } else if (tSpan <= 60 * dayMs) {
-            tickIntervalMs = 7 * dayMs;
-            xFmt = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH);
-        } else {
-            tickIntervalMs = 30 * dayMs;
-            xFmt = DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
-        }
-        // First tick: smallest multiple of tickIntervalMs (counted from the
-        // UTC epoch, which IS a midnight) that is >= t0. This puts ticks on
-        // round boundaries — midnight, then +interval, etc. — exactly like
-        // JFreeChart's default DateAxis tick selection.
-        long firstTick = ((t0 + tickIntervalMs - 1) / tickIntervalMs) * tickIntervalMs;
-        svg.append("<g font-size=\"9\" font-family=\"JetBrains Mono,monospace\" fill=\"#8a8880\">");
-        for (long tickT = firstTick; tickT <= t1; tickT += tickIntervalMs) {
-            double px = padLeft + (double) (tickT - t0) / tSpan * plotW;
-            svg.append("<line x1=\"").append(round(px))
-                    .append("\" x2=\"").append(round(px))
-                    .append("\" y1=\"").append(round(padTop + plotH))
-                    .append("\" y2=\"").append(round(padTop + plotH + 4))
-                    .append("\" stroke=\"#8a8880\"/>");
-            double labelY = padTop + plotH + 14;
-            String label = Instant.ofEpochMilli(tickT)
-                    .atOffset(ZoneOffset.UTC).format(xFmt);
-            svg.append("<text x=\"").append(round(px))
-                    .append("\" y=\"").append(round(labelY))
-                    .append("\" text-anchor=\"end\" transform=\"rotate(-45, ")
-                    .append(round(px)).append(',').append(round(labelY))
-                    .append(")\">").append(esc(label)).append("</text>");
-        }
-        svg.append("</g>");
-        // Plot border
-        svg.append("<rect x=\"").append(round(padLeft))
-                .append("\" y=\"").append(round(padTop))
-                .append("\" width=\"").append(round(plotW))
-                .append("\" height=\"").append(round(plotH))
-                .append("\" fill=\"none\" stroke=\"#d6d3c7\"/>");
-        // Entry / exit reference lines
-        appendRsiMarker(svg, entryMarker, t0, t1, tSpan, padLeft, plotW, padTop, plotH,
-                "oklch(0.58 0.13 155)");
-        if (exitMarker != null) {
-            appendRsiMarker(svg, exitMarker, t0, t1, tSpan, padLeft, plotW, padTop, plotH,
-                    "oklch(0.58 0.16 28)");
-        }
-        // RSI line
-        StringBuilder path = new StringBuilder();
-        boolean started = false;
-        for (int i = 0; i < rsi.length; i++) {
-            if (rsi[i] == null) {
-                continue;
-            }
-            long ti = times[i].toEpochMilli();
-            if (ti < t0 || ti > t1) {
-                continue;
-            }
-            double px = padLeft + (double) (ti - t0) / tSpan * plotW;
-            double py = padTop + plotH - (rsi[i].doubleValue() / 100.0) * plotH;
-            path.append(started ? "L" : "M").append(round(px)).append(' ')
-                    .append(round(py)).append(' ');
-            started = true;
-        }
-        svg.append("<path fill=\"none\" stroke=\"oklch(0.55 0.13 280)\" stroke-width=\"1.3\" d=\"")
-                .append(path.toString().strip()).append("\"/>");
-        svg.append("</svg>");
-        return svg.toString();
-    }
-
-    private static void appendRsiMarker(StringBuilder svg, Instant marker, long t0, long t1,
-                                         long tSpan, double padLeft, double plotW,
-                                         double padTop, double plotH, String color) {
-        if (marker == null) {
-            return;
-        }
-        long mt = marker.toEpochMilli();
-        if (mt < t0 || mt > t1) {
-            return;
-        }
-        double px = padLeft + (double) (mt - t0) / tSpan * plotW;
-        svg.append("<line x1=\"").append(round(px))
-                .append("\" x2=\"").append(round(px))
-                .append("\" y1=\"").append(round(padTop))
-                .append("\" y2=\"").append(round(padTop + plotH))
-                .append("\" stroke=\"").append(color)
-                .append("\" stroke-width=\"1.2\" stroke-dasharray=\"2 3\"/>");
     }
 
 
