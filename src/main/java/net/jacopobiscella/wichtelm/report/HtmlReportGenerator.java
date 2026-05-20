@@ -19,8 +19,11 @@ import org.hatrack.heerwisch.api.spec.Annotation;
 import org.hatrack.heerwisch.api.spec.ChartImage;
 import org.hatrack.heerwisch.api.spec.ChartSpec;
 import org.hatrack.heerwisch.api.spec.ChartSpecBuilder;
+import org.hatrack.heerwisch.api.spec.FillColor;
+import org.hatrack.heerwisch.api.spec.GlyphStyle;
 import org.hatrack.heerwisch.api.spec.Indicator;
 import org.hatrack.heerwisch.api.spec.LayoutSpec;
+import org.hatrack.heerwisch.api.spec.MarkerDirection;
 import org.hatrack.heerwisch.api.spec.Pane;
 import org.hatrack.heerwisch.jfreechart.JFreeChartRenderer;
 import org.hatrack.indicators.Indicators;
@@ -723,7 +726,13 @@ public final class HtmlReportGenerator {
         String title = isPrimary ? "Price · primary" : "Background · higher-TF";
         String indicatorLabel = describeChartIndicators(timeframe, window.bars().size(), data);
         String tag = isPrimary ? "trade window + ctx" : "multi-TF context";
-        String img = renderHeerwischImage(renderer, window, timeframe, entryMarker, exitMarker, data);
+        boolean isLong = dirClass.equals("long");
+        // Scheduled exit = the exit fill time matched a Scenario trigger.
+        // Forced exit = the runtime closed at an explicit price (stop_loss,
+        // take_profit, or end-of-series) so no Scenario trigger maps to it.
+        boolean exitScheduled = exitHit != null;
+        String img = renderHeerwischImage(renderer, window, timeframe, entryMarker, exitMarker,
+                isLong, exitScheduled, openTrade, data);
         Duration heldInWindow = Duration.between(tradeEntry, tradeExit);
         long heldHours = Math.max(1L, heldInWindow.toHours());
 
@@ -788,9 +797,35 @@ public final class HtmlReportGenerator {
         return out.toString();
     }
 
+    /**
+     * Builds the heerwisch chart spec and returns the rendered image as a
+     * base64 {@code <img>}. Per-trade annotations:
+     *
+     * <ul>
+     *   <li>One {@code EntryExitMarker} at the entry bar, direction tagged
+     *       {@code LONG_ENTRY} / {@code SHORT_ENTRY}, glyph
+     *       {@code UP_TRIANGLE}. Entries in wichtelm-app are always
+     *       Scenario-driven so there is no "forced entry" variant.</li>
+     *   <li>One {@code EntryExitMarker} at the exit bar (when {@code
+     *       exitMarker != null}), direction tagged {@code LONG_EXIT} /
+     *       {@code SHORT_EXIT}, glyph {@code DOWN_TRIANGLE} when the exit
+     *       matched a Scenario trigger (scheduled), {@code ARROW_DOWN} when
+     *       the runtime forced the close at an explicit price
+     *       (stop_loss / take_profit / end-of-series). The
+     *       Scheduled-vs-forced split is inferred from whether the exit time
+     *       matched a Scenario fill time (frau-holle's Trade record does not
+     *       carry the discriminator).</li>
+     *   <li>One {@code TimeRangeHighlight} spanning the held period, filled
+     *       {@code LONG_POSITION} for long trades and {@code SHORT_POSITION}
+     *       for shorts, opacity {@code 0.15}. For open trades the range
+     *       extends to the last bar in the chart window.</li>
+     * </ul>
+     */
     private String renderHeerwischImage(ChartRenderer renderer, OHLCSeries series,
                                          String timeframeLabel, Instant entryMarker,
-                                         Instant exitMarker, ReportData data) {
+                                         Instant exitMarker, boolean isLong,
+                                         boolean exitScheduled, boolean openTrade,
+                                         ReportData data) {
         try {
             LayoutSpec layout = LayoutSpec.builder().withSize(900, 320).build();
             ChartSpecBuilder builder = ChartSpec.builder().withSeries(series).withLayout(layout);
@@ -800,16 +835,37 @@ public final class HtmlReportGenerator {
                 closeByTime.put(bar.time(), bar.close());
             }
             Map.Entry<Instant, BigDecimal> entryBar = closeByTime.floorEntry(entryMarker);
+            Instant rangeStart = null;
+            Instant rangeEnd = null;
             if (entryBar != null) {
-                builder.addAnnotation(new Annotation.BarHighlight(
-                        entryBar.getKey(), entryBar.getValue(), "entry"));
+                builder.addAnnotation(new Annotation.EntryExitMarker(
+                        entryBar.getKey(), entryBar.getValue(),
+                        isLong ? MarkerDirection.LONG_ENTRY : MarkerDirection.SHORT_ENTRY,
+                        GlyphStyle.UP_TRIANGLE));
+                rangeStart = entryBar.getKey();
             }
-            if (exitMarker != null) {
+            if (exitMarker != null && !openTrade) {
                 Map.Entry<Instant, BigDecimal> exitBar = closeByTime.floorEntry(exitMarker);
                 if (exitBar != null) {
-                    builder.addAnnotation(new Annotation.BarHighlight(
-                            exitBar.getKey(), exitBar.getValue(), "exit"));
+                    builder.addAnnotation(new Annotation.EntryExitMarker(
+                            exitBar.getKey(), exitBar.getValue(),
+                            isLong ? MarkerDirection.LONG_EXIT : MarkerDirection.SHORT_EXIT,
+                            exitScheduled ? GlyphStyle.DOWN_TRIANGLE : GlyphStyle.ARROW_DOWN));
+                    rangeEnd = exitBar.getKey();
                 }
+            }
+            if (openTrade && !series.bars().isEmpty()) {
+                rangeEnd = series.bars().getLast().time();
+            }
+            // V17: startTime must be strictly before endTime. Short trades on
+            // a higher-TF chart can collapse to the same bar (e.g. an 8-hour
+            // trade rendered on a 1d series), so skip the highlight when the
+            // snapped instants coincide.
+            if (rangeStart != null && rangeEnd != null && rangeStart.isBefore(rangeEnd)) {
+                builder.addAnnotation(new Annotation.TimeRangeHighlight(
+                        rangeStart, rangeEnd,
+                        isLong ? FillColor.LONG_POSITION : FillColor.SHORT_POSITION,
+                        new BigDecimal("0.15")));
             }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
@@ -1059,7 +1115,10 @@ public final class HtmlReportGenerator {
         BigDecimal[] rsi = Indicators.rsi(closes, period);
 
         double vbW = 900;
-        double vbH = 140;
+        // 170 viewBox height gives a plot inner of ~112 px so the RSI line,
+        // threshold lines and danger-zone shading have enough vertical room
+        // to be read at a glance (was 140 / ~82 px before).
+        double vbH = 170;
         double padLeft = 50, padRight = 30, padTop = 22, padBottom = 36;
         double plotW = vbW - padLeft - padRight;
         double plotH = vbH - padTop - padBottom;
@@ -1078,15 +1137,17 @@ public final class HtmlReportGenerator {
         svg.append("<text x=\"").append(round(padLeft))
                 .append("\" y=\"14\" font-family=\"JetBrains Mono,monospace\" font-size=\"10\""
                         + " fill=\"#58564e\">RSI(").append(period).append(")</text>");
-        // Danger zones
+        // Danger zones — overbought above 70 (--short hue), oversold below 30
+        // (--long hue). Alpha bumped from 0.08 to 0.16 so the band is visible
+        // at the chart's render size.
         svg.append("<rect x=\"").append(round(padLeft)).append("\" y=\"").append(round(padTop))
                 .append("\" width=\"").append(round(plotW))
                 .append("\" height=\"").append(round(obYpx - padTop))
-                .append("\" fill=\"oklch(0.58 0.16 28 / 0.08)\"/>");
+                .append("\" fill=\"oklch(0.58 0.16 28 / 0.16)\"/>");
         svg.append("<rect x=\"").append(round(padLeft)).append("\" y=\"").append(round(osYpx))
                 .append("\" width=\"").append(round(plotW))
                 .append("\" height=\"").append(round(padTop + plotH - osYpx))
-                .append("\" fill=\"oklch(0.58 0.13 155 / 0.08)\"/>");
+                .append("\" fill=\"oklch(0.58 0.13 155 / 0.16)\"/>");
         int[] ticks = {0, 30, 50, 70, 100};
         svg.append("<g font-size=\"9\" font-family=\"JetBrains Mono,monospace\" fill=\"#8a8880\">");
         for (int yVal : ticks) {
@@ -1101,17 +1162,21 @@ public final class HtmlReportGenerator {
                     .append("\" text-anchor=\"end\">").append(yVal).append("</text>");
         }
         svg.append("</g>");
-        // Thresholds
+        // Thresholds — semantic-coloured, dashed, width 1.5. Overbought uses
+        // --short (red); oversold uses --long (green); matches the trade
+        // entry / exit pill palette so the threshold reads at a glance.
         svg.append("<line x1=\"").append(round(padLeft))
                 .append("\" x2=\"").append(round(padLeft + plotW))
                 .append("\" y1=\"").append(round(obYpx))
                 .append("\" y2=\"").append(round(obYpx))
-                .append("\" stroke=\"#d6d3c7\" stroke-dasharray=\"3 3\" stroke-width=\"1\"/>");
+                .append("\" stroke=\"oklch(0.58 0.16 28)\" stroke-dasharray=\"3 3\""
+                        + " stroke-width=\"1.5\"/>");
         svg.append("<line x1=\"").append(round(padLeft))
                 .append("\" x2=\"").append(round(padLeft + plotW))
                 .append("\" y1=\"").append(round(osYpx))
                 .append("\" y2=\"").append(round(osYpx))
-                .append("\" stroke=\"#d6d3c7\" stroke-dasharray=\"3 3\" stroke-width=\"1\"/>");
+                .append("\" stroke=\"oklch(0.58 0.13 155)\" stroke-dasharray=\"3 3\""
+                        + " stroke-width=\"1.5\"/>");
         // X axis adaptive
         DateTimeFormatter xFmt = adaptiveTickFormatter(tSpan);
         svg.append("<g font-size=\"9\" font-family=\"JetBrains Mono,monospace\" fill=\"#8a8880\">");
