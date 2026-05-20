@@ -730,8 +730,14 @@ public final class HtmlReportGenerator {
         out.append("</span><span class=\"tf\">").append(esc(timeframe))
                 .append("<span class=\"tag\">").append(esc(tag)).append("</span></span></div>")
                 .append("<div class=\"ph-body\">").append(img);
-        if (isPrimary) {
-            String rsi = renderRsiSubpaneIfDeclared(timeframe, data.primarySeries(),
+        // RSI sub-pane: render on whichever timeframe the strategy declared
+        // it on. Use the FULL series for that timeframe so RSI values are
+        // computed with proper warmup, then clip to the chart window.
+        OHLCSeries fullForTf = isPrimary
+                ? data.primarySeries()
+                : data.higherTimeframeSeries().get(timeframe);
+        if (fullForTf != null) {
+            String rsi = renderRsiSubpaneIfDeclared(timeframe, fullForTf,
                     window.bars().getFirst().time(), window.bars().getLast().time(),
                     entryMarker, exitMarker, data);
             if (!rsi.isEmpty()) {
@@ -1345,7 +1351,12 @@ public final class HtmlReportGenerator {
         BigDecimal mae = BigDecimal.ZERO;
         boolean isLong = direction.equalsIgnoreCase("LONG");
         for (OHLCBar bar : bars) {
-            if (bar.time().isBefore(entryTime) || bar.time().isAfter(exitTime)) {
+            // The position is held from the entry bar's open to the exit bar's
+            // open (close-evaluated exits fill at the next bar's open). Include
+            // bars where entryTime <= bar.time() < exitTime so the exit bar's
+            // high/low — which the trade no longer experiences — does not
+            // overstate the excursion stats.
+            if (bar.time().isBefore(entryTime) || !bar.time().isBefore(exitTime)) {
                 continue;
             }
             BigDecimal favorable;
