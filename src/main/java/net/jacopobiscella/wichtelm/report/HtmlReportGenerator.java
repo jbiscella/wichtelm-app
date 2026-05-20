@@ -9,7 +9,9 @@ import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.commons.PriceSource;
 import org.hatrack.commons.Timeframe;
+import org.hatrack.frauholle.model.Direction;
 import org.hatrack.frauholle.model.EquityPoint;
+import org.hatrack.frauholle.model.Position;
 import org.hatrack.frauholle.model.Trade;
 import org.hatrack.frauholle.result.BacktestDiagnostics;
 import org.hatrack.frauholle.result.BacktestMetrics;
@@ -98,7 +100,7 @@ public final class HtmlReportGenerator {
                 .append(esc(data.strategy().featureName())).append("</p></header>");
 
         appendMetrics(html, data.result().metrics());
-        appendScenarioBoxes(html, data, renderer);
+        appendChronologicalTradeList(html, data, renderer);
         appendTrailingSection(html, data);
         appendDisclaimerFooter(html);
 
@@ -166,10 +168,22 @@ public final class HtmlReportGenerator {
                 + ".metrics-table tr:last-child td{border-bottom:none;}"
                 + ".metrics-table .metric-name{color:#555;}"
                 + ".metrics-table .metric-value{text-align:right;font-variant-numeric:tabular-nums;font-weight:600;}"
-                + ".scenario-box{margin:1.4em 0;padding:.4em 0;}"
-                + ".scenario-box>h3{margin-bottom:.1em;}"
-                + ".scenario-box .trigger-count{margin:0 0 .6em 0;color:#666;font-size:.9em;}"
-                + ".trigger-block{border:1px solid #ddd;border-radius:4px;padding:.6em .8em;"
+                + ".trades-list>h2{margin-bottom:.4em;}"
+                + ".trade-block{margin:1.2em 0;padding:.8em 1em;border:1px solid #ccc;"
+                + "border-left:4px solid #888;border-radius:5px;background:#fff;}"
+                + ".trade-block.win{border-left-color:#27ae60;}"
+                + ".trade-block.loss{border-left-color:#c0392b;}"
+                + ".trade-block.open{border-left-color:#f39c12;}"
+                + ".trade-block>h3{margin:0 0 .5em 0;font-size:1.05em;color:#222;}"
+                + ".trade-block .pnl{font-variant-numeric:tabular-nums;font-weight:700;}"
+                + ".trade-block .pnl.win{color:#27ae60;}"
+                + ".trade-block .pnl.loss{color:#c0392b;}"
+                + ".trade-block .pnl.open{color:#f39c12;font-weight:600;}"
+                + ".trade-meta{display:grid;grid-template-columns:max-content 1fr;column-gap:.8em;"
+                + "row-gap:.15em;font-size:.85em;color:#555;margin:0 0 .8em 0;}"
+                + ".trade-meta dt{color:#666;font-weight:600;}"
+                + ".trade-meta dd{margin:0;font-variant-numeric:tabular-nums;}"
+                + ".trigger-block{border:1px solid #e0e0e0;border-radius:4px;padding:.6em .8em;"
                 + "margin:.5em 0 1em 0;background:#fafafa;}"
                 + ".trigger-block h4{margin:0 0 .4em 0;font-size:.95em;color:#333;font-weight:600;}"
                 + ".trigger-block figure{margin:.3em 0;}"
@@ -180,33 +194,169 @@ public final class HtmlReportGenerator {
                 + "</style>";
     }
 
-    private void appendScenarioBoxes(StringBuilder html, ReportData data, ChartRenderer renderer) {
-        html.append("<section class=\"scenario-boxes\"><h2>Per-Scenario breakdown</h2>");
-        List<StrategyScenario> scenarios = new ArrayList<>(data.strategy().scenarios());
-        scenarios.sort(Comparator.comparing(StrategyScenario::name));
-        for (StrategyScenario scenario : scenarios) {
-            appendBox(html, data, renderer, scenario);
+    /**
+     * Renders a single chronological list of every trade in the backtest,
+     * ordered strictly by entry timestamp ascending. The Scenario name is a
+     * per-trade property exposed on each trade's header, no longer the
+     * top-level grouping principle (CLAUDE.md section 7.3).
+     *
+     * <p>Each trade block contains the entry event followed by the exit event,
+     * each rendered with the per-trigger block layout from Task D (charts
+     * zoomed around the event, RSI sub-pane, sub-conditions table). When the
+     * exit time matches no Scenario trigger — the runtime forced the close at
+     * an explicit price (stop-loss / take-profit) — the exit label says so
+     * and only the entry block is rendered as a chart context.
+     *
+     * <p>The still-open position at the end of the series, if any, is
+     * appended last with a "still open" indicator and no exit block.
+     */
+    /**
+     * One Scenario trigger event: the Scenario that fired and the primary-TF
+     * bar time at which it fired. Distinct from the trade fill time, which
+     * is the next primary bar's open.
+     */
+    private record TriggerHit(String scenarioName, Instant triggerTime) {
+    }
+
+    private void appendChronologicalTradeList(StringBuilder html, ReportData data,
+                                              ChartRenderer renderer) {
+        html.append("<section class=\"trades-list\"><h2>Trades (chronological)</h2>");
+
+        Map<Instant, TriggerHit> triggerByFillTime = buildTriggerByFillTime(data);
+        Map<String, StrategyScenario> scenarioByName = new HashMap<>();
+        for (StrategyScenario s : data.strategy().scenarios()) {
+            scenarioByName.put(s.name(), s);
         }
+
+        List<Trade> trades = new ArrayList<>(data.result().trades());
+        trades.sort(Comparator.comparing(Trade::entryTime));
+
+        int totalEntries = trades.size()
+                + (data.result().openPositionAtEnd().isPresent() ? 1 : 0);
+        int width = Math.max(2, Integer.toString(totalEntries).length());
+
+        int ordinal = 0;
+        for (Trade trade : trades) {
+            ordinal++;
+            TriggerHit entry = triggerByFillTime.get(trade.entryTime());
+            TriggerHit exit = triggerByFillTime.get(trade.exitTime());
+            appendTradeBlock(html, data, renderer, ordinal, width, trade,
+                    entry, exit, scenarioByName);
+        }
+
+        data.result().openPositionAtEnd().ifPresent(open -> {
+            int n = trades.size() + 1;
+            TriggerHit entry = triggerByFillTime.get(open.entryTime());
+            appendOpenPositionBlock(html, data, renderer, n, width, open,
+                    entry, scenarioByName);
+        });
+
         html.append("</section>");
     }
 
-    private void appendBox(StringBuilder html, ReportData data, ChartRenderer renderer,
-                           StrategyScenario scenario) {
-        List<Instant> triggers = data.triggersByScenario()
-                .getOrDefault(scenario.name(), List.of());
-        html.append("<section class=\"scenario-box\" data-scenario=\"")
-                .append(esc(scenario.name())).append("\"><h3>").append(esc(scenario.name()))
-                .append("</h3><p class=\"trigger-count\">Trigger count: ")
-                .append(triggers.size()).append("</p>");
+    /**
+     * Reverse-index of trade fill times → trigger hit. Signals fire at bar T
+     * and the runtime fills at bar T+1; key each entry by the fill time
+     * ({@code advance(triggerTime, primaryTimeframe)}) so the trade's own
+     * entryTime / exitTime look up the originating Scenario directly. The
+     * trigger time is preserved on the value so the per-event chart can
+     * still anchor on the signal bar (one bar before the fill bar).
+     */
+    private Map<Instant, TriggerHit> buildTriggerByFillTime(ReportData data) {
+        Timeframe primaryTf = data.strategy().primaryTimeframe();
+        Map<Instant, TriggerHit> result = new HashMap<>();
+        data.triggersByScenario().forEach((name, times) -> {
+            for (Instant t : times) {
+                Instant fillTime = Timeframes.advance(t, primaryTf);
+                result.putIfAbsent(fillTime, new TriggerHit(name, t));
+            }
+        });
+        return result;
+    }
 
-        List<String> timeframes = timeframesFor(data, scenario);
-        List<StrategyStep> steps = scenario.conditionSteps();
-        for (int n = 0; n < triggers.size(); n++) {
-            Instant trigger = triggers.get(n);
-            appendTriggerBlock(html, data, renderer, scenario, trigger, n + 1, timeframes, steps);
-        }
+    private void appendTradeBlock(StringBuilder html, ReportData data, ChartRenderer renderer,
+                                  int ordinal, int width, Trade trade,
+                                  TriggerHit entry, TriggerHit exit,
+                                  Map<String, StrategyScenario> scenarioByName) {
+        String pnlPct = formatPercent(trade.pnlPercent());
+        String numeric = String.format(Locale.ROOT, "%0" + width + "d", ordinal);
+        String pnlClass = trade.pnlPercent().signum() >= 0 ? "win" : "loss";
+        String exitLabel = exit != null
+                ? exit.scenarioName()
+                : "(forced close — stop-loss / take-profit / end-of-series)";
+
+        html.append("<section class=\"trade-block ").append(pnlClass)
+                .append("\" data-trade-ordinal=\"").append(ordinal).append("\">")
+                .append("<h3>Trade #").append(numeric).append(" — ")
+                .append(esc(trade.direction().toString())).append(" · ")
+                .append(esc(trade.entryTime().toString())).append(" → ")
+                .append(esc(trade.exitTime().toString())).append(" · ")
+                .append("<span class=\"pnl ").append(pnlClass).append("\">")
+                .append(pnlPct).append("</span></h3>");
+
+        html.append("<dl class=\"trade-meta\">")
+                .append("<dt>Entry scenario</dt><dd>")
+                .append(esc(entry != null ? entry.scenarioName() : "—")).append("</dd>")
+                .append("<dt>Exit scenario</dt><dd>")
+                .append(esc(exitLabel)).append("</dd>")
+                .append("<dt>Entry price</dt><dd>")
+                .append(formatAmount(trade.entryPrice())).append("</dd>")
+                .append("<dt>Exit price</dt><dd>")
+                .append(formatAmount(trade.exitPrice())).append("</dd>")
+                .append("</dl>");
+
+        renderEvent(html, data, renderer, "Entry", entry, scenarioByName);
+        renderEvent(html, data, renderer, "Exit", exit, scenarioByName);
 
         html.append("</section>");
+    }
+
+    private void appendOpenPositionBlock(StringBuilder html, ReportData data,
+                                         ChartRenderer renderer, int ordinal, int width,
+                                         Position open, TriggerHit entry,
+                                         Map<String, StrategyScenario> scenarioByName) {
+        String numeric = String.format(Locale.ROOT, "%0" + width + "d", ordinal);
+        html.append("<section class=\"trade-block open\" data-trade-ordinal=\"")
+                .append(ordinal).append("\">")
+                .append("<h3>Trade #").append(numeric).append(" — ")
+                .append(esc(open.direction().toString())).append(" · ")
+                .append(esc(open.entryTime().toString())).append(" → ")
+                .append("<span class=\"pnl open\">still open at end of series</span></h3>");
+
+        html.append("<dl class=\"trade-meta\">")
+                .append("<dt>Entry scenario</dt><dd>")
+                .append(esc(entry != null ? entry.scenarioName() : "—")).append("</dd>")
+                .append("<dt>Entry price</dt><dd>")
+                .append(formatAmount(open.entryPrice())).append("</dd>")
+                .append("</dl>");
+
+        renderEvent(html, data, renderer, "Entry", entry, scenarioByName);
+
+        html.append("</section>");
+    }
+
+    /**
+     * Renders one per-event block (entry or exit) using the per-trigger block
+     * layout. The chart anchors on the {@code triggerTime} of the originating
+     * signal — the bar at which the Scenario fired — not the fill bar, so the
+     * BarHighlight lands on the bar the strategy actually evaluated.
+     */
+    private void renderEvent(StringBuilder html, ReportData data, ChartRenderer renderer,
+                             String eventLabel, TriggerHit hit,
+                             Map<String, StrategyScenario> scenarioByName) {
+        if (hit == null) {
+            // No matching Scenario trigger (e.g. forced stop-loss close) —
+            // the trade-meta dl above already documents the event.
+            return;
+        }
+        StrategyScenario scenario = scenarioByName.get(hit.scenarioName());
+        if (scenario == null) {
+            return;
+        }
+        List<String> timeframes = timeframesFor(data, scenario);
+        List<StrategyStep> steps = scenario.conditionSteps();
+        appendTriggerBlock(html, data, renderer, scenario, hit.triggerTime(), eventLabel,
+                timeframes, steps);
     }
 
     /**
@@ -216,11 +366,12 @@ public final class HtmlReportGenerator {
      * at that bar. CLAUDE.md section 7.3 describes the layout.
      */
     private void appendTriggerBlock(StringBuilder html, ReportData data, ChartRenderer renderer,
-                                     StrategyScenario scenario, Instant trigger, int ordinal,
+                                     StrategyScenario scenario, Instant trigger, String eventLabel,
                                      List<String> timeframes, List<StrategyStep> steps) {
         html.append("<div class=\"trigger-block\" data-trigger=\"")
                 .append(esc(trigger.toString())).append("\">")
-                .append("<h4>Trigger #").append(ordinal).append(" — ")
+                .append("<h4>").append(esc(eventLabel)).append(" — ")
+                .append(esc(scenario.name())).append(" @ ")
                 .append(esc(trigger.toString())).append("</h4>");
 
         String primaryTfWire = data.strategy().primaryTimeframe().wire();
