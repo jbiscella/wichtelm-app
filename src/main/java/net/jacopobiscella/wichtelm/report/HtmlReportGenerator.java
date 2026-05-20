@@ -417,8 +417,11 @@ public final class HtmlReportGenerator {
         if (open.direction().toString().equalsIgnoreCase("SHORT")) {
             markPct = markPct.negate();
         }
-        BigDecimal[] mfeMae = computeMfeMae(bars, open.entryTime(), windowEnd,
-                open.entryPrice(), open.direction().toString());
+        // computeMfeMae uses an exclusive upper bound for closed trades (the
+        // exit-fill bar is dropped). The open position is still in position at
+        // the last bar, so bump the end by 1ns to keep that bar counted.
+        BigDecimal[] mfeMae = computeMfeMae(bars, open.entryTime(),
+                windowEnd.plusNanos(1), open.entryPrice(), open.direction().toString());
 
         html.append("<details class=\"trigger\"><summary><div class=\"sum-row\">")
                 .append("<span class=\"idx\">").append(esc(idx)).append("</span>")
