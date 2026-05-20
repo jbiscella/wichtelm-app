@@ -1,0 +1,39 @@
+# Strategy 5 — MACD Boolean Cross Trading
+#
+# Showcase for the Tier B MACD boolean primitives. Where
+# macd-breakout.strat builds entry/exit conditions out of arithmetic
+# expressions on macd_line / macd_signal, this strategy uses the
+# pre-detected boolean primitives directly: macd_bullish_cross,
+# macd_bearish_cross, macd_zero_cross_up, macd_zero_cross_down.
+# rsi_crosses_50 is layered as a momentum filter on entries.
+
+Feature: MACD Boolean Cross Trading
+  Primary timeframe: 1h
+  Parameter stop_loss_pct default 2
+  Parameter take_profit_pct default 5
+
+  Scenario: Enter long on MACD bullish cross with RSI confirmation
+    Given no open position
+    When macd_bullish_cross()
+    And rsi_crosses_50()
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 + take_profit_pct / 100)
+
+  Scenario: Exit long on MACD zero cross down
+    Given a long position is open
+    When macd_zero_cross_down()
+    Then long_exit
+
+  Scenario: Enter short on MACD bearish cross with RSI confirmation
+    Given no open position
+    When macd_bearish_cross()
+    And rsi_crosses_50()
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 - take_profit_pct / 100)
+
+  Scenario: Exit short on MACD zero cross up
+    Given a short position is open
+    When macd_zero_cross_up()
+    Then short_exit
