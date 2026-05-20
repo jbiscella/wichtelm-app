@@ -575,8 +575,15 @@ public final class HtmlReportGenerator {
             if (window.bars().isEmpty()) {
                 continue;
             }
-            Instant entryMarker = snapToBar(window.bars(), tradeEntry);
-            Instant exitMarker = openTrade ? null : snapToBar(window.bars(), tradeExit);
+            // Snap entry / exit markers to a bar that the runtime could see
+            // at trade time. On the primary timeframe that's just the bar at
+            // tradeEntry / tradeExit; on a higher timeframe we must step back
+            // to the most recently CLOSED bar (closeTime <= t), matching the
+            // lookahead-safety rule in HigherTimeframeSeries.resolveAt.
+            Instant entryMarker = snapToVisibleBar(window.bars(), timeframe, isPrimary, tradeEntry);
+            Instant exitMarker = openTrade
+                    ? null
+                    : snapToVisibleBar(window.bars(), timeframe, isPrimary, tradeExit);
             html.append(renderChartFrame(renderer, window, tf, isPrimary, entryMarker,
                     exitMarker, openTrade, dirClass, data, scenarioByName, entryHit, exitHit,
                     tradeEntry, tradeExit));
@@ -707,11 +714,37 @@ public final class HtmlReportGenerator {
         return idx;
     }
 
-    private static Instant snapToBar(List<OHLCBar> bars, Instant t) {
+    /**
+     * Snaps {@code t} to a bar that the runtime could see. On the primary
+     * timeframe the bar with {@code time <= t} is the trigger bar itself; on
+     * a higher timeframe that bar may still be open at {@code t}, so step
+     * back to the most recently CLOSED bar — the same lookahead-safe rule
+     * applied by {@link #locateBar} and the runtime's
+     * {@code HigherTimeframeSeries.resolveAt}.
+     */
+    private static Instant snapToVisibleBar(List<OHLCBar> bars, Timeframe tf, boolean isPrimary,
+                                             Instant t) {
+        if (bars.isEmpty()) {
+            return t;
+        }
         Instant snapped = bars.getFirst().time();
-        for (OHLCBar b : bars) {
-            if (!b.time().isAfter(t)) {
-                snapped = b.time();
+        if (isPrimary) {
+            for (OHLCBar b : bars) {
+                if (!b.time().isAfter(t)) {
+                    snapped = b.time();
+                } else {
+                    break;
+                }
+            }
+            return snapped;
+        }
+        for (int i = 0; i < bars.size(); i++) {
+            Instant closeTime = i + 1 < bars.size()
+                    ? bars.get(i + 1).time()
+                    : net.jacopobiscella.wichtelm.strategy.Timeframes.advance(
+                            bars.get(i).time(), tf);
+            if (!closeTime.isAfter(t)) {
+                snapped = bars.get(i).time();
             } else {
                 break;
             }
@@ -719,7 +752,7 @@ public final class HtmlReportGenerator {
         return snapped;
     }
 
-    private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, String timeframe,
+private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, String timeframe,
                                      boolean isPrimary, Instant entryMarker, Instant exitMarker,
                                      boolean openTrade, String dirClass, ReportData data,
                                      Map<String, StrategyScenario> scenarioByName,
