@@ -1131,9 +1131,14 @@ public final class HtmlReportGenerator {
         long tSpan = Math.max(t1 - t0, 1L);
 
         StringBuilder svg = new StringBuilder();
+        // Lock the rendered height to the viewBox height so the plot inner
+        // stays ~112 px regardless of container width — without this, narrow
+        // browser windows shrink the sub-pane to an unreadable ~50-60 px and
+        // the threshold lines / danger zones collapse together.
         svg.append("<svg viewBox=\"0 0 ").append((int) vbW).append(' ').append((int) vbH)
                 .append("\" preserveAspectRatio=\"xMidYMid meet\" xmlns=\"http://www.w3.org/2000/svg\""
-                        + " style=\"display:block;width:100%;height:auto;margin-top:8px\">");
+                        + " style=\"display:block;width:100%;height:").append((int) vbH)
+                .append("px;margin-top:8px\">");
         svg.append("<text x=\"").append(round(padLeft))
                 .append("\" y=\"14\" font-family=\"JetBrains Mono,monospace\" font-size=\"10\""
                         + " fill=\"#58564e\">RSI(").append(period).append(")</text>");
