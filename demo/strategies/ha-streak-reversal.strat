@@ -1,0 +1,56 @@
+# Strategy 6 — Pure HA Pattern Reversal After Streak
+#
+# Pure Heikin Ashi pattern strategy: enter on a color flip after a
+# sustained N+ same-color streak (ha_bullish_reversal /
+# ha_bearish_reversal), exit on the first OPPOSITE-direction strong
+# candle (directional exhaustion).
+#
+# Design note — undirected vs directional exit:
+# The originally-considered v1 used the zero-arg ha_strong() for both
+# exits to demonstrate the undirected variant. In a LONG position
+# that fires on EITHER bullish OR bearish strong candles, including
+# bullish ones (which are in our favour) — a semantically debatable
+# choice. The SPX2020 backtest with the zero-arg exit produced 932
+# trades at streak_length=3 and 309 even at streak_length=8: the
+# undirected exit churns positions immediately on the first strong
+# candle either way, drowning the reversal-entry signal.
+#
+# Switched to the directional variants in the long/short exit
+# Scenarios: ha_strong_bearish() for long exits, ha_strong_bullish()
+# for short exits. This matches the strategy intent (exit on
+# directional exhaustion against the position) and produces a
+# readable number of trades. The zero-arg form is still exercised
+# elsewhere in the catalog (none of the other demos use it; a
+# follow-up "any-strong-candle alert" diagnostic Scenario would be
+# the right home for it once §15 lifts the diagnostic-Scenario
+# restriction).
+
+Feature: Pure HA Pattern Reversal After Streak
+  Primary timeframe: 1h
+  Parameter streak_length default 3
+  Parameter stop_loss_pct default 1.5
+  Parameter take_profit_pct default 4
+
+  Scenario: Enter long on bullish reversal after bearish streak
+    Given no open position
+    When ha_bullish_reversal(streak_length)
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 + take_profit_pct / 100)
+
+  Scenario: Exit long on bearish strong candle
+    Given a long position is open
+    When ha_strong_bearish()
+    Then long_exit
+
+  Scenario: Enter short on bearish reversal after bullish streak
+    Given no open position
+    When ha_bearish_reversal(streak_length)
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 - take_profit_pct / 100)
+
+  Scenario: Exit short on bullish strong candle
+    Given a short position is open
+    When ha_strong_bullish()
+    Then short_exit
