@@ -341,8 +341,9 @@ public final class HtmlReportGenerator {
         String idx = "#" + String.format(Locale.ROOT, "%0" + width + "d", ordinal);
         String dirClass = trade.direction().toString().equalsIgnoreCase("LONG") ? "long" : "short";
         Duration held = Duration.between(trade.entryTime(), trade.exitTime());
-        long holdHours = Math.max(1L, held.toHours());
-        long holdDays = Math.max(1L, (holdHours + 23L) / 24L);
+        long heldMinutes = Math.max(0L, held.toMinutes());
+        String holdDurationLabel = formatHoldDuration(heldMinutes);
+        long holdDays = Math.max(1L, (heldMinutes + (24L * 60 - 1)) / (24L * 60));
         int holdBars = countBarsBetween(data.primarySeries().bars(),
                 trade.entryTime(), trade.exitTime());
 
@@ -362,7 +363,7 @@ public final class HtmlReportGenerator {
                 .append("<span class=\"range\">").append(esc(formatIsoMinute(trade.entryTime())))
                 .append(" → ").append(esc(formatIsoMinute(trade.exitTime()))).append("</span>")
                 .append("<span class=\"duration\">").append(holdDays).append(" sessions · ")
-                .append(holdHours).append("h in position</span></span>")
+                .append(esc(holdDurationLabel)).append(" in position</span></span>")
                 .append("<span class=\"px\"><b>").append(formatPrice(trade.entryPrice()))
                 .append("</b> → <b>").append(formatPrice(trade.exitPrice())).append("</b></span>")
                 .append("<span class=\"pnl ").append(isWin ? "pos" : "neg").append("\">")
@@ -407,8 +408,9 @@ public final class HtmlReportGenerator {
         List<OHLCBar> bars = data.primarySeries().bars();
         Instant windowEnd = bars.isEmpty() ? open.entryTime() : bars.getLast().time();
         Duration held = Duration.between(open.entryTime(), windowEnd);
-        long holdHours = Math.max(1L, held.toHours());
-        long holdDays = Math.max(1L, (holdHours + 23L) / 24L);
+        long heldMinutes = Math.max(0L, held.toMinutes());
+        String holdDurationLabel = formatHoldDuration(heldMinutes);
+        long holdDays = Math.max(1L, (heldMinutes + (24L * 60 - 1)) / (24L * 60));
         // countBarsBetween is exclusive on the upper bound (so closed-trade
         // hold counts exclude the exit-fill bar). The open position is still
         // held at the last bar, so bump the bound by 1ns to keep it counted.
@@ -434,7 +436,7 @@ public final class HtmlReportGenerator {
                 .append("<span class=\"range\">").append(esc(formatIsoMinute(open.entryTime())))
                 .append(" → <span style=\"color:var(--ink-faint)\">window end</span></span>")
                 .append("<span class=\"duration\">").append(holdDays).append(" sessions · ")
-                .append(holdHours).append("h open at window end</span></span>")
+                .append(esc(holdDurationLabel)).append(" open at window end</span></span>")
                 .append("<span class=\"px\"><b>").append(formatPrice(open.entryPrice()))
                 .append("</b> → <b>").append(formatPrice(lastClose)).append("</b></span>")
                 .append("<span class=\"pnl ")
@@ -734,7 +736,7 @@ public final class HtmlReportGenerator {
         String img = renderHeerwischImage(renderer, window, timeframe, entryMarker, exitMarker,
                 isLong, exitScheduled, openTrade, data);
         Duration heldInWindow = Duration.between(tradeEntry, tradeExit);
-        long heldHours = Math.max(1L, heldInWindow.toHours());
+        String heldLabel = formatHoldDuration(Math.max(0L, heldInWindow.toMinutes()));
 
         StringBuilder out = new StringBuilder();
         out.append("<div class=\"chart\"><div class=\"ch-head\">")
@@ -769,11 +771,11 @@ public final class HtmlReportGenerator {
             out.append("<span class=\"mk\"><span class=\"tri ").append(entryTri).append("\"></span>")
                     .append("entry ").append(esc(formatIsoMinute(tradeEntry))).append("</span>");
             if (openTrade) {
-                out.append("<span>in position · ").append(heldHours).append("h (open)</span>")
+                out.append("<span>in position · ").append(esc(heldLabel)).append(" (open)</span>")
                         .append("<span>mark ").append(esc(formatIsoMinute(tradeExit)))
                         .append(" · window end</span>");
             } else {
-                out.append("<span>in position · ").append(heldHours).append("h</span>")
+                out.append("<span>in position · ").append(esc(heldLabel)).append("</span>")
                         .append("<span class=\"mk\">exit ").append(esc(formatIsoMinute(tradeExit)))
                         .append("<span class=\"tri ").append(exitTri).append("\"></span></span>");
             }
@@ -1494,6 +1496,39 @@ public final class HtmlReportGenerator {
     }
 
     // ─── Formatters ──────────────────────────────────────────────────────────
+
+    /**
+     * Renders a held duration with sub-hour precision: {@code Mm} when under
+     * one hour, {@code Hh Mm} when there is a non-zero minute remainder,
+     * {@code Hh} when on the hour, {@code Dd Hh} once the trade spans a day
+     * or more. Avoids the truncation bug that {@code Duration.toHours()}
+     * causes for intraday hold periods.
+     */
+    private static String formatHoldDuration(long totalMinutes) {
+        if (totalMinutes < 60) {
+            return totalMinutes + "m";
+        }
+        long days = totalMinutes / (24L * 60);
+        long hours = (totalMinutes / 60) % 24;
+        long minutes = totalMinutes % 60;
+        StringBuilder out = new StringBuilder();
+        if (days > 0) {
+            out.append(days).append('d');
+        }
+        if (hours > 0) {
+            if (out.length() > 0) {
+                out.append(' ');
+            }
+            out.append(hours).append('h');
+        }
+        if (minutes > 0 && days == 0) {
+            if (out.length() > 0) {
+                out.append(' ');
+            }
+            out.append(minutes).append('m');
+        }
+        return out.toString();
+    }
 
     private static String formatPercent(BigDecimal value) {
         return value.movePointRight(2).setScale(2, RoundingMode.HALF_UP).toPlainString() + "%";
