@@ -342,7 +342,6 @@ public final class HtmlReportGenerator {
         Duration held = Duration.between(trade.entryTime(), trade.exitTime());
         long heldMinutes = Math.max(0L, held.toMinutes());
         String holdDurationLabel = formatHoldDuration(heldMinutes);
-        long holdDays = Math.max(1L, (heldMinutes + (24L * 60 - 1)) / (24L * 60));
         // Scheduled exits (Scenario-driven, close-evaluated) fill at the
         // NEXT bar's open — the exit bar itself is not held. Forced exits
         // (stop_loss / take_profit) fill INTRABAR — the exit bar IS held
@@ -350,6 +349,11 @@ public final class HtmlReportGenerator {
         // must include the exit bar only in the forced-exit case.
         boolean forcedExit = exitHit == null;
         int holdBars = countBarsBetween(data.primarySeries().bars(),
+                trade.entryTime(), trade.exitTime(), forcedExit);
+        // "Sessions" = distinct calendar dates that actually have bars in the
+        // held window. Driving this off the bar series (not wall-clock days)
+        // keeps a Friday→Monday hold honest about its 2 sessions vs 3 days.
+        int holdSessions = countSessionsBetween(data.primarySeries().bars(),
                 trade.entryTime(), trade.exitTime(), forcedExit);
 
         BigDecimal pnlPct = trade.pnlPercent();
@@ -367,7 +371,7 @@ public final class HtmlReportGenerator {
                 .append("<span class=\"ttime\">")
                 .append("<span class=\"range\">").append(esc(formatIsoMinute(trade.entryTime())))
                 .append(" → ").append(esc(formatIsoMinute(trade.exitTime()))).append("</span>")
-                .append("<span class=\"duration\">").append(holdDays).append(" sessions · ")
+                .append("<span class=\"duration\">").append(holdSessions).append(" sessions · ")
                 .append(esc(holdDurationLabel)).append(" in position</span></span>")
                 .append("<span class=\"px\"><b>").append(formatPrice(trade.entryPrice()))
                 .append("</b> → <b>").append(formatPrice(trade.exitPrice())).append("</b></span>")
@@ -415,12 +419,11 @@ public final class HtmlReportGenerator {
         Duration held = Duration.between(open.entryTime(), windowEnd);
         long heldMinutes = Math.max(0L, held.toMinutes());
         String holdDurationLabel = formatHoldDuration(heldMinutes);
-        long holdDays = Math.max(1L, (heldMinutes + (24L * 60 - 1)) / (24L * 60));
-        // countBarsBetween is exclusive on the upper bound (so closed-trade
         // An open position is still held through the last bar of the chart
-        // window — include the upper bound in both the hold-bar tally and
-        // the MFE/MAE window.
+        // window — include the upper bound in the hold-bar / session tallies
+        // and the MFE/MAE window.
         int holdBars = countBarsBetween(bars, open.entryTime(), windowEnd, true);
+        int holdSessions = countSessionsBetween(bars, open.entryTime(), windowEnd, true);
 
         BigDecimal lastClose = bars.isEmpty() ? open.entryPrice() : bars.getLast().close();
         BigDecimal markPct = lastClose.subtract(open.entryPrice(), DECIMAL)
@@ -438,7 +441,7 @@ public final class HtmlReportGenerator {
                 .append("<span class=\"ttime\">")
                 .append("<span class=\"range\">").append(esc(formatIsoMinute(open.entryTime())))
                 .append(" → <span style=\"color:var(--ink-faint)\">window end</span></span>")
-                .append("<span class=\"duration\">").append(holdDays).append(" sessions · ")
+                .append("<span class=\"duration\">").append(holdSessions).append(" sessions · ")
                 .append(esc(holdDurationLabel)).append(" open at window end</span></span>")
                 .append("<span class=\"px\"><b>").append(formatPrice(open.entryPrice()))
                 .append("</b> → <b>").append(formatPrice(lastClose)).append("</b></span>")
@@ -1314,6 +1317,27 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             }
         }
         return new BigDecimal[] { mfe, mae };
+    }
+
+    /**
+     * Counts DISTINCT UTC calendar dates that carry at least one primary bar
+     * in the held window. "Sessions" in the trade summary should track the
+     * actual number of market sessions the position spanned — not wall-clock
+     * days — so a Friday-to-Monday hold reads as 2 sessions, not 3.
+     */
+    private int countSessionsBetween(List<OHLCBar> bars, Instant a, Instant b,
+                                      boolean inclusiveB) {
+        java.util.Set<java.time.LocalDate> dates = new java.util.HashSet<>();
+        for (OHLCBar bar : bars) {
+            if (bar.time().isBefore(a)) {
+                continue;
+            }
+            if (inclusiveB ? bar.time().isAfter(b) : !bar.time().isBefore(b)) {
+                continue;
+            }
+            dates.add(bar.time().atOffset(ZoneOffset.UTC).toLocalDate());
+        }
+        return Math.max(1, dates.size());
     }
 
     private int countBarsBetween(List<OHLCBar> bars, Instant a, Instant b, boolean inclusiveB) {
