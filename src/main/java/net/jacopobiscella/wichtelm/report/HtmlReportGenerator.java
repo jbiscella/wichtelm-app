@@ -1569,21 +1569,38 @@ public final class HtmlReportGenerator {
 
     /**
      * Reads the app version from the JAR manifest's {@code Implementation-Version}
-     * (populated by the shade plugin from {@code ${project.version}}). Falls
-     * back to {@code "dev"} when running outside a packaged JAR (e.g. during
-     * tests against {@code target/classes}).
+     * (populated by the shade plugin from {@code ${project.version}}).
+     *
+     * <p>Derives the manifest URL from this class's own location so we read
+     * the wichtelm-app JAR's manifest, not the first manifest on the
+     * classpath (which can be a dependency JAR when running from
+     * {@code target/classes} or in tests). Falls back to {@code "dev"}
+     * when running outside a packaged JAR.
      */
     private static String resolveVersion() {
-        try (InputStream in = HtmlReportGenerator.class.getResourceAsStream(
-                "/META-INF/MANIFEST.MF")) {
-            if (in != null) {
+        try {
+            java.net.URL classUrl = HtmlReportGenerator.class.getResource(
+                    HtmlReportGenerator.class.getSimpleName() + ".class");
+            if (classUrl == null) {
+                return "dev";
+            }
+            String urlStr = classUrl.toString();
+            int separator = urlStr.indexOf("!/");
+            if (separator < 0) {
+                // Not inside a JAR (running from target/classes etc.) — no
+                // manifest with our Implementation-Version is available.
+                return "dev";
+            }
+            java.net.URL manifestUrl = new java.net.URI(
+                    urlStr.substring(0, separator + 2) + "META-INF/MANIFEST.MF").toURL();
+            try (InputStream in = manifestUrl.openStream()) {
                 String value = new java.util.jar.Manifest(in)
                         .getMainAttributes().getValue("Implementation-Version");
                 if (value != null && !value.isBlank()) {
                     return value;
                 }
             }
-        } catch (IOException ignored) {
+        } catch (IOException | java.net.URISyntaxException ignored) {
             // fall through to dev fallback
         }
         return "dev";
