@@ -89,7 +89,9 @@ A Scenario terminating with `Then long_entry` or `Then short_entry` MAY have one
 - `And with stop_loss at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
 - `And with take_profit at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
 
-The expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `entry_time`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted in v1.
+The expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted in v1. (`entry_time` is reserved — see §15.)
+
+Each open position is bound at fill time to the scenario that emitted its Buy/Sell signal; the protective-exit evaluator uses that scenario's stop_loss / take_profit expressions, not the first same-direction entry scenario in source order. Two `long_entry` scenarios with different stops therefore each apply their own stop to the position they opened.
 
 ### 3.5 Multi-timeframe expressions
 
@@ -127,7 +129,7 @@ Expressions in Scenarios use the following syntax:
 | HA primitives (from nachtkrapp) — Tier B booleans | `ha_doji()` / `ha_doji(maxBodyRatio)`, `ha_strong()`, `ha_strong_bullish()`, `ha_strong_bearish()`, `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)` |
 | RSI level primitives (from nachtkrapp) — Tier B booleans | `rsi_overbought(threshold)`, `rsi_oversold(threshold)`, `rsi_crosses_50()` |
 | MACD primitives (from nachtkrapp) — Tier B booleans | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
-| Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `entry_time`, `position_size` |
+| Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `position_size` (`entry_time` reserved — see §15) |
 
 Composite indicators are exposed as flat per-component functions in v1: there is no callable `macd` — its components are the three `macd_*` functions listed above, consistent with how every other indicator in the catalog is exposed flat. A field-accessor syntax (`macd(...).macd_line`) was considered and rejected: it would require a postfix-access layer in the expression parser plus indicator-specific parse-time validation, for no gain over flat functions. If field accessors are ever wanted, that is a general parser feature, not a MACD concern.
 
@@ -240,7 +242,7 @@ Each rule below MUST be enforced at parse time. On violation, the parser throws 
 | P4 | Parameter names MUST be unique within a strategy |
 | P5 | Each `Background:` step MUST start with `Given` (or `And` continuing a `Given`) |
 | P6 | Background series declarations MUST match the form `Given a series <name> defined as <expression>` or `Given a series <name> defined as <expression> on <TF>` |
-| P7 | Background-declared series names MUST be unique within a strategy and MUST NOT collide with built-in market variables (open, high, low, close, volume, bar_time, bar_index) or trade-context variables (entry_price, entry_time, position_size) |
+| P7 | Background-declared series names MUST be unique within a strategy and MUST NOT collide with built-in market variables (open, high, low, close, volume, bar_time, bar_index) or trade-context variables (entry_price, position_size) |
 | P8 | Higher-TF references in Background MUST use a TF strictly higher than the primary TF (verified via Timeframe ordering) |
 | P9 | Each `Scenario:` block MUST contain at least one step |
 | P10 | Each Scenario MUST terminate with `Then <X>` where X is one of: `long_entry`, `long_exit`, `short_entry`, `short_exit` |
@@ -250,7 +252,7 @@ Each rule below MUST be enforced at parse time. On violation, the parser throws 
 | P14 | Function calls MUST match the arity and parameter types of the built-in function. Unknown function names produce a parse error |
 | P15 | Arithmetic expressions MUST be syntactically valid; unbalanced parentheses produce a parse error |
 | P16 | `And with stop_loss at <expr>` and `And with take_profit at <expr>` expressions MUST NOT reference built-in functions/indicators (§3.7) or Background-declared series. Only constants, parameters, and trade-context variables are allowed |
-| P17 | Trade-context variables (`entry_price`, `entry_time`, `position_size`) MUST NOT appear in Scenarios terminating with `Then long_entry` or `Then short_entry` (no position exists at entry time) |
+| P17 | Trade-context variables (`entry_price`, `position_size`) MUST NOT appear in Scenarios terminating with `Then long_entry` or `Then short_entry` (no position exists at entry time) |
 | P18 | A Scenario starting with `Given no open position` MUST terminate with `Then long_entry` or `Then short_entry` (semantic consistency) |
 | P19 | A Scenario starting with `Given a long position is open` MUST terminate with `Then long_exit` (semantic consistency) |
 | P20 | A Scenario starting with `Given a short position is open` MUST terminate with `Then short_exit` (semantic consistency) |
@@ -374,6 +376,7 @@ If pyramiding is enabled and a `long_entry` (or `short_entry`) fires while a pos
 | Concurrent event in same bar T | Resolution |
 |---|---|
 | Intrabar stop_loss/take_profit AND close-evaluated exit Scenario both trigger | stop_loss/take_profit wins (intrabar precedes close) |
+| Intrabar stop_loss AND take_profit both within `[low, high]` of the same bar | stop_loss wins (pessimistic convention — the backtest assumes the worse fill, mirroring industry tooling) |
 | Multiple exit Scenarios match in source order | first in source order wins |
 | Multiple entry Scenarios match (no position open, multiple matching `Given no open position` Scenarios) | first in source order wins |
 
@@ -724,6 +727,7 @@ The following are explicitly NOT implemented in v1:
 - Tags (`@xxx`), Rule, Scenario Outline, Examples, DocStrings, DataTable Gherkin features
 - Parallel execution of multiple backtests in a single CLI invocation
 - Literal `[csv].file` paths without the `{symbol}` placeholder — the `frau-holle-csv` driver requires the placeholder; supporting literal paths is reserved as a future enhancement contingent on an additive `frau-holle-csv` change
+- `entry_time` trade-context variable — removed in v0.1.0 pending a time-typed expression sub-language. Numeric epoch exposure is poor UX; type-aware support will be added when a strategy demo requires time-based arithmetic. The parser currently rejects `entry_time` references via P13 (undeclared identifier)
 
 These are reserved for future additive releases (japicmp-validated) or future major versions.
 

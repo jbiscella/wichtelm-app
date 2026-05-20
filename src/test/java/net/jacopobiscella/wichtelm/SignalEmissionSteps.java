@@ -14,6 +14,7 @@ import org.hatrack.frauholle.model.Signal;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.Map;
@@ -42,6 +43,8 @@ public class SignalEmissionSteps {
     private Optional<Position> position = Optional.empty();
     private Signal emitted;
     private BigDecimal snapshottedStop;
+    /** Generator instance held across bars so the entry-ownership side-map survives. */
+    private WichtelmSignalGenerator persistentGenerator;
 
     private static OHLCBar flatBar(Instant time, String price) {
         BigDecimal p = new BigDecimal(price);
@@ -161,11 +164,11 @@ public class SignalEmissionSteps {
         assertEquals(Direction.LONG, add.direction());
     }
 
-    @Then("a ClosePositionAtPrice signal is emitted with price {int}")
-    public void aClosePositionAtPriceSignalIsEmitted(int price) {
+    @Then("a ClosePositionAtPrice signal is emitted with price {double}")
+    public void aClosePositionAtPriceSignalIsEmitted(double price) {
         Signal.ClosePositionAtPrice signal = assertInstanceOf(Signal.ClosePositionAtPrice.class, emitted);
         assertEquals(0, signal.price().compareTo(BigDecimal.valueOf(price)),
-                () -> "stop price was " + signal.price());
+                () -> "stop/take price was " + signal.price() + ", expected " + price);
     }
 
     @Then("no plain ClosePosition signal is emitted")
@@ -202,5 +205,132 @@ public class SignalEmissionSteps {
                 () -> "fill time " + signal.fillTime() + " not after bar open");
         assertTrue(signal.fillTime().isBefore(barClose),
                 () -> "fill time " + signal.fillTime() + " not before bar close");
+    }
+
+    // ─── Same-bar stop_loss vs take_profit (Concern 3) ──────────────────────
+
+    @Given("a long strategy with stop_loss {string} and take_profit {string}")
+    public void aLongStrategyWithStopAndTake(String stopExpression, String takeExpression) {
+        strategy = StrategyParser.parse("""
+                Feature: Signal test
+                  Primary timeframe: 1h
+
+                  Scenario: Enter
+                    Given no open position
+                    When close exceeds 1
+                    Then long_entry
+                    And with stop_loss at %s
+                    And with take_profit at %s
+                """.formatted(stopExpression, takeExpression), "signal-test.strat");
+    }
+
+    @Given("a short strategy with stop_loss {string} and take_profit {string}")
+    public void aShortStrategyWithStopAndTake(String stopExpression, String takeExpression) {
+        strategy = StrategyParser.parse("""
+                Feature: Signal test
+                  Primary timeframe: 1h
+
+                  Scenario: Enter
+                    Given no open position
+                    When close exceeds 1
+                    Then short_entry
+                    And with stop_loss at %s
+                    And with take_profit at %s
+                """.formatted(stopExpression, takeExpression), "signal-test.strat");
+    }
+
+    @Given("a short position opened at price {int}")
+    public void aShortPositionOpenedAtPrice(int entryPrice) {
+        equity = BigDecimal.valueOf(10000);
+        position = Optional.of(new Position(Direction.SHORT, BigDecimal.TEN, ENTRY_TIME,
+                BigDecimal.valueOf(entryPrice)));
+    }
+
+    // ─── Two-entry scenario ownership (Concern 1) ───────────────────────────
+
+    /**
+     * A strategy with two entry scenarios that have mutually exclusive
+     * triggers. Scenario A fires only when close exceeds 200; Scenario B
+     * fires only when close is below 50. This lets a test drive either
+     * branch deterministically through {@code generate}, so the
+     * entry-ownership side-map is exercised end-to-end.
+     */
+    @Given("a two-entry long strategy with A stop {string} and B stop {string}")
+    public void aTwoEntryLongStrategy(String aStop, String bStop) {
+        strategy = StrategyParser.parse("""
+                Feature: Two-entry ownership test
+                  Primary timeframe: 1h
+
+                  Scenario: Enter A
+                    Given no open position
+                    When close exceeds 200
+                    Then long_entry
+                    And with stop_loss at %s
+
+                  Scenario: Enter B
+                    Given no open position
+                    When close is below 50
+                    Then long_entry
+                    And with stop_loss at %s
+
+                  Scenario: Exit fallback
+                    Given a long position is open
+                    When close drops below 1
+                    Then long_exit
+                """.formatted(aStop, bStop), "two-entry.strat");
+    }
+
+    @When("scenario {word} opens a long position at price {int}")
+    public void scenarioOpensALongPosition(String scenarioLetter, int entryPrice) {
+        // Construct the generator HERE (not in the strategy step) so the
+        // `position sizing` Given that runs between them has set the sizing.
+        persistentGenerator =
+                new WichtelmSignalGenerator(strategy, Map.of(), positionSizePct, pyramiding);
+        // Pick a close price that triggers ONLY the requested scenario:
+        //   A: "close exceeds 200" — use close=250
+        //   B: "close is below 50" — use close=40
+        BigDecimal triggerClose = scenarioLetter.equals("A")
+                ? BigDecimal.valueOf(250)
+                : BigDecimal.valueOf(40);
+        Instant entrySignalBar = Instant.parse("2024-01-01T00:00:00Z");
+        OHLCBar bar0 = flatBar(entrySignalBar, triggerClose.toPlainString());
+        equity = BigDecimal.valueOf(10000);
+        // Bar 0: no open position → entry condition fires → Buy emitted, side-map binds pending.
+        BarContext ctx0 = new BarContext(bar0, List.of(), Optional.empty(),
+                equity, equity, 0);
+        Signal entrySignal = persistentGenerator.generate(ctx0);
+        assertInstanceOf(Signal.Buy.class, entrySignal,
+                () -> "expected scenario " + scenarioLetter + " to fire a Buy, got " + entrySignal);
+        // Bar 1: position opens at this bar's open per frau-holle's next-bar-fill rule.
+        // The first generate() call where currentPosition().isPresent() triggers the
+        // side-map binding (entryTime → scenario name).
+        Instant entryTime = entrySignalBar.plus(Duration.ofHours(1));
+        position = Optional.of(new Position(Direction.LONG, BigDecimal.ONE, entryTime,
+                BigDecimal.valueOf(entryPrice)));
+        OHLCBar fillBar = flatBar(entryTime, String.valueOf(entryPrice));
+        BarContext ctx1 = new BarContext(fillBar, List.of(bar0), position, equity, equity, 1);
+        persistentGenerator.generate(ctx1);
+    }
+
+    @When("a subsequent bar reaches low {double}")
+    public void aSubsequentBarReachesLow(double low) {
+        Instant subsequent = position.orElseThrow().entryTime().plus(Duration.ofHours(10));
+        BigDecimal lowBd = BigDecimal.valueOf(low);
+        // Construct a bar whose low touches the requested level; the high and
+        // close stay above the entry price so no take_profit / close-evaluated
+        // exit gets in the way.
+        currentBar = new OHLCBar(subsequent,
+                BigDecimal.valueOf(100), BigDecimal.valueOf(100), lowBd, BigDecimal.valueOf(100),
+                Optional.empty());
+        BarContext ctx = new BarContext(currentBar,
+                List.of(flatBar(position.get().entryTime(), "100")),
+                position, equity, equity, 12);
+        emitted = persistentGenerator.generate(ctx);
+    }
+
+    @Then("no ClosePositionAtPrice signal is emitted")
+    public void noClosePositionAtPriceSignalIsEmitted() {
+        assertFalse(emitted instanceof Signal.ClosePositionAtPrice,
+                () -> "a ClosePositionAtPrice was emitted: " + emitted);
     }
 }
