@@ -22,9 +22,18 @@ import java.util.function.Function;
  * window aggregates {@code highest_high}, {@code lowest_low},
  * {@code highest_close}, {@code lowest_close} and {@code avg_volume}.
  * {@code stddev} and the window aggregates are computed here because the
- * {@code indicators} module exposes no standalone calculator for them. The
- * remaining catalog entries (the nachtkrapp pattern primitives) raise a
- * {@link DslEvaluationException} until their own increment lands.
+ * {@code indicators} module exposes no standalone calculator for them.
+ *
+ * <p>The Tier B pattern primitives ({@code ha_doji}, {@code ha_strong},
+ * {@code ha_strong_bullish}, {@code ha_strong_bearish},
+ * {@code ha_bullish_reversal}, {@code ha_bearish_reversal},
+ * {@code rsi_overbought}, {@code rsi_oversold}, {@code rsi_crosses_50},
+ * {@code macd_bullish_cross}, {@code macd_bearish_cross},
+ * {@code macd_zero_cross_up}, {@code macd_zero_cross_down}) resolve via the
+ * {@link NachtkrappMatchIndex} prepass — each per-bar evaluation is an O(1)
+ * membership lookup that returns {@link BigDecimal#ONE} for true,
+ * {@link BigDecimal#ZERO} for false, so the boolean primitives compose with
+ * the existing numeric-arithmetic / boolean-step pipeline.
  */
 public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSource {
 
@@ -34,13 +43,21 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
     private final String strategyName;
     private final Instant barTime;
     private final long barIndex;
+    private final NachtkrappMatchIndex matchIndex;
 
     public BarIndicatorSource(List<OHLCBar> bars, String strategyName,
                               Instant barTime, long barIndex) {
+        this(bars, strategyName, barTime, barIndex, NachtkrappMatchIndex.empty());
+    }
+
+    public BarIndicatorSource(List<OHLCBar> bars, String strategyName,
+                              Instant barTime, long barIndex,
+                              NachtkrappMatchIndex matchIndex) {
         this.bars = List.copyOf(bars);
         this.strategyName = strategyName;
         this.barTime = barTime;
         this.barIndex = barIndex;
+        this.matchIndex = matchIndex;
     }
 
     @Override
@@ -64,9 +81,29 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
             case "lowest_close" -> windowExtreme(
                     window(functionName, period(functionName, arguments)), OHLCBar::close, false);
             case "avg_volume" -> avgVolume(window(functionName, period(functionName, arguments)));
+            case "ha_doji", "ha_strong", "ha_strong_bullish", "ha_strong_bearish",
+                 "ha_bullish_reversal", "ha_bearish_reversal",
+                 "rsi_overbought", "rsi_oversold", "rsi_crosses_50",
+                 "macd_bullish_cross", "macd_bearish_cross",
+                 "macd_zero_cross_up", "macd_zero_cross_down" -> tierB(functionName, arguments);
             default -> throw fail(functionName,
                     "indicator '" + functionName + "' is not implemented in this increment");
         };
+    }
+
+    private BigDecimal tierB(String name, List<BigDecimal> arguments) {
+        NachtkrappMatchIndex.Key key = new NachtkrappMatchIndex.Key(name, arguments);
+        if (!matchIndex.hasKey(key)) {
+            // Should not happen — the prepass walks the AST and pre-registers
+            // every Tier B call. A miss means the call was synthesised at
+            // evaluation time (e.g. through a parameter override unseen at
+            // setup), which is not supported.
+            throw fail(name,
+                    "Tier B primitive '" + name + "' was not pre-indexed; the strategy "
+                            + "must declare it statically in a Background series or a "
+                            + "Scenario step so the prepass can scan it");
+        }
+        return matchIndex.matches(key, barTime) ? BigDecimal.ONE : BigDecimal.ZERO;
     }
 
     private int period(String functionName, List<BigDecimal> arguments) {

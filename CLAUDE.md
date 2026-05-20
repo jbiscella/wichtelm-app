@@ -124,13 +124,38 @@ Expressions in Scenarios use the following syntax:
 | Base indicators (from `indicators` ha-track module) | `sma(period)`, `ema(period)`, `rsi(period)`, `atr(period)`, `stddev(period)` |
 | Composite indicators (decomposed — see note) | `macd_line(fast, slow, signal)`, `macd_signal(fast, slow, signal)`, `macd_histogram(fast, slow, signal)` |
 | Window aggregates (price-source variants — see note) | `highest_high(period)`, `lowest_low(period)`, `highest_close(period)`, `lowest_close(period)`, `avg_volume(period)` |
-| HA primitives (from nachtkrapp) | `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)`, `ha_strong(...)`, `ha_doji(...)` |
-| Price/MA primitives (from nachtkrapp) | `price_above_ma(...)`, `price_crosses_ma(...)` |
-| RSI level primitives (from nachtkrapp) | `rsi_crosses_50()`, `rsi_overbought(threshold)`, `rsi_oversold(threshold)` |
-| MACD primitives (from nachtkrapp) | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
+| HA primitives (from nachtkrapp) — Tier B booleans | `ha_doji()` / `ha_doji(maxBodyRatio)`, `ha_strong()`, `ha_strong_bullish()`, `ha_strong_bearish()`, `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)` |
+| RSI level primitives (from nachtkrapp) — Tier B booleans | `rsi_overbought(threshold)`, `rsi_oversold(threshold)`, `rsi_crosses_50()` |
+| MACD primitives (from nachtkrapp) — Tier B booleans | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
 | Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `entry_time`, `position_size` |
 
 Composite indicators are exposed as flat per-component functions in v1: there is no callable `macd` — its components are the three `macd_*` functions listed above, consistent with how every other indicator in the catalog is exposed flat. A field-accessor syntax (`macd(...).macd_line`) was considered and rejected: it would require a postfix-access layer in the expression parser plus indicator-specific parse-time validation, for no gain over flat functions. If field accessors are ever wanted, that is a general parser feature, not a MACD concern.
+
+#### Tier B boolean primitives — semantics and runtime
+
+The 13 boolean primitives listed under "HA / RSI level / MACD primitives" above evaluate to **true / false** rather than a numeric value. They resolve through a **one-shot nachtkrapp `DetectionEngine` pre-pass** built at backtest setup:
+
+1. `NachtkrappMatchIndex.buildFor(strategy, parameters, primarySeries)` walks every Background series expression and every Scenario step text, collects each Tier B function call with its resolved numeric arguments, and builds the corresponding `DetectionRule` (e.g. `ha_doji(0.05)` → `HADojiRule(0.05)`).
+2. The index runs **two detection passes**: HA rules against an `HASeries` (computed via `HeikinAshiCalculator.computeChain(Optional.empty(), primarySeries)`), price / RSI / MACD rules against the OHLCSeries with `PriceSource.CLOSE`.
+3. Each per-bar evaluation of a Tier B primitive is an O(1) `Set<Instant>.contains(barTime)` against the prepass result.
+
+The **boolean-step evaluator extension** in `ExpressionEvaluator.condition(...)` allows these primitives to be used as bare boolean steps: `When ha_doji()`, `And rsi_oversold(30)`. If no comparison operator is found, the step text is evaluated as an arithmetic expression — Tier B primitives return `BigDecimal.ONE` / `BigDecimal.ZERO`, treated as truthy / falsy by `signum() != 0`. Numeric expressions that happen to evaluate non-zero are also treated as truthy (same convention as C / Python), but the canonical use is the boolean primitive.
+
+Defaults for 0-arg primitives:
+
+| Primitive | Underlying nachtkrapp rule + defaults |
+|---|---|
+| `ha_doji()` | `HADojiRule(maxBodyRatio = 0.1)` |
+| `ha_strong()`, `ha_strong_bullish()`, `ha_strong_bearish()` | `HAStrongCandleRule(wickTolerance = 0.05, minBodyRatio = 0.6)` — the variants share one detection and filter by the emitted match subtype |
+| `rsi_crosses_50()` | `RSILevel50CrossRule(period = 14, PriceSource.CLOSE)` |
+| `macd_bullish_cross()` / `macd_bearish_cross()` | `MACDSignalCrossRule(12, 26, 9, PriceSource.CLOSE)` |
+| `macd_zero_cross_up()` / `macd_zero_cross_down()` | `MACDZeroCrossRule(12, 26, 9, PriceSource.CLOSE)` |
+
+For non-default thresholds or periods, the strategy author declares an explicit `Background` series (e.g. `Given a series rsi_value defined as rsi(20)`) and builds conditions around it.
+
+The `RSIThresholdRule` carries BOTH overbought and oversold in a single rule; when the DSL only specifies one (`rsi_overbought(70)` OR `rsi_oversold(30)`), the unspecified threshold is filled in with a valid sentinel (70 / 30) and the per-key match-subtype filter selects only the requested side. Two DSL calls that resolve to the same underlying rule are deduplicated in the prepass — a single detection runs and both keys map to filtered subsets of its matches.
+
+Naming convention: where a nachtkrapp rule has a **non-numeric** parameter (e.g. `MAType.SMA` / `MAType.EMA`, bullish / bearish direction), the DSL primitives are split into **flat per-value variants** rather than accepting a string argument. So `ha_strong_bullish` / `ha_strong_bearish` are separate catalog entries; `price_above_sma` / `price_above_ema` are reserved for a follow-up PR (the catalog currently does not list `price_above_ma`).
 
 Window aggregates likewise use hard-coded price-source variants (`highest_high`, `lowest_low`, `highest_close`, `lowest_close`) rather than a generic expression-typed first argument, again consistent with the rest of the catalog being flat. Each takes a single `period` argument and reduces a fixed field over the last `period` bars. A generic expression-typed first argument (`highest(<expr>, period)`) is reserved for a future parser extension if real demand emerges.
 
@@ -694,6 +719,7 @@ The following are explicitly NOT implemented in v1:
 - Boolean and String parameter types
 - Indicators and window aggregates in `And with stop_loss at` / `And with take_profit at` clauses (only constants, parameters, and trade-context variables allowed)
 - Trailing stops (dynamic stop-loss that updates per bar)
+- `price_above_sma(period)`, `price_above_ema(period)`, `price_crosses_sma(period)`, `price_crosses_ema(period)` — flat Tier B variants for nachtkrapp's `PriceVsMARule` / `PriceMACrossRule` (the rule's `MAType` is a non-numeric parameter so it follows the flat-variant naming convention used by `ha_strong_bullish` / `ha_strong_bearish`). Not in the v1.0 catalog; add when a strategy / demo needs them — mechanical addition (4 catalog entries + 4 `NachtkrappMatchIndex` `KeySpec` arms)
 - Diagnostic / visualization-only Scenarios in `.strat` files
 - Tags (`@xxx`), Rule, Scenario Outline, Examples, DocStrings, DataTable Gherkin features
 - Parallel execution of multiple backtests in a single CLI invocation

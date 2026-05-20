@@ -64,7 +64,13 @@ public final class ExpressionEvaluator {
             }
         }
         if (operator == null) {
-            throw fail(text, "condition has no comparison operator");
+            // Bare boolean-valued primitive (Tier B): "When ha_doji()" or
+            // "And rsi_oversold(30)". Evaluate the whole step as an
+            // arithmetic expression; the boolean primitives return 1.0 / 0.0
+            // through the IndicatorSource. Any other expression that lacks a
+            // comparator yields a numeric value too, which we interpret as
+            // truthy iff non-zero — same convention as C / Python.
+            return arithmetic(t, current).signum() != 0;
         }
         String lhs = t.substring(0, splitAt).strip();
         String rhs = t.substring(splitAt + operator.length() + 2).strip();

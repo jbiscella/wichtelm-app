@@ -89,6 +89,12 @@ public final class BacktestRunner {
 
         WichtelmSignalGenerator generator = new WichtelmSignalGenerator(strategy, parameters,
                 config.positionSizePct(), config.pyramiding(), higherTimeframeBars);
+        // Tier B pattern prepass: build the nachtkrapp match index ONCE over
+        // the closed primary series so per-bar boolean primitives are an
+        // O(1) Set membership check. The empty index returned for strategies
+        // that declare no Tier B calls is a cheap no-op.
+        generator.setNachtkrappMatchIndex(
+                NachtkrappMatchIndex.buildFor(strategy, parameters, primarySeries));
 
         BacktestSpec spec;
         try {
