@@ -769,14 +769,18 @@ public final class HtmlReportGenerator {
                         .append("<span class=\"tri ").append(exitTri).append("\"></span></span>");
             }
         } else {
-            String trendDir = dirClass.equals("long") ? "uptrend" : "downtrend";
+            // The higher-TF series may or may not be a trend filter — without
+            // analysing the entry conditions we cannot truthfully claim a
+            // direction-aligned verdict. Print the date span and a neutral
+            // "higher-timeframe context" label; open trades carry an explicit
+            // still-open note.
             out.append("<span>").append(esc(window.bars().getFirst().time().atOffset(ZoneOffset.UTC)
                     .toLocalDate().toString())).append(" → ")
                     .append(esc(window.bars().getLast().time().atOffset(ZoneOffset.UTC)
                             .toLocalDate().toString())).append("</span>");
-            out.append("<span>").append(trendDir).append(" filter satisfied at entry");
+            out.append("<span>higher-timeframe context");
             if (openTrade) {
-                out.append("; trade still open");
+                out.append(" · trade still open");
             }
             out.append("</span>");
         }

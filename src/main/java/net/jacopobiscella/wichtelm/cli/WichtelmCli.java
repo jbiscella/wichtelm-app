@@ -22,6 +22,7 @@ import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -172,7 +173,10 @@ public final class WichtelmCli {
         result.higherTimeframeBars()
                 .forEach((wire, bars) -> higherSeries.put(wire, new OHLCSeries(bars)));
 
-        ReportData data = new ReportData(basename, LocalDateTime.now(), outputDirectory, strategy,
+        // The report header labels generatedAt as "UTC"; populate it from
+        // UTC-now so the label is truthful regardless of host clock zone.
+        LocalDateTime generatedAt = LocalDateTime.now(ZoneOffset.UTC);
+        ReportData data = new ReportData(basename, generatedAt, outputDirectory, strategy,
                 result.result(), new OHLCSeries(result.primarySeries()), higherSeries,
                 result.triggerTimes(), parameters, config.symbol());
         return new HtmlReportGenerator().generate(data);
