@@ -344,8 +344,14 @@ public final class HtmlReportGenerator {
         long heldMinutes = Math.max(0L, held.toMinutes());
         String holdDurationLabel = formatHoldDuration(heldMinutes);
         long holdDays = Math.max(1L, (heldMinutes + (24L * 60 - 1)) / (24L * 60));
+        // Scheduled exits (Scenario-driven, close-evaluated) fill at the
+        // NEXT bar's open — the exit bar itself is not held. Forced exits
+        // (stop_loss / take_profit) fill INTRABAR — the exit bar IS held
+        // for part of its range. The hold-bar tally and the MFE/MAE window
+        // must include the exit bar only in the forced-exit case.
+        boolean forcedExit = exitHit == null;
         int holdBars = countBarsBetween(data.primarySeries().bars(),
-                trade.entryTime(), trade.exitTime());
+                trade.entryTime(), trade.exitTime(), forcedExit);
 
         BigDecimal pnlPct = trade.pnlPercent();
         boolean isWin = pnlPct.signum() >= 0;
@@ -353,7 +359,7 @@ public final class HtmlReportGenerator {
                 .divide(trade.entryPrice(), DECIMAL).multiply(HUNDRED, DECIMAL);
         BigDecimal[] mfeMae = computeMfeMae(data.primarySeries().bars(),
                 trade.entryTime(), trade.exitTime(), trade.entryPrice(),
-                trade.direction().toString());
+                trade.direction().toString(), forcedExit);
 
         html.append("<details class=\"trigger\"><summary><div class=\"sum-row\">")
                 .append("<span class=\"idx\">").append(esc(idx)).append("</span>")
@@ -412,9 +418,10 @@ public final class HtmlReportGenerator {
         String holdDurationLabel = formatHoldDuration(heldMinutes);
         long holdDays = Math.max(1L, (heldMinutes + (24L * 60 - 1)) / (24L * 60));
         // countBarsBetween is exclusive on the upper bound (so closed-trade
-        // hold counts exclude the exit-fill bar). The open position is still
-        // held at the last bar, so bump the bound by 1ns to keep it counted.
-        int holdBars = countBarsBetween(bars, open.entryTime(), windowEnd.plusNanos(1));
+        // An open position is still held through the last bar of the chart
+        // window — include the upper bound in both the hold-bar tally and
+        // the MFE/MAE window.
+        int holdBars = countBarsBetween(bars, open.entryTime(), windowEnd, true);
 
         BigDecimal lastClose = bars.isEmpty() ? open.entryPrice() : bars.getLast().close();
         BigDecimal markPct = lastClose.subtract(open.entryPrice(), DECIMAL)
@@ -422,11 +429,8 @@ public final class HtmlReportGenerator {
         if (open.direction().toString().equalsIgnoreCase("SHORT")) {
             markPct = markPct.negate();
         }
-        // computeMfeMae uses an exclusive upper bound for closed trades (the
-        // exit-fill bar is dropped). The open position is still in position at
-        // the last bar, so bump the end by 1ns to keep that bar counted.
-        BigDecimal[] mfeMae = computeMfeMae(bars, open.entryTime(),
-                windowEnd.plusNanos(1), open.entryPrice(), open.direction().toString());
+        BigDecimal[] mfeMae = computeMfeMae(bars, open.entryTime(), windowEnd,
+                open.entryPrice(), open.direction().toString(), true);
 
         html.append("<details class=\"trigger\"><summary><div class=\"sum-row\">")
                 .append("<span class=\"idx\">").append(esc(idx)).append("</span>")
@@ -1478,17 +1482,24 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
     // ─── MFE / MAE ───────────────────────────────────────────────────────────
 
     private BigDecimal[] computeMfeMae(List<OHLCBar> bars, Instant entryTime, Instant exitTime,
-                                        BigDecimal entryPrice, String direction) {
+                                        BigDecimal entryPrice, String direction,
+                                        boolean inclusiveExit) {
         BigDecimal mfe = BigDecimal.ZERO;
         BigDecimal mae = BigDecimal.ZERO;
         boolean isLong = direction.equalsIgnoreCase("LONG");
         for (OHLCBar bar : bars) {
-            // The position is held from the entry bar's open to the exit bar's
-            // open (close-evaluated exits fill at the next bar's open). Include
-            // bars where entryTime <= bar.time() < exitTime so the exit bar's
-            // high/low — which the trade no longer experiences — does not
-            // overstate the excursion stats.
-            if (bar.time().isBefore(entryTime) || !bar.time().isBefore(exitTime)) {
+            // Held window is [entryTime, exitTime]. For close-evaluated
+            // scheduled exits (filled at the NEXT bar's open) the exit bar
+            // itself is not held, so use an exclusive upper bound. For
+            // intrabar forced exits (stop_loss / take_profit / end-of-series
+            // forced close) the exit bar IS held for part of its range,
+            // so include it. Open positions also include their final window
+            // bar — same flag, same path.
+            if (bar.time().isBefore(entryTime)) {
+                continue;
+            }
+            if (inclusiveExit ? bar.time().isAfter(exitTime)
+                              : !bar.time().isBefore(exitTime)) {
                 continue;
             }
             BigDecimal favorable;
@@ -1514,16 +1525,20 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         return new BigDecimal[] { mfe, mae };
     }
 
-    private int countBarsBetween(List<OHLCBar> bars, Instant a, Instant b) {
-        // Count bars where a <= bar.time() < b. The exit-fill bar at b is
-        // excluded because the trade is closed at its open (close-evaluated
-        // exits fill at the next bar's open), matching the same convention
-        // used by computeMfeMae.
+    private int countBarsBetween(List<OHLCBar> bars, Instant a, Instant b, boolean inclusiveB) {
+        // Count bars in [a, b] (inclusive on b) for forced exits and open
+        // positions — the position is still held during the bar at b. Count
+        // bars in [a, b) for scheduled exits — the bar at b is the next
+        // bar's open, where the trade has already filled out.
         int n = 0;
         for (OHLCBar bar : bars) {
-            if (!bar.time().isBefore(a) && bar.time().isBefore(b)) {
-                n++;
+            if (bar.time().isBefore(a)) {
+                continue;
             }
+            if (inclusiveB ? bar.time().isAfter(b) : !bar.time().isBefore(b)) {
+                continue;
+            }
+            n++;
         }
         return n;
     }
