@@ -134,9 +134,10 @@ public class TierBSteps {
         // backtest pipeline mirrors what BacktestRunner does and lets us
         // assert it returns SOMETHING (an index, not null).
         NachtkrappMatchIndex index = NachtkrappMatchIndex.buildFor(
-                strategy, Map.of(), run.primarySeries());
+                strategy, Map.of(), run.primarySeries(), Map.of());
         boolean queryable = index.hasKey(
-                new NachtkrappMatchIndex.Key("ha_doji", List.of()));
+                new NachtkrappMatchIndex.Key("ha_doji", List.of(),
+                        strategy.primaryTimeframe().wire()));
         assertTrue(queryable,
                 "the prepass should have indexed the ha_doji() call from the strategy");
     }

@@ -65,10 +65,18 @@ import java.util.regex.Pattern;
  */
 public final class NachtkrappMatchIndex {
 
-    /** Per-bar lookup key: function name + resolved numeric argument list. */
-    public record Key(String name, List<BigDecimal> args) {
+    /**
+     * Per-bar lookup key: function name + resolved numeric argument list +
+     * timeframe wire string. The timeframe disambiguates calls of the same
+     * primitive declared on different timeframes (e.g. {@code ha_doji() on 1d}
+     * vs the same call against the primary series); without it, a multi-TF
+     * strategy would conflate match instants between timeframes whenever
+     * timestamps coincide (1d bar at midnight UTC vs 1h bar at midnight UTC).
+     */
+    public record Key(String name, List<BigDecimal> args, String timeframeWire) {
         public Key {
             Objects.requireNonNull(name, "name");
+            Objects.requireNonNull(timeframeWire, "timeframeWire");
             args = List.copyOf(args);
         }
     }
@@ -131,43 +139,67 @@ public final class NachtkrappMatchIndex {
     /**
      * Walks {@code strategy}'s Background series + Scenario steps to collect
      * every Tier B primitive call, runs nachtkrapp detection passes against
-     * the appropriate series (OHLC vs HA), and indexes the resulting match
-     * instants per call key.
+     * the appropriate series (OHLC vs HA) at the appropriate timeframe, and
+     * indexes the resulting match instants per call key.
+     *
+     * <p>Each Tier B call carries a timeframe inferred from where it was
+     * declared: a Background series with {@code on 1d} runs against the 1d
+     * bar stream; calls directly in Scenario steps and Background series
+     * without {@code on} run against the primary series. The detection pass
+     * is grouped by timeframe so multi-TF strategies index against the
+     * correct bar timestamps rather than projecting higher-TF rules onto
+     * primary bars.
      */
     public static NachtkrappMatchIndex buildFor(ParsedStrategy strategy,
                                                 Map<String, BigDecimal> parameters,
-                                                List<OHLCBar> primarySeries) {
-        List<KeySpec> specs = collectKeySpecs(strategy, parameters);
+                                                List<OHLCBar> primarySeries,
+                                                Map<String, List<OHLCBar>> higherTimeframeBars) {
+        String primaryTfWire = strategy.primaryTimeframe().wire();
+        List<KeySpec> specs = collectKeySpecs(strategy, parameters, primaryTfWire);
         if (specs.isEmpty()) {
             return empty();
         }
 
-        Set<DetectionRule> ohlcRules = new LinkedHashSet<>();
-        Set<DetectionRule> haRules = new LinkedHashSet<>();
+        // Group rules by (timeframeWire, haOrNot) so we can run one
+        // DetectionEngine pass per group against the right bar stream.
+        record Group(String tfWire, boolean ha) {
+        }
+        Map<Group, Set<DetectionRule>> rulesByGroup = new HashMap<>();
         for (KeySpec spec : specs) {
-            (spec.haRule() ? haRules : ohlcRules).add(spec.rule());
+            Group g = new Group(spec.key().timeframeWire(), spec.haRule());
+            rulesByGroup.computeIfAbsent(g, k -> new LinkedHashSet<>()).add(spec.rule());
         }
 
-        List<PatternMatch> allMatches = new ArrayList<>();
+        // Per-group matches — keyed by tfWire so we can look up per-Key later.
+        Map<String, List<PatternMatch>> matchesByTf = new HashMap<>();
         try {
-            if (!ohlcRules.isEmpty()) {
-                OHLCSeries series = new OHLCSeries(primarySeries);
-                DetectionSpec spec = DetectionSpec.builder()
-                        .withSeries(series)
-                        .addAllRules(ohlcRules)
-                        .build();
+            for (var entry : rulesByGroup.entrySet()) {
+                Group group = entry.getKey();
+                Set<DetectionRule> rules = entry.getValue();
+                List<OHLCBar> sourceBars = group.tfWire().equals(primaryTfWire)
+                        ? primarySeries
+                        : higherTimeframeBars.get(group.tfWire());
+                if (sourceBars == null) {
+                    throw new IllegalStateException("no bars supplied for timeframe "
+                            + group.tfWire() + " referenced by a Tier B primitive");
+                }
+                DetectionSpec spec;
+                if (group.ha()) {
+                    List<HABar> haBars = HeikinAshiCalculator.computeChain(
+                            Optional.empty(), sourceBars);
+                    spec = DetectionSpec.builder()
+                            .withSeries(new HASeries(haBars))
+                            .addAllRules(rules)
+                            .build();
+                } else {
+                    spec = DetectionSpec.builder()
+                            .withSeries(new OHLCSeries(sourceBars))
+                            .addAllRules(rules)
+                            .build();
+                }
                 DetectionResult result = new RuleBasedPatternDetector().detect(spec);
-                allMatches.addAll(result.matches());
-            }
-            if (!haRules.isEmpty()) {
-                List<HABar> haBars = HeikinAshiCalculator.computeChain(Optional.empty(), primarySeries);
-                HASeries series = new HASeries(haBars);
-                DetectionSpec spec = DetectionSpec.builder()
-                        .withSeries(series)
-                        .addAllRules(haRules)
-                        .build();
-                DetectionResult result = new RuleBasedPatternDetector().detect(spec);
-                allMatches.addAll(result.matches());
+                matchesByTf.computeIfAbsent(group.tfWire(), k -> new ArrayList<>())
+                        .addAll(result.matches());
             }
         } catch (DetectionException e) {
             throw new IllegalStateException(
@@ -177,7 +209,9 @@ public final class NachtkrappMatchIndex {
         Map<Key, Set<Instant>> result = new HashMap<>();
         for (KeySpec spec : specs) {
             Set<Instant> times = new HashSet<>();
-            for (PatternMatch match : allMatches) {
+            List<PatternMatch> candidates = matchesByTf.getOrDefault(
+                    spec.key().timeframeWire(), List.of());
+            for (PatternMatch match : candidates) {
                 if (spec.filter().test(match)) {
                     times.add(match.time());
                 }
@@ -192,34 +226,48 @@ public final class NachtkrappMatchIndex {
     }
 
     private static List<KeySpec> collectKeySpecs(ParsedStrategy strategy,
-                                                  Map<String, BigDecimal> parameters) {
+                                                  Map<String, BigDecimal> parameters,
+                                                  String primaryTfWire) {
         Set<Key> seen = new HashSet<>();
         List<KeySpec> specs = new ArrayList<>();
         for (BackgroundSeries series : strategy.backgroundSeries()) {
-            scan(series.expression(), parameters, seen, specs);
+            // A Background series declared `on <htf>` evaluates against the
+            // higher-TF bars; a series declared without `on` evaluates against
+            // the primary. Tier B calls inside the expression follow the same
+            // timeframe.
+            String tfWire = series.timeframe()
+                    .map(tf -> tf.wire())
+                    .orElse(primaryTfWire);
+            scan(series.expression(), parameters, tfWire, seen, specs);
         }
         for (StrategyScenario scenario : strategy.scenarios()) {
             for (StrategyStep step : scenario.conditionSteps()) {
-                scan(step.text(), parameters, seen, specs);
+                // Tier B calls directly in a Scenario step always evaluate on
+                // the primary timeframe (Scenario evaluation iterates the
+                // primary bar series); references to higher-TF Background
+                // series happen by NAME and are resolved through the layered
+                // scope in WichtelmSignalGenerator.
+                scan(step.text(), parameters, primaryTfWire, seen, specs);
             }
         }
         return specs;
     }
 
-    private static void scan(String text, Map<String, BigDecimal> parameters,
+    private static void scan(String text, Map<String, BigDecimal> parameters, String tfWire,
                               Set<Key> seen, List<KeySpec> specs) {
         Matcher matcher = CALL_PATTERN.matcher(text);
         while (matcher.find()) {
             String name = matcher.group(1);
-            List<BigDecimal> args = parseArgs(matcher.group(2), parameters);
-            Key key = new Key(name, args);
+            List<BigDecimal> args = parseArgs(name, matcher.group(2), parameters);
+            Key key = new Key(name, args, tfWire);
             if (seen.add(key)) {
                 specs.add(buildKeySpec(key));
             }
         }
     }
 
-    private static List<BigDecimal> parseArgs(String raw, Map<String, BigDecimal> parameters) {
+    private static List<BigDecimal> parseArgs(String functionName, String raw,
+                                               Map<String, BigDecimal> parameters) {
         String stripped = raw.strip();
         if (stripped.isEmpty()) {
             return List.of();
@@ -233,8 +281,21 @@ public final class NachtkrappMatchIndex {
             BigDecimal fromParam = parameters.get(token);
             if (fromParam != null) {
                 out.add(fromParam);
-            } else {
+                continue;
+            }
+            try {
                 out.add(new BigDecimal(token));
+            } catch (NumberFormatException e) {
+                // Tier B primitive args must be numeric literals or declared
+                // strategy parameter names. Anything else (e.g. a market
+                // variable like `close`, an unknown identifier, or a Background
+                // series name) cannot be resolved to a constant the underlying
+                // nachtkrapp Rule needs at construction time.
+                throw new IllegalArgumentException(
+                        "Tier B primitive '" + functionName + "' argument '" + token
+                                + "' is not a numeric literal or a declared parameter; "
+                                + "arguments must be constants that can resolve at "
+                                + "prepass time");
             }
         }
         return out;

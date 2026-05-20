@@ -94,7 +94,8 @@ public final class BacktestRunner {
         // O(1) Set membership check. The empty index returned for strategies
         // that declare no Tier B calls is a cheap no-op.
         generator.setNachtkrappMatchIndex(
-                NachtkrappMatchIndex.buildFor(strategy, parameters, primarySeries));
+                NachtkrappMatchIndex.buildFor(strategy, parameters, primarySeries,
+                        higherTimeframeBars));
 
         BacktestSpec spec;
         try {

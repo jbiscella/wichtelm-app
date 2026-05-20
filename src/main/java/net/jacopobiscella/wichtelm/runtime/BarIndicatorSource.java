@@ -44,20 +44,22 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
     private final Instant barTime;
     private final long barIndex;
     private final NachtkrappMatchIndex matchIndex;
+    private final String timeframeWire;
 
     public BarIndicatorSource(List<OHLCBar> bars, String strategyName,
                               Instant barTime, long barIndex) {
-        this(bars, strategyName, barTime, barIndex, NachtkrappMatchIndex.empty());
+        this(bars, strategyName, barTime, barIndex, NachtkrappMatchIndex.empty(), "1h");
     }
 
     public BarIndicatorSource(List<OHLCBar> bars, String strategyName,
                               Instant barTime, long barIndex,
-                              NachtkrappMatchIndex matchIndex) {
+                              NachtkrappMatchIndex matchIndex, String timeframeWire) {
         this.bars = List.copyOf(bars);
         this.strategyName = strategyName;
         this.barTime = barTime;
         this.barIndex = barIndex;
         this.matchIndex = matchIndex;
+        this.timeframeWire = timeframeWire;
     }
 
     @Override
@@ -92,7 +94,7 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
     }
 
     private BigDecimal tierB(String name, List<BigDecimal> arguments) {
-        NachtkrappMatchIndex.Key key = new NachtkrappMatchIndex.Key(name, arguments);
+        NachtkrappMatchIndex.Key key = new NachtkrappMatchIndex.Key(name, arguments, timeframeWire);
         if (!matchIndex.hasKey(key)) {
             // Should not happen — the prepass walks the AST and pre-registers
             // every Tier B call. A miss means the call was synthesised at

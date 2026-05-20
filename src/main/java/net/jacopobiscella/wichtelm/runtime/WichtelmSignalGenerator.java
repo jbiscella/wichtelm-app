@@ -287,7 +287,8 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private Scope scopeFor(BarContext context, OHLCBar bar, Optional<Position> position, long barIndex) {
         List<OHLCBar> barsUpTo = barsUpToAndIncluding(context, bar);
         BarIndicatorSource indicators = new BarIndicatorSource(
-                barsUpTo, strategy.featureName(), bar.time(), barIndex, matchIndex);
+                barsUpTo, strategy.featureName(), bar.time(), barIndex,
+                matchIndex, timeframe.wire());
         return new Scope(barValues(bar, position, barIndex, barsUpTo), indicators);
     }
 
@@ -350,7 +351,8 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 new ExpressionEvaluator(strategy.featureName(), primaryBarTime, targetIndex);
         Scope scope = new Scope(seriesLayerValues(targetBar, series, targetIndex),
                 new BarIndicatorSource(layerBars, strategy.featureName(), targetBar.time(),
-                        targetIndex, matchIndex));
+                        targetIndex, matchIndex, series.timeframe()
+                                .map(tf -> tf.wire()).orElse(timeframe.wire())));
         return evaluator.arithmetic(series.expression(), scope);
     }
 
