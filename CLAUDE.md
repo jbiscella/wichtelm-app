@@ -89,7 +89,9 @@ A Scenario terminating with `Then long_entry` or `Then short_entry` MAY have one
 - `And with stop_loss at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
 - `And with take_profit at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
 
-The expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `entry_time`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted in v1.
+The expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted in v1. (`entry_time` is reserved — see §15.)
+
+Each open position is bound at fill time to the scenario that emitted its Buy/Sell signal; the protective-exit evaluator uses that scenario's stop_loss / take_profit expressions, not the first same-direction entry scenario in source order. Two `long_entry` scenarios with different stops therefore each apply their own stop to the position they opened.
 
 ### 3.5 Multi-timeframe expressions
 
@@ -374,6 +376,7 @@ If pyramiding is enabled and a `long_entry` (or `short_entry`) fires while a pos
 | Concurrent event in same bar T | Resolution |
 |---|---|
 | Intrabar stop_loss/take_profit AND close-evaluated exit Scenario both trigger | stop_loss/take_profit wins (intrabar precedes close) |
+| Intrabar stop_loss AND take_profit both within `[low, high]` of the same bar | stop_loss wins (pessimistic convention — the backtest assumes the worse fill, mirroring industry tooling) |
 | Multiple exit Scenarios match in source order | first in source order wins |
 | Multiple entry Scenarios match (no position open, multiple matching `Given no open position` Scenarios) | first in source order wins |
 
@@ -724,6 +727,7 @@ The following are explicitly NOT implemented in v1:
 - Tags (`@xxx`), Rule, Scenario Outline, Examples, DocStrings, DataTable Gherkin features
 - Parallel execution of multiple backtests in a single CLI invocation
 - Literal `[csv].file` paths without the `{symbol}` placeholder — the `frau-holle-csv` driver requires the placeholder; supporting literal paths is reserved as a future enhancement contingent on an additive `frau-holle-csv` change
+- `entry_time` trade-context variable — removed in v0.1.0 pending a time-typed expression sub-language. Numeric epoch exposure is poor UX; type-aware support will be added when a strategy demo requires time-based arithmetic. The parser currently rejects `entry_time` references via P13 (undeclared identifier)
 
 These are reserved for future additive releases (japicmp-validated) or future major versions.
 
