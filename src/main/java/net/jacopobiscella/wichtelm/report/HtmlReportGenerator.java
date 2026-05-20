@@ -398,7 +398,7 @@ public final class HtmlReportGenerator {
 
         appendScenarioRow(html, entryHit, exitHit, "closed");
         appendChartFrames(html, data, renderer, trade.entryTime(), trade.exitTime(),
-                entryHit, exitHit, scenarioByName, false, dirClass);
+                entryHit, exitHit, scenarioByName, false, dirClass, isWin);
 
         html.append("</div></details>");
     }
@@ -468,8 +468,9 @@ public final class HtmlReportGenerator {
                 .append("</div>");
 
         appendScenarioRow(html, entryHit, null, "open");
+        // Open trade — isWin irrelevant, the renderer will use NEUTRAL fill.
         appendChartFrames(html, data, renderer, open.entryTime(), windowEnd,
-                entryHit, null, scenarioByName, true, dirClass);
+                entryHit, null, scenarioByName, true, dirClass, false);
 
         html.append("</div></details>");
     }
@@ -557,7 +558,7 @@ public final class HtmlReportGenerator {
                                     Instant tradeEntry, Instant tradeExit,
                                     TriggerHit entryHit, TriggerHit exitHit,
                                     Map<String, StrategyScenario> scenarioByName,
-                                    boolean openTrade, String dirClass) {
+                                    boolean openTrade, String dirClass, boolean isWin) {
         html.append("<div class=\"charts\">");
 
         Set<String> timeframes = collectScenarioTimeframes(entryHit, exitHit, scenarioByName, data);
@@ -589,7 +590,7 @@ public final class HtmlReportGenerator {
                     ? null
                     : snapToVisibleBar(window.bars(), timeframe, isPrimary, tradeExit);
             html.append(renderChartFrame(renderer, window, tf, isPrimary, entryMarker,
-                    exitMarker, openTrade, dirClass, data, scenarioByName, entryHit, exitHit,
+                    exitMarker, openTrade, dirClass, isWin, data, scenarioByName, entryHit, exitHit,
                     tradeEntry, tradeExit));
         }
 
@@ -758,7 +759,8 @@ public final class HtmlReportGenerator {
 
 private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, String timeframe,
                                      boolean isPrimary, Instant entryMarker, Instant exitMarker,
-                                     boolean openTrade, String dirClass, ReportData data,
+                                     boolean openTrade, String dirClass, boolean isWin,
+                                     ReportData data,
                                      Map<String, StrategyScenario> scenarioByName,
                                      TriggerHit entryHit, TriggerHit exitHit,
                                      Instant tradeEntry, Instant tradeExit) {
@@ -771,7 +773,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         // take_profit, or end-of-series) so no Scenario trigger maps to it.
         boolean exitScheduled = exitHit != null;
         String img = renderHeerwischImage(renderer, window, timeframe, entryMarker, exitMarker,
-                isLong, exitScheduled, openTrade, data);
+                isLong, exitScheduled, openTrade, isWin, data);
         Duration heldInWindow = Duration.between(tradeEntry, tradeExit);
         String heldLabel = formatHoldDuration(Math.max(0L, heldInWindow.toMinutes()));
 
@@ -855,16 +857,21 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
      *       matched a Scenario fill time (frau-holle's Trade record does not
      *       carry the discriminator).</li>
      *   <li>One {@code TimeRangeHighlight} spanning the held period, filled
-     *       {@code LONG_POSITION} for long trades and {@code SHORT_POSITION}
-     *       for shorts, opacity {@code 0.15}. For open trades the range
-     *       extends to the last bar in the chart window.</li>
+     *       by trade OUTCOME — {@code LONG_POSITION} (green) for winning
+     *       closed trades, {@code SHORT_POSITION} (red) for losing closed
+     *       trades, {@code NEUTRAL} (grey) for the still-open position at
+     *       end-of-series; opacity {@code 0.15}. Outcome-based shading
+     *       matches the TradingView Strategy Tester convention; the marker
+     *       colors above stay direction-based (industry standard for
+     *       entry / exit markers). For open trades the range extends to
+     *       the last bar in the chart window.</li>
      * </ul>
      */
     private String renderHeerwischImage(ChartRenderer renderer, OHLCSeries series,
                                          String timeframeLabel, Instant entryMarker,
                                          Instant exitMarker, boolean isLong,
                                          boolean exitScheduled, boolean openTrade,
-                                         ReportData data) {
+                                         boolean isWin, ReportData data) {
         try {
             LayoutSpec layout = LayoutSpec.builder().withSize(900, 320).build();
             ChartSpecBuilder builder = ChartSpec.builder().withSeries(series).withLayout(layout);
@@ -901,10 +908,21 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             // trade rendered on a 1d series), so skip the highlight when the
             // snapped instants coincide.
             if (rangeStart != null && rangeEnd != null && rangeStart.isBefore(rangeEnd)) {
+                // Shade the held interval by OUTCOME, not by direction, to
+                // match the TradingView convention: green band = winning
+                // trade, red band = losing trade, neutral = still open. The
+                // marker colors above stay direction-based (the industry
+                // standard for entry / exit markers).
+                FillColor fill;
+                if (openTrade) {
+                    fill = FillColor.NEUTRAL;
+                } else if (isWin) {
+                    fill = FillColor.LONG_POSITION;
+                } else {
+                    fill = FillColor.SHORT_POSITION;
+                }
                 builder.addAnnotation(new Annotation.TimeRangeHighlight(
-                        rangeStart, rangeEnd,
-                        isLong ? FillColor.LONG_POSITION : FillColor.SHORT_POSITION,
-                        new BigDecimal("0.15")));
+                        rangeStart, rangeEnd, fill, new BigDecimal("0.15")));
             }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
