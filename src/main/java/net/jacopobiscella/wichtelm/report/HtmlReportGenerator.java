@@ -85,7 +85,7 @@ public final class HtmlReportGenerator {
     private static final String TEMPLATE_CSS = loadResource("/report/template.css");
     private static final String LOGO_SVG = loadResource("/report/logo.svg");
 
-    private static final String VERSION = "1.0.0";
+    private static final String VERSION = resolveVersion();
 
     private static final String DISCLAIMER_FULL =
             "This report is a backtest of a hypothetical trading strategy on historical "
@@ -910,19 +910,36 @@ public final class HtmlReportGenerator {
         return hits;
     }
 
+    /**
+     * Renders one RSI sub-pane per RSI Background series declared on the
+     * given timeframe. A strategy may declare multiple RSI series with
+     * different periods or thresholds; each gets its own sub-pane stacked
+     * below the chart image. De-duplicates identical RSI definitions so a
+     * strategy that references the same RSI under two different Background
+     * names does not draw the sub-pane twice.
+     */
     private String renderRsiSubpaneIfDeclared(String timeframeLabel, OHLCSeries fullSeries,
                                                Instant windowStart, Instant windowEnd,
                                                Instant entryMarker, Instant exitMarker,
                                                ReportData data) {
+        StringBuilder out = new StringBuilder();
+        Set<String> seen = new HashSet<>();
         for (BackgroundSeries bg : seriesForTimeframe(timeframeLabel, data)) {
             Indicator ind = toIndicator(bg.expression(), data.parameters());
-            if (ind instanceof Indicator.RSI rsi
-                    && fullSeries.bars().size() > rsi.period()) {
-                return renderRsiSubpane(fullSeries, rsi.period(), rsi.overbought(),
-                        rsi.oversold(), windowStart, windowEnd, entryMarker, exitMarker);
+            if (!(ind instanceof Indicator.RSI rsi)) {
+                continue;
             }
+            if (fullSeries.bars().size() <= rsi.period()) {
+                continue;
+            }
+            String key = rsi.period() + ":" + rsi.overbought() + ":" + rsi.oversold();
+            if (!seen.add(key)) {
+                continue;
+            }
+            out.append(renderRsiSubpane(fullSeries, rsi.period(), rsi.overbought(),
+                    rsi.oversold(), windowStart, windowEnd, entryMarker, exitMarker));
         }
-        return "";
+        return out.toString();
     }
 
 
@@ -1474,6 +1491,28 @@ public final class HtmlReportGenerator {
         } catch (DriverInternalException e) {
             throw new ReportGenerationException("could not initialize the chart renderer", e);
         }
+    }
+
+    /**
+     * Reads the app version from the JAR manifest's {@code Implementation-Version}
+     * (populated by the shade plugin from {@code ${project.version}}). Falls
+     * back to {@code "dev"} when running outside a packaged JAR (e.g. during
+     * tests against {@code target/classes}).
+     */
+    private static String resolveVersion() {
+        try (InputStream in = HtmlReportGenerator.class.getResourceAsStream(
+                "/META-INF/MANIFEST.MF")) {
+            if (in != null) {
+                String value = new java.util.jar.Manifest(in)
+                        .getMainAttributes().getValue("Implementation-Version");
+                if (value != null && !value.isBlank()) {
+                    return value;
+                }
+            }
+        } catch (IOException ignored) {
+            // fall through to dev fallback
+        }
+        return "dev";
     }
 
     private static String loadResource(String path) {

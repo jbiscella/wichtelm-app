@@ -233,6 +233,7 @@
                   <mainClass>net.jacopobiscella.wichtelm.cli.WichtelmCli</mainClass>
                   <manifestEntries>
                     <Class-Path>lib/jfreechart.jar</Class-Path>
+                    <Implementation-Version>${project.version}</Implementation-Version>
                   </manifestEntries>
                 </transformer>
               </transformers>
