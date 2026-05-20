@@ -1221,12 +1221,41 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 .append("\" y2=\"").append(round(osYpx))
                 .append("\" stroke=\"oklch(0.58 0.13 155)\" stroke-dasharray=\"3 3\""
                         + " stroke-width=\"1.5\"/>");
-        // X axis adaptive
-        DateTimeFormatter xFmt = adaptiveTickFormatter(tSpan);
+        // X axis: ticks at round-time boundaries (midnight UTC + interval),
+        // matching the convention JFreeChart uses on the main chart above so
+        // the two axes visually align on the same date grid rather than at
+        // arbitrary 20-%-of-span positions.
+        long hourMs = 60L * 60 * 1000;
+        long dayMs = 24L * hourMs;
+        long spanHours = tSpan / hourMs;
+        long tickIntervalMs;
+        DateTimeFormatter xFmt;
+        if (spanHours <= 6) {
+            tickIntervalMs = hourMs;
+            xFmt = DateTimeFormatter.ofPattern("HH:mm", Locale.ENGLISH);
+        } else if (spanHours <= 24) {
+            tickIntervalMs = 4 * hourMs;
+            xFmt = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.ENGLISH);
+        } else if (spanHours <= 96) {
+            tickIntervalMs = 12 * hourMs;
+            xFmt = DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.ENGLISH);
+        } else if (tSpan <= 14 * dayMs) {
+            tickIntervalMs = dayMs;
+            xFmt = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH);
+        } else if (tSpan <= 60 * dayMs) {
+            tickIntervalMs = 7 * dayMs;
+            xFmt = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH);
+        } else {
+            tickIntervalMs = 30 * dayMs;
+            xFmt = DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
+        }
+        // First tick: smallest multiple of tickIntervalMs (counted from the
+        // UTC epoch, which IS a midnight) that is >= t0. This puts ticks on
+        // round boundaries — midnight, then +interval, etc. — exactly like
+        // JFreeChart's default DateAxis tick selection.
+        long firstTick = ((t0 + tickIntervalMs - 1) / tickIntervalMs) * tickIntervalMs;
         svg.append("<g font-size=\"9\" font-family=\"JetBrains Mono,monospace\" fill=\"#8a8880\">");
-        int tickCount = 5;
-        for (int k = 0; k <= tickCount; k++) {
-            long tickT = t0 + (long) ((double) tSpan * k / tickCount);
+        for (long tickT = firstTick; tickT <= t1; tickT += tickIntervalMs) {
             double px = padLeft + (double) (tickT - t0) / tSpan * plotW;
             svg.append("<line x1=\"").append(round(px))
                     .append("\" x2=\"").append(round(px))
@@ -1298,16 +1327,6 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 .append("\" stroke-width=\"1.2\" stroke-dasharray=\"2 3\"/>");
     }
 
-    private static DateTimeFormatter adaptiveTickFormatter(long spanMillis) {
-        long days = spanMillis / (1000L * 60 * 60 * 24);
-        if (days <= 3) {
-            return DateTimeFormatter.ofPattern("MMM d HH:mm", Locale.ENGLISH);
-        }
-        if (days <= 60) {
-            return DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH);
-        }
-        return DateTimeFormatter.ofPattern("MMM yyyy", Locale.ENGLISH);
-    }
 
     // ─── Equity & drawdown SVG (kept from Task B, palette-aligned) ───────────
 
