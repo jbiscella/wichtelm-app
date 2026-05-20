@@ -256,22 +256,38 @@ public final class HtmlReportGenerator {
 
     /**
      * Reverse-index of trade fill times → trigger hit. Signals fire at bar T
-     * and the runtime fills at bar T+1; key each entry by the fill time
-     * ({@code advance(triggerTime, primaryTimeframe)}) so the trade's own
-     * entryTime / exitTime look up the originating Scenario directly. The
-     * trigger time is preserved on the value so the per-event chart can
-     * still anchor on the signal bar (one bar before the fill bar).
+     * and the runtime fills at the next AVAILABLE primary bar's open.
+     * Looking up the fill time via the actual primary series (not a calendar
+     * advance) is what makes this work for datasets with overnight or weekend
+     * gaps: there is no Monday 16:30 bar to advance to from a Friday 16:00
+     * signal, so trade.entryTime() would be Monday 09:30 — the next bar that
+     * actually exists.
+     *
+     * <p>The trigger time is preserved on the value so the per-event chart
+     * can still anchor on the signal bar (the bar the Scenario evaluated).
      */
     private Map<Instant, TriggerHit> buildTriggerByFillTime(ReportData data) {
-        Timeframe primaryTf = data.strategy().primaryTimeframe();
+        List<OHLCBar> bars = data.primarySeries().bars();
         Map<Instant, TriggerHit> result = new HashMap<>();
         data.triggersByScenario().forEach((name, times) -> {
             for (Instant t : times) {
-                Instant fillTime = Timeframes.advance(t, primaryTf);
-                result.putIfAbsent(fillTime, new TriggerHit(name, t));
+                Instant fillTime = nextBarOpenAfter(bars, t);
+                if (fillTime != null) {
+                    result.putIfAbsent(fillTime, new TriggerHit(name, t));
+                }
             }
         });
         return result;
+    }
+
+    /** First bar's open time strictly after {@code t}, or {@code null} when none. */
+    private static Instant nextBarOpenAfter(List<OHLCBar> bars, Instant t) {
+        for (OHLCBar bar : bars) {
+            if (bar.time().isAfter(t)) {
+                return bar.time();
+            }
+        }
+        return null;
     }
 
     private void appendTradeBlock(StringBuilder html, ReportData data, ChartRenderer renderer,
