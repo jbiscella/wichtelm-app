@@ -229,7 +229,7 @@ primary timeframe.
 The DSL grammar defines the catalog below. **Not every entry is evaluable by
 the backtest runtime yet** — entries marked *runtime pending* parse and
 validate but fail at runtime if a backtest actually reaches them (indicator
-functions raise a `DslEvaluationException`; `bar_time` / `entry_time` raise an
+functions raise a `DslEvaluationException`; `bar_time` raises an
 unresolved-identifier error). Stick to the runtime-supported entries for a
 strategy that runs end to end.
 
@@ -246,7 +246,6 @@ strategy that runs end to end.
 | Category | Names |
 |---|---|
 | Market variables | `bar_time` |
-| Trade-context variables | `entry_time` |
 | Composite | `macd(fast, slow, signal)` |
 | Window aggregates | `highest(<expr>, period)`, `lowest(<expr>, period)`, `avg_volume(period)` |
 | Heikin-Ashi primitives | `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)`, `ha_strong(...)`, `ha_doji(...)` |
