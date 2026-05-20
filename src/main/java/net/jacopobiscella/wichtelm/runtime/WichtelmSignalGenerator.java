@@ -63,11 +63,20 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private final Map<String, List<OHLCBar>> higherTimeframeBars = new HashMap<>();
     private final Map<String, HigherTimeframeSeries> higherResolvers = new HashMap<>();
     private final Map<String, List<Instant>> triggerTimes = new LinkedHashMap<>();
+    private NachtkrappMatchIndex matchIndex = NachtkrappMatchIndex.empty();
 
     /** Generator for a strategy without higher-timeframe Background series. */
     public WichtelmSignalGenerator(ParsedStrategy strategy, Map<String, BigDecimal> parameters,
                                    BigDecimal positionSizePct, boolean pyramiding) {
         this(strategy, parameters, positionSizePct, pyramiding, Map.of());
+    }
+
+    /**
+     * Wires the Tier B pattern prepass. Must be called once, before
+     * {@link #generate(BarContext)} is invoked for the first bar.
+     */
+    public void setNachtkrappMatchIndex(NachtkrappMatchIndex matchIndex) {
+        this.matchIndex = java.util.Objects.requireNonNull(matchIndex, "matchIndex");
     }
 
     /**
@@ -277,8 +286,9 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
 
     private Scope scopeFor(BarContext context, OHLCBar bar, Optional<Position> position, long barIndex) {
         List<OHLCBar> barsUpTo = barsUpToAndIncluding(context, bar);
-        BarIndicatorSource indicators =
-                new BarIndicatorSource(barsUpTo, strategy.featureName(), bar.time(), barIndex);
+        BarIndicatorSource indicators = new BarIndicatorSource(
+                barsUpTo, strategy.featureName(), bar.time(), barIndex,
+                matchIndex, timeframe.wire());
         return new Scope(barValues(bar, position, barIndex, barsUpTo), indicators);
     }
 
@@ -340,7 +350,9 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         ExpressionEvaluator evaluator =
                 new ExpressionEvaluator(strategy.featureName(), primaryBarTime, targetIndex);
         Scope scope = new Scope(seriesLayerValues(targetBar, series, targetIndex),
-                new BarIndicatorSource(layerBars, strategy.featureName(), targetBar.time(), targetIndex));
+                new BarIndicatorSource(layerBars, strategy.featureName(), targetBar.time(),
+                        targetIndex, matchIndex, series.timeframe()
+                                .map(tf -> tf.wire()).orElse(timeframe.wire())));
         return evaluator.arithmetic(series.expression(), scope);
     }
 

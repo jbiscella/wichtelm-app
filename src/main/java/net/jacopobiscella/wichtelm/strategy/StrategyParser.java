@@ -381,7 +381,7 @@ public final class StrategyParser {
                     k++;
                 }
                 if (k < n && expr.charAt(k) == '(') {
-                    validateFunction(word, expr, k, line, context);
+                    validateFunction(word, expr, k, line, context, parameterNames);
                 } else if (!BuiltinCatalog.isOperatorWord(word)) {
                     validateIdentifier(word, line, context, parameterNames, seriesNames);
                 }
@@ -396,7 +396,7 @@ public final class StrategyParser {
     }
 
     private void validateFunction(String name, String expr, int openParen, int line,
-                                  ExprContext context) {
+                                  ExprContext context, Set<String> parameterNames) {
         if (context == ExprContext.STOP_TAKE) {
             throw fail("P16", line, 1,
                     "stop_loss/take_profit expressions must not reference functions or indicators: "
@@ -412,7 +412,43 @@ public final class StrategyParser {
                     + " argument(s) but got " + arguments.size());
         }
         checkNumericRanges(name, arguments, line);
+        checkTierBArgumentsAreResolvable(name, arguments, parameterNames, line);
     }
+
+    /**
+     * Tier B boolean primitives evaluate via a one-shot nachtkrapp pre-pass at
+     * backtest setup, which means each argument must resolve to a concrete
+     * numeric value BEFORE any bar is iterated. The only resolvable arguments
+     * are numeric literals and declared {@code Parameter} names; anything
+     * else (a market variable like {@code close}, a Background series name,
+     * an unknown identifier) cannot be turned into a {@code DetectionRule}
+     * constructor argument and is rejected at parse time with a
+     * {@link net.jacopobiscella.wichtelm.error.StrategyParseException} rather
+     * than escaping as an uncaught runtime exception.
+     */
+    private void checkTierBArgumentsAreResolvable(String name, List<String> arguments,
+                                                  Set<String> parameterNames, int line) {
+        if (!TIER_B_PRIMITIVES.contains(name)) {
+            return;
+        }
+        for (String arg : arguments) {
+            if (numericLiteral(arg) != null) {
+                continue;
+            }
+            if (parameterNames.contains(arg)) {
+                continue;
+            }
+            throw fail("P14", line, 1, "Tier B primitive " + name + " argument '" + arg
+                    + "' must be a numeric literal or a declared Parameter name");
+        }
+    }
+
+    private static final Set<String> TIER_B_PRIMITIVES = Set.of(
+            "ha_doji", "ha_strong", "ha_strong_bullish", "ha_strong_bearish",
+            "ha_bullish_reversal", "ha_bearish_reversal",
+            "rsi_overbought", "rsi_oversold", "rsi_crosses_50",
+            "macd_bullish_cross", "macd_bearish_cross",
+            "macd_zero_cross_up", "macd_zero_cross_down");
 
     private void validateIdentifier(String word, int line, ExprContext context,
                                     Set<String> parameterNames, Set<String> seriesNames) {

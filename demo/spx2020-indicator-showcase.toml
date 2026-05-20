@@ -1,0 +1,31 @@
+# Indicator-showcase demo: trades SMA(20)/SMA(50) crossovers with MACD
+# histogram momentum confirmation, with ATR, stddev and recent-range
+# Background series declared so the report exercises every Tier A
+# indicator family (SMA · MACD · ATR · stddev as BollingerBands · window
+# aggregates).
+#
+# Run from the repository root:
+#   wichtelm run demo/spx2020-indicator-showcase.toml
+
+strategy    = "strategies/indicator-showcase.strat"
+symbol      = "SPX2020"
+data_source = "csv"
+
+[date_range]
+from = 2020-04-01
+to   = 2020-08-31
+
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+
+[parameters]
+sma_fast      = 20
+sma_slow      = 100
+stop_loss_pct = 2
+
+[output]
+directory = "reports"
+
+[csv]
+file = "data/{symbol}_{timeframe}.csv"

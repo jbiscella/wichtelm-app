@@ -124,13 +124,38 @@ Expressions in Scenarios use the following syntax:
 | Base indicators (from `indicators` ha-track module) | `sma(period)`, `ema(period)`, `rsi(period)`, `atr(period)`, `stddev(period)` |
 | Composite indicators (decomposed — see note) | `macd_line(fast, slow, signal)`, `macd_signal(fast, slow, signal)`, `macd_histogram(fast, slow, signal)` |
 | Window aggregates (price-source variants — see note) | `highest_high(period)`, `lowest_low(period)`, `highest_close(period)`, `lowest_close(period)`, `avg_volume(period)` |
-| HA primitives (from nachtkrapp) | `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)`, `ha_strong(...)`, `ha_doji(...)` |
-| Price/MA primitives (from nachtkrapp) | `price_above_ma(...)`, `price_crosses_ma(...)` |
-| RSI level primitives (from nachtkrapp) | `rsi_crosses_50()`, `rsi_overbought(threshold)`, `rsi_oversold(threshold)` |
-| MACD primitives (from nachtkrapp) | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
+| HA primitives (from nachtkrapp) — Tier B booleans | `ha_doji()` / `ha_doji(maxBodyRatio)`, `ha_strong()`, `ha_strong_bullish()`, `ha_strong_bearish()`, `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)` |
+| RSI level primitives (from nachtkrapp) — Tier B booleans | `rsi_overbought(threshold)`, `rsi_oversold(threshold)`, `rsi_crosses_50()` |
+| MACD primitives (from nachtkrapp) — Tier B booleans | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
 | Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `entry_time`, `position_size` |
 
 Composite indicators are exposed as flat per-component functions in v1: there is no callable `macd` — its components are the three `macd_*` functions listed above, consistent with how every other indicator in the catalog is exposed flat. A field-accessor syntax (`macd(...).macd_line`) was considered and rejected: it would require a postfix-access layer in the expression parser plus indicator-specific parse-time validation, for no gain over flat functions. If field accessors are ever wanted, that is a general parser feature, not a MACD concern.
+
+#### Tier B boolean primitives — semantics and runtime
+
+The 13 boolean primitives listed under "HA / RSI level / MACD primitives" above evaluate to **true / false** rather than a numeric value. They resolve through a **one-shot nachtkrapp `DetectionEngine` pre-pass** built at backtest setup:
+
+1. `NachtkrappMatchIndex.buildFor(strategy, parameters, primarySeries)` walks every Background series expression and every Scenario step text, collects each Tier B function call with its resolved numeric arguments, and builds the corresponding `DetectionRule` (e.g. `ha_doji(0.05)` → `HADojiRule(0.05)`).
+2. The index runs **two detection passes**: HA rules against an `HASeries` (computed via `HeikinAshiCalculator.computeChain(Optional.empty(), primarySeries)`), price / RSI / MACD rules against the OHLCSeries with `PriceSource.CLOSE`.
+3. Each per-bar evaluation of a Tier B primitive is an O(1) `Set<Instant>.contains(barTime)` against the prepass result.
+
+The **boolean-step evaluator extension** in `ExpressionEvaluator.condition(...)` allows these primitives to be used as bare boolean steps: `When ha_doji()`, `And rsi_oversold(30)`. If no comparison operator is found, the step text is evaluated as an arithmetic expression — Tier B primitives return `BigDecimal.ONE` / `BigDecimal.ZERO`, treated as truthy / falsy by `signum() != 0`. Numeric expressions that happen to evaluate non-zero are also treated as truthy (same convention as C / Python), but the canonical use is the boolean primitive.
+
+Defaults for 0-arg primitives:
+
+| Primitive | Underlying nachtkrapp rule + defaults |
+|---|---|
+| `ha_doji()` | `HADojiRule(maxBodyRatio = 0.1)` |
+| `ha_strong()`, `ha_strong_bullish()`, `ha_strong_bearish()` | `HAStrongCandleRule(wickTolerance = 0.05, minBodyRatio = 0.6)` — the variants share one detection and filter by the emitted match subtype |
+| `rsi_crosses_50()` | `RSILevel50CrossRule(period = 14, PriceSource.CLOSE)` |
+| `macd_bullish_cross()` / `macd_bearish_cross()` | `MACDSignalCrossRule(12, 26, 9, PriceSource.CLOSE)` |
+| `macd_zero_cross_up()` / `macd_zero_cross_down()` | `MACDZeroCrossRule(12, 26, 9, PriceSource.CLOSE)` |
+
+For non-default thresholds or periods, the strategy author declares an explicit `Background` series (e.g. `Given a series rsi_value defined as rsi(20)`) and builds conditions around it.
+
+The `RSIThresholdRule` carries BOTH overbought and oversold in a single rule; when the DSL only specifies one (`rsi_overbought(70)` OR `rsi_oversold(30)`), the unspecified threshold is filled in with a valid sentinel (70 / 30) and the per-key match-subtype filter selects only the requested side. Two DSL calls that resolve to the same underlying rule are deduplicated in the prepass — a single detection runs and both keys map to filtered subsets of its matches.
+
+Naming convention: where a nachtkrapp rule has a **non-numeric** parameter (e.g. `MAType.SMA` / `MAType.EMA`, bullish / bearish direction), the DSL primitives are split into **flat per-value variants** rather than accepting a string argument. So `ha_strong_bullish` / `ha_strong_bearish` are separate catalog entries; `price_above_sma` / `price_above_ema` are reserved for a follow-up PR (the catalog currently does not list `price_above_ma`).
 
 Window aggregates likewise use hard-coded price-source variants (`highest_high`, `lowest_low`, `highest_close`, `lowest_close`) rather than a generic expression-typed first argument, again consistent with the rest of the catalog being flat. Each takes a single `period` argument and reduces a fixed field over the last `period` bars. A generic expression-typed first argument (`highest(<expr>, period)`) is reserved for a future parser extension if real demand emerges.
 
@@ -368,40 +393,68 @@ Where:
 
 Reports are NEVER overwritten — every run produces a new file.
 
-### 7.2 Top section: aggregate metrics
+The report is styled against the finalized design system in `src/main/resources/report/template.css`: Inter sans for body, JetBrains Mono for numerics, off-white surface (`#fafaf7`), oklch-defined semantic colours (`--win`, `--loss`, `--long`, `--short`, `--accent`). The CSS targets the page chrome — header, metrics grid, equity / drawdown panels, trade summary rows, expanded body, chart frames, footer — **not the chart contents themselves**. Chart contents are produced by the heerwisch-jfreechart driver and embedded as raster images inside the styled frames, deliberately accepting a visual mismatch between the polished template typography and the JFreeChart-native chart palette.
 
-The report begins with a header summarizing the backtest, followed by the 10 aggregate metrics from `frau-holle.BacktestResult.metrics`: `totalReturn`, `numTrades`, `winRate`, `maxDrawdown`, `sharpeRatio`, `sortinoRatio`, `calmarRatio`, `profitFactor`, `avgWin`, `avgLoss`.
+### 7.2 Header band
 
-`profitFactor == 0` is rendered as "undefined" with a tooltip explaining the sentinel value.
+The header carries the inline monochrome wichtelm-app logo, the wordmark `wichtelm-app · backtest report · v<version>`, the page title `Backtest report`, and a single mono-spaced line `Strategy <name> · Symbol <symbol> · Window <from → to> · Bars <primary tf>(<multi-TF descriptor>)`. The right edge of the title row shows the generation timestamp. A condensed `NOT financial advice · Past performance is not indicative of future results · Use at your own risk` disclaimer sits below the row.
 
-### 7.3 Body section: chronological trade list
+### 7.3 Aggregate metrics
 
-The body is a **single chronological list of every trade** in the backtest — closed trades first, sorted strictly by entry timestamp ascending, with the still-open position at the end of the series (if any) appended last. The Scenario name is a per-trade property exposed on each trade block, no longer the top-level grouping principle.
+Ten cards in a 2 × 5 grid, each with a small uppercase label, a large monospace primary value (semantic-coloured for total return and max drawdown), and a small muted context line. Cards: Total return, Trades, Win rate, Max drawdown, Sharpe, Sortino, Calmar, Profit factor, Avg win, Avg loss. Profit factor renders as `—` when `numTrades == 0`.
 
-Each trade is rendered as one "trade block" with a coloured left edge — green (winning closed trade), red (losing closed trade), or amber (still-open position). The block header carries the **trade ordinal** (zero-padded to the digit count of the total, e.g. `Trade #01` … `Trade #34`), the **direction** (`LONG` / `SHORT`), the entry → exit timestamps, and the **PnL %**. A small metadata dl directly under the header lists the entry Scenario name, the exit Scenario name (or `(forced close — stop-loss / take-profit / end-of-series)` when the exit time matched no Scenario trigger), and the entry / exit prices. Then the trade's body contains one **per-event block** per side of the trade — `Entry — <scenario name> @ <timestamp>` and `Exit — <scenario name> @ <timestamp>` — each using the per-trigger block layout described below.
+### 7.4 Equity curve and drawdown
 
-A per-event block contains:
+Two panel frames stacked vertically immediately after the metrics. Each frame has a panel header (title left, context label right — `indexed · base 100.0` for the equity curve, `% from peak` for the drawdown). The chart bodies are hand-rendered SVG (these predate the JFreeChart integration and match the template aesthetic): monthly X-axis ticks, 5%-step Y grid, dashed reference line at 100 for the equity curve, filled red area under the drawdown curve.
 
-| Element | Content |
+### 7.5 Trade-by-trade breakdown — chronological list
+
+The body is a **single chronological list of every trade** in the backtest, all rendered as native HTML5 `<details>` elements collapsed by default. **Zero JavaScript.**
+
+Closed trades come first, sorted strictly by entry timestamp ascending; the still-open position at end-of-series, if any, is appended last with a `still open` tag. Trade ordinals (`#01`, `#02`, …) are zero-padded to the digit count of the total.
+
+#### Collapsed summary row
+
+| Cell | Content |
 |---|---|
-| Block header | the event label (`Entry` or `Exit`) followed by the Scenario name and the event timestamp |
-| Local primary-TF chart | bars inside the window `[event − max(P × 1.5, 30), event + 10]` where `P` is the largest indicator period referenced by the Scenario at the primary TF. The chart carries HA candles plus SMA / EMA overlays on the main pane (matching what `HtmlReportGenerator.toIndicator(...)` currently maps), with RSI rendered as a separate SVG sub-pane. Other indicator types in the v1 catalog (BollingerBands, ATR, MACD components, ADX, Stochastic) are reserved for future enhancements — when a Background series declares one of those, the indicator is silently skipped in the chart but its lookback still feeds the window sizing. The event bar itself is annotated via heerwisch `Annotation.BarHighlight` |
-| Local higher-TF chart(s) | rendered once per **distinct higher timeframe** referenced by the Scenario (multiple Background series on the same higher TF — e.g. a 1d EMA and a 1d ATR — share a single 1d chart with both indicators added as overlays / sub-panes), with the same windowing rule applied at that timeframe |
-| RSI sub-pane | below each chart whose timeframe declares an `rsi(...)` Background series. The RSI is computed on the full series for accurate values and clipped to the chart's window; the Y axis is pinned to 0–100 with grid ticks at 0/30/50/70/100, the strategy's `overbought` / `oversold` parameter values are drawn as dashed threshold lines with pale danger-zone shading, and a vertical reference line marks the event time so it lines up with the main chart above |
-| Sub-report mini-table | one row: the event timestamp followed by one cell per `When` / `And` step of the Scenario, marked when that sub-condition held at the event bar. By construction every step holds at the event — that is what caused the Scenario to fire — so the cells document which sub-conditions composed the Scenario |
+| Ordinal | `#NN` |
+| Direction pill | `long` (green soft fill) or `short` (red soft fill) — both monospace, uppercase |
+| Time range | `YYYY-MM-DDTHH:MMZ → YYYY-MM-DDTHH:MMZ` over a duration line `N sessions · Mh in position` |
+| Price range | `<entry> → <exit>` |
+| P/L | signed percent, semantic-coloured, with a `price <±X.XX%>` sub-line. For open trades, replaces the sub-line with a `STILL OPEN` tag |
+| Chevron | rotates 180° when expanded |
 
-When the exit time matches no Scenario trigger (forced close — stop-loss, take-profit, or end-of-series), the trade block omits its exit event block; the metadata dl already documents the exit timestamp and price. When the trade is the still-open position at the end of the series, the block has no exit event and the header shows `still open at end of series` in place of an exit time and PnL.
+Directly under the summary, a compact monospace **conditions row** lists the entry Scenario's When/And step expressions and the exit Scenario's, separated by `→`. Each step is followed by a green `✓` (every step holds at trigger time by construction). For forced-close exits the exit term shows `stop_loss / take_profit`; for open trades it shows `still open at window end`.
 
-The still-open position appears as the **last** trade block in the chronological list, after all closed trades. Trade ordinals are continuous: closed trades are #1 … #N and the open one is #N+1.
+#### Expanded body
 
-### 7.4 Trailing section: full trade list and equity curve
+Per-trade stats grid (6 columns): **Entry · Exit · Hold · P/L · MFE · MAE**. Hold is rendered as `N × <tf> bars`. **MFE** (maximum favourable excursion) and **MAE** (maximum adverse excursion) are computed at report generation time by walking the primary bars within the trade window:
+- LONG: `MFE = max((bar.high − entry) / entry)`, `MAE = min((bar.low − entry) / entry)`
+- SHORT: `MFE = max((entry − bar.low) / entry)`, `MAE = min((entry − bar.high) / entry)`
 
-After the per-Scenario boxes, the report includes:
+Both rendered as signed percent, MFE in semantic green, MAE in semantic red, P/L semantic.
 
-- The full equity curve as a chart (`BacktestResult.equityCurve`)
-- The full drawdown curve derived from the equity curve
-- A tabular trade list with `entryTime`, `exitTime`, `direction`, `entryPrice`, `exitPrice`, `pnl_pct` for every closed trade (`BacktestResult.trades`)
-- A summary of diagnostic counters (`BacktestDiagnostics`)
+Below the stats, a scenario row spells out the full entry and exit Scenario names. For open trades the exit name is `still open`; for forced-close exits it is `stop_loss / take_profit` in monospace.
+
+Below the scenario row come **one or two chart frames**:
+
+- **Price · primary** — the primary-TF chart over the window `[entry − max(P × 1.5, 30) bars, exit + 10 bars]` where `P` is the largest indicator period referenced by the entry / exit Scenarios on the primary timeframe. Frame header lists the chart contents (HA candles + main-pane overlays + RSI sub-pane when applicable). The chart image itself is produced by heerwisch-jfreechart and contains BOTH the main pane (HA candles + SMA / EMA overlays) AND any sub-pane indicators (RSI, ATR, MACD, …) in a single image with a shared X axis — `Indicator.RSI` is constructed with `RsiVisualization.DANGER_ZONES_ON` so the sub-pane already has bounded `[0, 100]` Y axis, semantic threshold lines and shaded danger zones. Entry and exit bars are annotated with `Annotation.EntryExitMarkerAuto`, which auto-positions the glyph outside the bar (below low for entries, above high for exits) per industry convention. The glyph follows the **direction-of-capital-flow matrix**:
+
+  | Trade event   | Scheduled (Scenario-driven) | Forced (stop_loss / take_profit / end-of-series) |
+  |---|---|---|
+  | `LONG_ENTRY`  (buying)            | `UP_TRIANGLE`   | — (entries are always scheduled) |
+  | `SHORT_ENTRY` (selling)           | `DOWN_TRIANGLE` | — (entries are always scheduled) |
+  | `LONG_EXIT`   (selling to close)  | `DOWN_TRIANGLE` | `ARROW_DOWN` |
+  | `SHORT_EXIT`  (buying to close)   | `UP_TRIANGLE`   | `ARROW_UP`   |
+
+  The held interval is shaded with `Annotation.TimeRangeHighlight(fillColor, opacity = 0.15)` using the **outcome-oriented** `FillColor` variants — `WIN` (green) for winning closed trades, `LOSS` (red) for losing closed trades, `OPEN` (muted grey) for the still-open position. This matches the TradingView Strategy Tester convention: a trader scanning the report should see at a glance which trades won and which lost, and direction is already encoded in the `LONG` / `SHORT` pill on each trade summary row. The direction-oriented `LONG_POSITION` / `SHORT_POSITION` `FillColor` variants are deliberately not used here. The marker colors above remain direction-based (industry standard for entry / exit markers). The frame's footer shows `▲ entry <ts> · in position · Mh · exit <ts> ▼` (or the open-trade variant `mark <ts> · window end`).
+- **Background · higher-TF** (rendered once per distinct higher timeframe referenced by either Scenario): the higher-TF chart over the equivalent window on that timeframe. Frame footer shows the date span and a neutral `higher-timeframe context` label (open trades append `· trade still open`). A direction-aligned trend-filter verdict was deliberately dropped — the generator does not yet evaluate the entry conditions, so it cannot truthfully assert which higher-TF series acted as a trend filter or which way it was checked.
+
+The heerwisch chart images are deliberately produced **as the chart engine renders them today**. The styled frame around the image — header, footer, typography, palette — matches the design system; the chart contents themselves carry JFreeChart's native rendering. This is an accepted visual mismatch.
+
+### 7.6 Footer
+
+`Strategy · Symbol · Bars` left, `wichtelm-app <version> · <date>` right. Below: the full disclaimer covering hypothetical-results / past-performance / look-ahead-bias / no-liability language.
 
 ## 8. Exception hierarchy
 
@@ -666,6 +719,7 @@ The following are explicitly NOT implemented in v1:
 - Boolean and String parameter types
 - Indicators and window aggregates in `And with stop_loss at` / `And with take_profit at` clauses (only constants, parameters, and trade-context variables allowed)
 - Trailing stops (dynamic stop-loss that updates per bar)
+- `price_above_sma(period)`, `price_above_ema(period)`, `price_crosses_sma(period)`, `price_crosses_ema(period)` — flat Tier B variants for nachtkrapp's `PriceVsMARule` / `PriceMACrossRule` (the rule's `MAType` is a non-numeric parameter so it follows the flat-variant naming convention used by `ha_strong_bullish` / `ha_strong_bearish`). Not in the v1.0 catalog; add when a strategy / demo needs them — mechanical addition (4 catalog entries + 4 `NachtkrappMatchIndex` `KeySpec` arms)
 - Diagnostic / visualization-only Scenarios in `.strat` files
 - Tags (`@xxx`), Rule, Scenario Outline, Examples, DocStrings, DataTable Gherkin features
 - Parallel execution of multiple backtests in a single CLI invocation
