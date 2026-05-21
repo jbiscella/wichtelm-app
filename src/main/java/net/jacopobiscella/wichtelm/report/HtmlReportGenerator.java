@@ -68,11 +68,6 @@ import java.util.regex.Pattern;
  * output as a {@code <img>} inside the styled frame. The equity-curve and
  * drawdown panels remain hand-rendered SVG (they predate the JFreeChart
  * integration and match the template aesthetic closely).
- *
- * <p>RSI sub-panes are still emitted as a separate SVG block below the price
- * chart image: heerwisch's native RSI rendering cannot pin the Y-axis to
- * 0–100 or draw the overbought / oversold threshold lines, which is the
- * minimum the strategy author needs to read the signal.
  */
 public final class HtmlReportGenerator {
 
