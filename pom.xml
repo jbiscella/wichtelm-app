@@ -30,7 +30,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>25</maven.compiler.release>
 
-    <hatrack.version>0.48.0-alpha</hatrack.version>
+    <hatrack.version>0.49.0-alpha</hatrack.version>
     <tomlj.version>1.1.1</tomlj.version>
     <cucumber.version>7.34.3</cucumber.version>
     <junit.bom.version>5.14.4</junit.bom.version>
