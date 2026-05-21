@@ -1,11 +1,11 @@
-# wichtelm-app SPX 2020 backtest — the MACD-boolean-cross strategy
-# run against the synthetic SPX 2020 (COVID year) dataset.
+# wichtelm-app TST2020 backtest — the MACD-boolean-cross strategy
+# run against the synthetic TST2020 (COVID year) dataset.
 # Run from the repository root:
-#   wichtelm run demo/spx2020-macd-boolean-backtest.toml
+#   wichtelm run demo/tst2020-macd-boolean-backtest.toml
 # Paths below are resolved relative to this config file (the demo/ directory).
 
 strategy    = "strategies/macd-boolean-cross.strat"
-symbol      = "SPX2020"
+symbol      = "TST2020"
 data_source = "csv"
 
 [date_range]

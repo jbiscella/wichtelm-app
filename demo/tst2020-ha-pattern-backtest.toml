@@ -1,11 +1,11 @@
-# wichtelm-app SPX 2020 backtest — the HA-pattern-reversal-at-RSI-extremes
-# strategy run against the synthetic SPX 2020 (COVID year) dataset.
+# wichtelm-app TST2020 backtest — the HA-pattern-reversal-at-RSI-extremes
+# strategy run against the synthetic TST2020 (COVID year) dataset.
 # Run from the repository root:
-#   wichtelm run demo/spx2020-ha-pattern-backtest.toml
+#   wichtelm run demo/tst2020-ha-pattern-backtest.toml
 # Paths below are resolved relative to this config file (the demo/ directory).
 
 strategy    = "strategies/ha-pattern-reversal.strat"
-symbol      = "SPX2020"
+symbol      = "TST2020"
 data_source = "csv"
 
 [date_range]

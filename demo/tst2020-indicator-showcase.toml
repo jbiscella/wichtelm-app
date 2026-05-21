@@ -5,10 +5,10 @@
 # aggregates).
 #
 # Run from the repository root:
-#   wichtelm run demo/spx2020-indicator-showcase.toml
+#   wichtelm run demo/tst2020-indicator-showcase.toml
 
 strategy    = "strategies/indicator-showcase.strat"
-symbol      = "SPX2020"
+symbol      = "TST2020"
 data_source = "csv"
 
 [date_range]

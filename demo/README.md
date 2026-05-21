@@ -14,14 +14,14 @@ pipeline (build → parse → load CSV → backtest → render report).
 | `strategies/mean-reversion-trend.strat` | The demo strategy (5 scenarios, multi-timeframe, stop-loss) |
 | `data/DEMO_1h.csv` | Hourly OHLC bars — the primary timeframe (2880 bars, 120 days) |
 | `data/DEMO_1d.csv` | Daily OHLC bars — the higher timeframe used by the trend filter (120 bars) |
-| `data/SPX2020_1h.csv` / `data/SPX2020_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2020 — calibrated to the real S&P 500 COVID year (see below) |
-| `data/SPX2022_1h.csv` / `data/SPX2022_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2022 — calibrated to the real S&P 500 bear market (see below) |
+| `data/TST2020_1h.csv` / `data/TST2020_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2020 — synthetic `TST2020` instrument, calibrated to the *shape* of the S&P 500 COVID year (see below) |
+| `data/TST2022_1h.csv` / `data/TST2022_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2022 — synthetic `TST2022` instrument, calibrated to the *shape* of the S&P 500 bear market (see below) |
 | `demo-backtest.toml` | The original per-backtest config (`DEMO` symbol, 120 days) |
-| `spx2020-backtest.toml` / `spx2022-backtest.toml` | Per-backtest configs that run the same strategy against the SPX 2020 / 2022 datasets |
+| `tst2020-backtest.toml` / `tst2022-backtest.toml` | Per-backtest configs that run the same strategy against the TST2020 / TST2022 datasets |
 | `GenerateData.java` | Deterministic generator for the `DEMO` CSV files (single-file Java program) |
 | `run_demo.sh` | One-shot end-to-end run (build, generate, validate, backtest) for the `DEMO` example |
 | `reports/demo-backtest-report.html` | The committed HTML report for the `DEMO` backtest |
-| `reports/spx2020-backtest-report.html` / `reports/spx2022-backtest-report.html` | The committed HTML reports for the SPX 2020 / 2022 backtests |
+| `reports/tst2020-backtest-report.html` / `reports/tst2022-backtest-report.html` | The committed HTML reports for the TST2020 / TST2022 backtests |
 
 ## Running it
 
@@ -175,20 +175,19 @@ shorts late) plus three beating oscillations that drive the RSI across its
 thresholds with varying swing sizes. The 1d series is aggregated from the 1h
 series, so the two timeframes are always mutually consistent.
 
-## Realistic regime datasets (SPX 2020, SPX 2022)
+## Realistic regime datasets (TST2020, TST2022)
 
-`data/SPX2020_1h.csv` and `data/SPX2022_1h.csv` feed the Block 7 demo
+`data/TST2020_1h.csv` and `data/TST2022_1h.csv` feed the Block 7 demo
 backtests. Each is one full calendar year of hourly bars (24/7, no session
 gaps — macroscopic regimes still follow real calendar dates). They are
-committed **synthetic fixtures**: realistic-looking data for offline demo runs,
-not real prices. For real market data, run the demos against EODHD (see
-*Running against real data* above).
+committed **synthetic fixtures** under a deliberately fake instrument name
+(`TST`, not a real ticker): realistic-looking data for offline demo runs, not
+real prices. For real market data, run the demos against EODHD (see *Running
+against real data* above).
 
 The fixtures were produced by a regime-switching GBM + GARCH model (the
 generator no longer lives in the source tree — these are now plain committed
-data files). The model:
-
-The model is **regime-switching geometric Brownian motion** with
+data files). The model is **regime-switching geometric Brownian motion** with
 **GARCH(1,1) volatility clustering** on the log returns:
 
 ```
@@ -214,24 +213,24 @@ research that depends on the actual historical tape. To run a demo against real
 prices instead, point its config at `data_source = "eodhd"` (see *Running
 against real data* above).
 
-## SPX backtest reports
+## TST backtest reports
 
-`spx2020-backtest.toml` and `spx2022-backtest.toml` run the same
+`tst2020-backtest.toml` and `tst2022-backtest.toml` run the same
 `mean-reversion-trend.strat` strategy (RSI mean reversion with a daily
-EMA trend filter) against the two SPX datasets. To produce a fresh
+EMA trend filter) against the two TST datasets. To produce a fresh
 timestamped report:
 
 ```sh
 mvn -q clean package -DskipTests
-java -jar target/wichtelm.jar run demo/spx2020-backtest.toml
-java -jar target/wichtelm.jar run demo/spx2022-backtest.toml
+java -jar target/wichtelm.jar run demo/tst2020-backtest.toml
+java -jar target/wichtelm.jar run demo/tst2022-backtest.toml
 ```
 
-The stable committed copies (`reports/spx2020-backtest-report.html`,
-`reports/spx2022-backtest-report.html`) show how the same strategy
+The stable committed copies (`reports/tst2020-backtest-report.html`,
+`reports/tst2022-backtest-report.html`) show how the same strategy
 behaves under very different market regimes:
 
-| Metric | SPX 2020 (COVID year) | SPX 2022 (bear market) |
+| Metric | TST2020 (COVID-year shape) | TST2022 (bear-market shape) |
 |---|---:|---:|
 | Total return | −4.0% | +2.6% |
 | Trades | 17 | 20 |

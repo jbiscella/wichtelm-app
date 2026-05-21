@@ -1,10 +1,10 @@
 # Ignore timestamped reports produced by re-running the demos;
 # the committed *-report.html files are the stable reference copies.
 demo-backtest_*.html
-spx2020-backtest_*.html
-spx2022-backtest_*.html
-spx2020-macd-backtest_*.html
-spx2020-indicator-showcase_*.html
-spx2020-ha-pattern-backtest_*.html
-spx2020-ha-streak-backtest_*.html
-spx2020-macd-boolean-backtest_*.html
+tst2020-backtest_*.html
+tst2022-backtest_*.html
+tst2020-macd-backtest_*.html
+tst2020-indicator-showcase_*.html
+tst2020-ha-pattern-backtest_*.html
+tst2020-ha-streak-backtest_*.html
+tst2020-macd-boolean-backtest_*.html
