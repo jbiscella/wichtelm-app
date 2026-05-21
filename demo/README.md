@@ -97,6 +97,13 @@ The driver fetches the primary timeframe and any higher-timeframe Background
 series for `symbol` over the date range, and the backtest runs exactly as it
 does on CSV.
 
+> **The committed reports under `reports/` are the CSV runs** (against the
+> synthetic `TST*` / `DEMO` fixtures), because the build/CI environment has no
+> outbound access to `eodhd.com`. To get **real-data reports you must run the
+> EODHD configs yourself** on a machine with network access (the two commands
+> above), then commit the generated HTML from `reports/` if you want them in
+> the repo. Nothing in the CSV pipeline changes — only the data behind it.
+
 ### Snapshotting EODHD data to a committed CSV (optional)
 
 To make a live dataset reproducible offline, capture it once with `curl`
