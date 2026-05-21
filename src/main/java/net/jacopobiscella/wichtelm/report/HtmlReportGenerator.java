@@ -1,6 +1,7 @@
 package net.jacopobiscella.wichtelm.report;
 
 import net.jacopobiscella.wichtelm.error.ReportGenerationException;
+import net.jacopobiscella.wichtelm.runtime.ExpressionEvaluator;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
@@ -23,6 +24,7 @@ import org.hatrack.heerwisch.api.spec.FillColor;
 import org.hatrack.heerwisch.api.spec.GlyphStyle;
 import org.hatrack.heerwisch.api.spec.Indicator;
 import org.hatrack.heerwisch.api.spec.LayoutSpec;
+import org.hatrack.heerwisch.api.spec.LevelStyle;
 import org.hatrack.heerwisch.api.spec.MarkerDirection;
 import org.hatrack.heerwisch.api.spec.Pane;
 import org.hatrack.heerwisch.jfreechart.JFreeChartRenderer;
@@ -979,6 +981,27 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 builder.addAnnotation(new Annotation.TimeRangeHighlight(
                         rangeStart, rangeEnd, fill, new BigDecimal("0.15")));
             }
+            // Entry / stop_loss / take_profit reference lines on the PRIMARY pane
+            // only (the higher-TF chart is context, not a trade reference). Stop
+            // and take are evaluated at the trade's entry price from the entry
+            // scenario's snapshotted expressions (semantic colors: 0.49+).
+            if (isPrimary && entryScenario != null) {
+                builder.addAnnotation(new Annotation.HorizontalLevel(
+                        entryPrice, "Entry " + formatPrice(entryPrice),
+                        LevelStyle.DASHED, Optional.of(FillColor.NEUTRAL)));
+                entryScenario.stopLossExpression().ifPresent(expr -> {
+                    BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
+                    builder.addAnnotation(new Annotation.HorizontalLevel(
+                            p, "Stop " + formatPrice(p),
+                            LevelStyle.DASHED, Optional.of(FillColor.LOSS)));
+                });
+                entryScenario.takeProfitExpression().ifPresent(expr -> {
+                    BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
+                    builder.addAnnotation(new Annotation.HorizontalLevel(
+                            p, "Take " + formatPrice(p),
+                            LevelStyle.DASHED, Optional.of(FillColor.WIN)));
+                });
+            }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
             return "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
@@ -987,6 +1010,38 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             throw new ReportGenerationException(
                     "chart rendering failed for timeframe " + timeframeLabel, e);
         }
+    }
+
+    /** Indicator source for stop/take expressions; rule P16 forbids functions there. */
+    private static final ExpressionEvaluator.IndicatorSource NO_INDICATORS = (name, args) -> {
+        throw new ReportGenerationException(
+                "stop_loss/take_profit may not reference indicators: " + name);
+    };
+
+    /**
+     * Evaluates a stop_loss / take_profit expression at the trade's entry price,
+     * mirroring {@code WichtelmSignalGenerator.evaluateProtective}: only
+     * {@code entry_price}, {@code position_size} and declared parameters are
+     * resolvable (rule P16). An unresolvable identifier throws — the report
+     * should surface it, not guess a level.
+     */
+    private BigDecimal evaluateLevel(String expression, BigDecimal entryPrice,
+                                     BigDecimal positionSize, ReportData data) {
+        ExpressionEvaluator.Values values = name -> switch (name) {
+            case "entry_price" -> entryPrice;
+            case "position_size" -> positionSize;
+            default -> {
+                BigDecimal parameter = data.parameters().get(name);
+                if (parameter == null) {
+                    throw new ReportGenerationException(
+                            "stop_loss/take_profit references unresolvable identifier '"
+                                    + name + "' at report time");
+                }
+                yield parameter;
+            }
+        };
+        return new ExpressionEvaluator(data.strategy().featureName(), Instant.EPOCH, 0)
+                .arithmetic(expression, new ExpressionEvaluator.Scope(values, NO_INDICATORS));
     }
 
     private String describeChartIndicators(String timeframe, int barCount, ReportData data) {
