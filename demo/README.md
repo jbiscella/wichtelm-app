@@ -18,8 +18,6 @@ pipeline (build → parse → load CSV → backtest → render report).
 | `data/SPX2022_1h.csv` / `data/SPX2022_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2022 — calibrated to the real S&P 500 bear market (see below) |
 | `demo-backtest.toml` | The original per-backtest config (`DEMO` symbol, 120 days) |
 | `spx2020-backtest.toml` / `spx2022-backtest.toml` | Per-backtest configs that run the same strategy against the SPX 2020 / 2022 datasets |
-| `data-sources.toml` | Manifest of real-data datasets to fetch from EODHD (see *Real market data* below) |
-| [`DemoDataDownloader`](../src/main/java/net/jacopobiscella/wichtelm/demo/DemoDataDownloader.java) | CLI that downloads the `data-sources.toml` datasets from EODHD into `data/` |
 | `GenerateData.java` | Deterministic generator for the `DEMO` CSV files (single-file Java program) |
 | [`SyntheticDataGenerator`](../src/main/java/net/jacopobiscella/wichtelm/demo/SyntheticDataGenerator.java) | Regime-switching GBM + GARCH generator for the SPX 2020 / 2022 hourly datasets |
 | [`DailyAggregator`](../src/main/java/net/jacopobiscella/wichtelm/demo/DailyAggregator.java) | Aggregates a 1h CSV into the matching 1d series (used to produce `SPX2020_1d.csv` / `SPX2022_1d.csv`) |
@@ -49,126 +47,90 @@ Each run writes a new timestamped HTML file under `demo/reports/`
 `reports/demo-backtest-report.html` is one such run, renamed to a stable
 path so it can be linked to.
 
-## Real market data via EODHD (`DemoDataDownloader`)
+## Running against real data (EODHD)
 
-The committed `data/*.csv` files are currently **synthetic** (see
-*Synthetic data* below). They are being migrated to **real intraday data
-fetched from [EODHD](https://eodhd.com/)** via the
-[`DemoDataDownloader`](../src/main/java/net/jacopobiscella/wichtelm/demo/DemoDataDownloader.java)
-CLI, which downloads OHLC bars through the `frau-holle-eodhd` driver and
-writes them into `data/` in the canonical
-`time,open,high,low,close,volume` schema the loader already reads.
+A demo is a self-contained, reproducible rehearsal. Every demo can run **two
+ways**, and both are driven entirely by the `wichtelm` CLI — there is no
+bespoke demo tooling:
 
-The dataset manifest is [`data-sources.toml`](data-sources.toml). Fetch all
-entries with:
+- **`data_source = "csv"`** — offline, against the committed `data/*.csv`
+  files. This is what the configs in this folder use today, so the demos run
+  with zero network and zero credentials.
+- **`data_source = "eodhd"`** — live, against real market data through the
+  `frau-holle-eodhd` driver the app already ships. No download step, no
+  intermediate file: the driver fetches the bars at backtest time.
 
-```sh
-mvn -q exec:java \
-  -Dexec.mainClass=net.jacopobiscella.wichtelm.demo.DemoDataDownloader \
-  -Dexec.args="demo/data-sources.toml"
-```
+### Live EODHD run
 
-Each `[[dataset]]` writes `data/{symbol}_{timeframe}.csv`. An existing CSV is
-left untouched unless its entry sets `refetch = true`. A failed fetch (network
-error, unknown ticker) is logged and skipped; the batch continues.
+The app reads the EODHD API token from an environment variable named by
+`[eodhd].api_token_env`; the token itself never lives in the config. EODHD's
+public free token is the literal string `demo`, which serves a fixed set of
+tickers — `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`, `BTC-USD.CC`,
+`EURUSD.FOREX` — without a subscription.
 
-**Token.** The downloader uses EODHD's public free token (`api_token=demo`),
-hardcoded — no secret, no payment. The demo token covers a fixed set of
-tickers: `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`, `BTC-USD.CC`,
-`EURUSD.FOREX`. The demos use `AAPL.US`, `TSLA.US`, and `VTI.US`.
-
-**Network requirement.** EODHD must be reachable from wherever the downloader
-runs. In a sandboxed environment with an outbound allowlist, `eodhd.com` has
-to be on it; otherwise every fetch returns "Host not in allowlist" (surfaced
-as HTTP 403) and no data is written. This is why the CSV migration is staged:
-the downloader, manifest, and dependency bump land first, and the actual fetch
-plus report regeneration happens in an environment with EODHD access.
-
-**Raw-data limitation.** Intraday data from EODHD (and most providers) is
-*raw* — not adjusted for stock splits or dividends. This is the
-industry-standard pattern for intraday endpoints. The periods in
-`data-sources.toml` are chosen to avoid corporate-action discontinuities
-(AAPL's last split was Aug 2020, 4:1; TSLA's was Aug 2022, 3:1). A single-name
-backtest crossing a split date would produce meaningless results. Workarounds:
-use a broad ETF (`VTI`), forex/crypto, or windows that don't cross a split —
-which is what the manifest does.
-
-**Ticker selection criteria.** Tickers are limited to those the free demo
-token serves. Within that set: `AAPL.US` (liquid large-cap, clean trends) and
-`TSLA.US` (high volatility, frequent reversals — good for the HA/MACD pattern
-demos) for single-name behaviour, and `VTI.US` (total-market ETF, naturally
-split-adjusted and corporate-action-light) for the mean-reversion demos that
-want a calmer, broad-market series.
-
-### Using the downloader
-
-`DemoDataDownloader` is a small reusable CLI: give it a TOML manifest of
-datasets and it fetches each from EODHD into a wichtelm-app CSV. Use it to
-refresh the demo data, or to pull data for your own backtests.
-
-**Prerequisites:** JDK 25, Maven, and outbound access to `eodhd.com`. (The
-Claude Code web sandbox blocks it — its outbound allowlist only covers Maven
-Central and GitHub — so the fetch has to run somewhere with normal network.)
-No API key or secret is required; the free `demo` token is hardcoded.
-
-**1 — Describe what to fetch.** Each `[[dataset]]` entry in the manifest is one
-CSV. See [`data-sources.toml`](data-sources.toml) for the demo set; add your
-own the same way:
+Point a config at EODHD by setting `data_source = "eodhd"`, a real `symbol`,
+and the token env var:
 
 ```toml
-[[dataset]]
-symbol = "AAPL.US"        # any ticker the demo token serves
-timeframe = "1h"          # any Timeframe wire value, e.g. 1h, 1d
-from = "2024-01-01"       # inclusive ISO date
-to = "2024-03-31"         # inclusive ISO date
-description = "free text" # ignored by the tool, documents the entry
-# refetch = true          # optional; re-download even if the CSV exists
-```
-
-**2 — Run it.** From the repository root, pointing at any manifest:
-
-```sh
-mvn -q exec:java \
-  -Dexec.mainClass=net.jacopobiscella.wichtelm.demo.DemoDataDownloader \
-  -Dexec.args="demo/data-sources.toml"
-```
-
-It writes one `data/{symbol}_{timeframe}.csv` per entry (e.g.
-`AAPL.US_1h.csv`) and logs `OK`/`WARN`/`FAIL` with the bar count and time
-range for each. Existing files are left untouched unless the entry sets
-`refetch = true`. A failed entry (network error, unknown ticker) is logged and
-skipped; the batch continues. If everything `FAIL`s with a 403 / "Host not in
-allowlist", the network can't reach EODHD.
-
-**3 — Verify the output.** Confirm non-empty files and plausible prices:
-
-```sh
-for f in demo/data/*.csv; do
-  echo "$f: $(($(wc -l < "$f") - 1)) bars"; sed -n '2p' "$f"
-done
-```
-
-A 1h file spans a few thousand bars per multi-month window; a 1d file a few
-hundred per year. Prices should match the instrument (e.g. AAPL ~$150–$260,
-TSLA ~$140–$430, VTI ~$200–$300 over recent windows).
-
-**4 — Point a backtest at the CSV.** The CSV is in the canonical
-`time,open,high,low,close,volume` schema the loader already reads, so any demo
-or your own config consumes it through the standard CSV data source:
-
-```toml
+strategy    = "strategies/mean-reversion-trend.strat"
 symbol      = "AAPL.US"
-data_source = "csv"
+data_source = "eodhd"
 
 [date_range]
 from = 2024-01-01
-to   = 2024-03-31   # any window within the fetched range
+to   = 2024-03-31
 
-[csv]
-file = "data/{symbol}_{timeframe}.csv"   # resolves to data/AAPL.US_1h.csv
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+
+[eodhd]
+api_token_env = "EODHD_API_TOKEN"
 ```
 
-Then `java -jar target/wichtelm.jar run <config>.toml` as usual.
+Then run it from the repository root:
+
+```sh
+export EODHD_API_TOKEN=demo          # free public token; or your own key
+java -jar target/wichtelm.jar run demo/<your-eodhd-config>.toml
+```
+
+The driver fetches the primary timeframe and any higher-timeframe Background
+series for `symbol` over the date range, and the backtest runs exactly as it
+does on CSV.
+
+### Snapshotting EODHD data to a committed CSV (optional)
+
+To make a live dataset reproducible offline, capture it once with `curl`
+against EODHD's CSV endpoint and reshape it to the loader's
+`time,open,high,low,close,volume` schema — still just the command line, no app
+code:
+
+```sh
+# 1h intraday, e.g. AAPL.US over Q1 2024 (Unix-second from/to)
+curl -s "https://eodhd.com/api/intraday/AAPL.US?api_token=demo&interval=1h&from=1704067200&to=1711843200&fmt=csv" \
+  | tail -n +2 \
+  | awk -F, 'BEGIN{print "time,open,high,low,close,volume"} {gsub(" ","T",$3); print $3"Z,"$4","$5","$6","$7","$8}' \
+  > demo/data/AAPL.US_1h.csv
+```
+
+(EODHD's intraday CSV columns are `Timestamp,Gmtoffset,Datetime,Open,High,Low,Close,Volume`;
+the `awk` keeps `Datetime`→`time` plus OHLCV. For the daily `eod` endpoint the
+date column is already `YYYY-MM-DD` — append `T00:00:00Z`.) Then a config with
+`data_source = "csv"` and `file = "data/{symbol}_{timeframe}.csv"` reads it
+unchanged.
+
+### Notes on real data
+
+- **Raw, not adjusted.** Intraday data from EODHD (and most providers) is not
+  adjusted for splits or dividends — standard for intraday endpoints. Choose
+  windows that don't cross a corporate action (AAPL's last split was Aug 2020
+  4:1; TSLA's was Aug 2022 3:1), or use a broad ETF (`VTI`), forex, or crypto.
+  A single-name backtest crossing a split would produce meaningless results.
+- **Network.** A live EODHD run needs `eodhd.com` reachable. In a sandboxed
+  environment with an outbound allowlist it must be on the list; otherwise the
+  fetch fails with "Host not in allowlist" (HTTP 403). The CSV path needs no
+  network.
 
 ## The strategy
 

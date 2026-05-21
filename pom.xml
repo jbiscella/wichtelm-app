@@ -38,7 +38,6 @@
     <compiler.plugin.version>3.15.0</compiler.plugin.version>
     <surefire.plugin.version>3.5.5</surefire.plugin.version>
     <shade.plugin.version>3.6.2</shade.plugin.version>
-    <exec.plugin.version>3.5.0</exec.plugin.version>
     <antrun.plugin.version>3.2.0</antrun.plugin.version>
     <license.plugin.version>2.5.0</license.plugin.version>
     <dependency.plugin.version>3.8.1</dependency.plugin.version>
@@ -288,14 +287,6 @@
             </configuration>
           </execution>
         </executions>
-      </plugin>
-
-      <!-- Runs the demo data tools (e.g. DemoDataDownloader) against the
-           compiled classpath. Invoke with -Dexec.mainClass and -Dexec.args. -->
-      <plugin>
-        <groupId>org.codehaus.mojo</groupId>
-        <artifactId>exec-maven-plugin</artifactId>
-        <version>${exec.plugin.version}</version>
       </plugin>
     </plugins>
   </build>
