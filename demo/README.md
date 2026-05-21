@@ -97,6 +97,25 @@ The driver fetches the primary timeframe and any higher-timeframe Background
 series for `symbol` over the date range, and the backtest runs exactly as it
 does on CSV.
 
+**Ready-to-run EODHD configs.** One per demo strategy is committed, already
+pointing at a real ticker and a split-free window (run any of them with the
+`demo` token):
+
+| Config | Strategy | Ticker · window |
+|---|---|---|
+| `eodhd-aapl-intro.toml` | mean reversion + daily trend | AAPL.US · Q1 2024 |
+| `eodhd-vti-mean-reversion.toml` | mean reversion + daily trend | VTI.US · Q2–Q3 2023 |
+| `eodhd-aapl-indicator-showcase.toml` | indicator showcase | AAPL.US · H2 2023 |
+| `eodhd-tsla-macd-breakout.toml` | MACD breakout | TSLA.US · Q4 2024 |
+| `eodhd-tsla-ha-pattern.toml` | HA pattern reversal at RSI extremes | TSLA.US · H1 2023 |
+| `eodhd-aapl-macd-boolean.toml` | MACD boolean cross | AAPL.US · 2024 |
+| `eodhd-tsla-ha-streak.toml` | pure HA pattern reversal after streak | TSLA.US · H2 2023 |
+
+```sh
+export EODHD_API_TOKEN=demo
+java -jar target/wichtelm.jar run demo/eodhd-aapl-macd-boolean.toml
+```
+
 > **The committed reports under `reports/` are the CSV runs** (against the
 > synthetic `TST*` / `DEMO` fixtures), because the build/CI environment has no
 > outbound access to `eodhd.com`. To get **real-data reports you must run the
