@@ -19,8 +19,6 @@ pipeline (build → parse → load CSV → backtest → render report).
 | `demo-backtest.toml` | The original per-backtest config (`DEMO` symbol, 120 days) |
 | `spx2020-backtest.toml` / `spx2022-backtest.toml` | Per-backtest configs that run the same strategy against the SPX 2020 / 2022 datasets |
 | `GenerateData.java` | Deterministic generator for the `DEMO` CSV files (single-file Java program) |
-| [`SyntheticDataGenerator`](../src/main/java/net/jacopobiscella/wichtelm/demo/SyntheticDataGenerator.java) | Regime-switching GBM + GARCH generator for the SPX 2020 / 2022 hourly datasets |
-| [`DailyAggregator`](../src/main/java/net/jacopobiscella/wichtelm/demo/DailyAggregator.java) | Aggregates a 1h CSV into the matching 1d series (used to produce `SPX2020_1d.csv` / `SPX2022_1d.csv`) |
 | `run_demo.sh` | One-shot end-to-end run (build, generate, validate, backtest) for the `DEMO` example |
 | `reports/demo-backtest-report.html` | The committed HTML report for the `DEMO` backtest |
 | `reports/spx2020-backtest-report.html` / `reports/spx2022-backtest-report.html` | The committed HTML reports for the SPX 2020 / 2022 backtests |
@@ -181,8 +179,14 @@ series, so the two timeframes are always mutually consistent.
 
 `data/SPX2020_1h.csv` and `data/SPX2022_1h.csv` feed the Block 7 demo
 backtests. Each is one full calendar year of hourly bars (24/7, no session
-gaps — macroscopic regimes still follow real calendar dates), produced by
-[`SyntheticDataGenerator`](../src/main/java/net/jacopobiscella/wichtelm/demo/SyntheticDataGenerator.java).
+gaps — macroscopic regimes still follow real calendar dates). They are
+committed **synthetic fixtures**: realistic-looking data for offline demo runs,
+not real prices. For real market data, run the demos against EODHD (see
+*Running against real data* above).
+
+The fixtures were produced by a regime-switching GBM + GARCH model (the
+generator no longer lives in the source tree — these are now plain committed
+data files). The model:
 
 The model is **regime-switching geometric Brownian motion** with
 **GARCH(1,1) volatility clustering** on the log returns:
@@ -205,21 +209,10 @@ episode the regime represents:
 Macro statistics (drawdowns, regime volatilities, year-end levels) come in
 within a handful of percentage points of the real S&P 500 figures;
 individual bars are pure simulation. These are realistic-looking synthetic
-datasets, not real prices — they exist for demo backtests, not for any
-research that depends on the actual historical tape.
-
-The generator is deterministic in its seed, so re-running produces
-byte-identical CSVs. To regenerate the hourly files and derive the
-matching 1d series:
-
-```sh
-mvn -q compile
-java -cp target/classes net.jacopobiscella.wichtelm.demo.SyntheticDataGenerator
-java -cp target/classes net.jacopobiscella.wichtelm.demo.DailyAggregator \
-    demo/data/SPX2020_1h.csv demo/data/SPX2020_1d.csv
-java -cp target/classes net.jacopobiscella.wichtelm.demo.DailyAggregator \
-    demo/data/SPX2022_1h.csv demo/data/SPX2022_1d.csv
-```
+datasets, not real prices — they exist for offline demo backtests, not for any
+research that depends on the actual historical tape. To run a demo against real
+prices instead, point its config at `data_source = "eodhd"` (see *Running
+against real data* above).
 
 ## SPX backtest reports
 
