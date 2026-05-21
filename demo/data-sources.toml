@@ -1,0 +1,84 @@
+# Demo data sources for wichtelm-app demos.
+# Token = "demo" (EODHD public free token).
+# Tickers limited to those the demo token covers: AAPL.US,
+# TSLA.US, VTI.US, AMZN.US, BTC-USD.CC, EURUSD.FOREX.
+# All periods chosen to avoid stock split events (AAPL last
+# split Aug 2020 4:1; TSLA last split Aug 2022 3:1).
+#
+# Fetch with:
+#   mvn -q exec:java \
+#     -Dexec.mainClass=net.jacopobiscella.wichtelm.demo.DemoDataDownloader \
+#     -Dexec.args="demo/data-sources.toml"
+#
+# Each entry writes demo/data/{symbol}_{timeframe}.csv. Existing files
+# are left untouched unless the entry sets refetch = true.
+
+[[dataset]]
+symbol = "AAPL.US"
+timeframe = "1h"
+from = "2024-01-01"
+to = "2024-12-31"
+description = "AAPL 1h full-year 2024 — intro demo, MACD boolean cross (frequent crosses)"
+
+[[dataset]]
+symbol = "AAPL.US"
+timeframe = "1d"
+from = "2023-01-01"
+to = "2025-01-01"
+description = "Higher-TF context for AAPL 1h demos"
+
+[[dataset]]
+symbol = "AAPL.US"
+timeframe = "1h"
+from = "2023-07-01"
+to = "2023-12-31"
+description = "AAPL 1h H2 2023 — indicator showcase, trend with pullbacks"
+
+[[dataset]]
+symbol = "VTI.US"
+timeframe = "1h"
+from = "2023-04-01"
+to = "2023-09-30"
+description = "VTI 1h Q2-Q3 2023 — mean reversion, broad market consolidation"
+
+[[dataset]]
+symbol = "VTI.US"
+timeframe = "1h"
+from = "2024-10-01"
+to = "2024-12-31"
+description = "VTI 1h Q4 2024 — mean reversion alt, post-election lateral"
+
+[[dataset]]
+symbol = "VTI.US"
+timeframe = "1d"
+from = "2022-01-01"
+to = "2025-01-01"
+description = "Higher-TF context for VTI 1h demos"
+
+[[dataset]]
+symbol = "TSLA.US"
+timeframe = "1h"
+from = "2024-10-01"
+to = "2024-12-31"
+description = "TSLA 1h Q4 2024 — MACD breakout, post-election volatile momentum"
+
+[[dataset]]
+symbol = "TSLA.US"
+timeframe = "1h"
+from = "2023-01-01"
+to = "2023-06-30"
+description = "TSLA 1h H1 2023 — HA pattern reversal, multiple reversals"
+
+[[dataset]]
+symbol = "TSLA.US"
+timeframe = "1h"
+from = "2023-07-01"
+to = "2023-12-31"
+description = "TSLA 1h H2 2023 — HA streak reversal, sustained streaks"
+
+[[dataset]]
+symbol = "TSLA.US"
+timeframe = "1d"
+from = "2022-09-01"
+to = "2025-01-01"
+description = "Higher-TF context for TSLA 1h demos (post Aug 2022 3:1 split)"

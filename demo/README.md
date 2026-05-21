@@ -47,6 +47,57 @@ Each run writes a new timestamped HTML file under `demo/reports/`
 `reports/demo-backtest-report.html` is one such run, renamed to a stable
 path so it can be linked to.
 
+## Real market data via EODHD (`DemoDataDownloader`)
+
+The committed `data/*.csv` files are currently **synthetic** (see
+*Synthetic data* below). They are being migrated to **real intraday data
+fetched from [EODHD](https://eodhd.com/)** via the
+[`DemoDataDownloader`](../src/main/java/net/jacopobiscella/wichtelm/demo/DemoDataDownloader.java)
+CLI, which downloads OHLC bars through the `frau-holle-eodhd` driver and
+writes them into `data/` in the canonical
+`time,open,high,low,close,volume` schema the loader already reads.
+
+The dataset manifest is [`data-sources.toml`](data-sources.toml). Fetch all
+entries with:
+
+```sh
+mvn -q exec:java \
+  -Dexec.mainClass=net.jacopobiscella.wichtelm.demo.DemoDataDownloader \
+  -Dexec.args="demo/data-sources.toml"
+```
+
+Each `[[dataset]]` writes `data/{symbol}_{timeframe}.csv`. An existing CSV is
+left untouched unless its entry sets `refetch = true`. A failed fetch (network
+error, unknown ticker) is logged and skipped; the batch continues.
+
+**Token.** The downloader uses EODHD's public free token (`api_token=demo`),
+hardcoded — no secret, no payment. The demo token covers a fixed set of
+tickers: `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`, `BTC-USD.CC`,
+`EURUSD.FOREX`. The demos use `AAPL.US`, `TSLA.US`, and `VTI.US`.
+
+**Network requirement.** EODHD must be reachable from wherever the downloader
+runs. In a sandboxed environment with an outbound allowlist, `eodhd.com` has
+to be on it; otherwise every fetch returns "Host not in allowlist" (surfaced
+as HTTP 403) and no data is written. This is why the CSV migration is staged:
+the downloader, manifest, and dependency bump land first, and the actual fetch
+plus report regeneration happens in an environment with EODHD access.
+
+**Raw-data limitation.** Intraday data from EODHD (and most providers) is
+*raw* — not adjusted for stock splits or dividends. This is the
+industry-standard pattern for intraday endpoints. The periods in
+`data-sources.toml` are chosen to avoid corporate-action discontinuities
+(AAPL's last split was Aug 2020, 4:1; TSLA's was Aug 2022, 3:1). A single-name
+backtest crossing a split date would produce meaningless results. Workarounds:
+use a broad ETF (`VTI`), forex/crypto, or windows that don't cross a split —
+which is what the manifest does.
+
+**Ticker selection criteria.** Tickers are limited to those the free demo
+token serves. Within that set: `AAPL.US` (liquid large-cap, clean trends) and
+`TSLA.US` (high volatility, frequent reversals — good for the HA/MACD pattern
+demos) for single-name behaviour, and `VTI.US` (total-market ETF, naturally
+split-adjusted and corporate-action-light) for the mean-reversion demos that
+want a calmer, broad-market series.
+
 ## The strategy
 
 `mean-reversion-trend.strat` is a mean-reversion strategy with a
