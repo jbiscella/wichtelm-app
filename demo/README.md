@@ -18,6 +18,8 @@ pipeline (build → parse → load CSV → backtest → render report).
 | `data/SPX2022_1h.csv` / `data/SPX2022_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2022 — calibrated to the real S&P 500 bear market (see below) |
 | `demo-backtest.toml` | The original per-backtest config (`DEMO` symbol, 120 days) |
 | `spx2020-backtest.toml` / `spx2022-backtest.toml` | Per-backtest configs that run the same strategy against the SPX 2020 / 2022 datasets |
+| `data-sources.toml` | Manifest of real-data datasets to fetch from EODHD (see *Real market data* below) |
+| [`DemoDataDownloader`](../src/main/java/net/jacopobiscella/wichtelm/demo/DemoDataDownloader.java) | CLI that downloads the `data-sources.toml` datasets from EODHD into `data/` |
 | `GenerateData.java` | Deterministic generator for the `DEMO` CSV files (single-file Java program) |
 | [`SyntheticDataGenerator`](../src/main/java/net/jacopobiscella/wichtelm/demo/SyntheticDataGenerator.java) | Regime-switching GBM + GARCH generator for the SPX 2020 / 2022 hourly datasets |
 | [`DailyAggregator`](../src/main/java/net/jacopobiscella/wichtelm/demo/DailyAggregator.java) | Aggregates a 1h CSV into the matching 1d series (used to produce `SPX2020_1d.csv` / `SPX2022_1d.csv`) |
@@ -97,6 +99,96 @@ token serves. Within that set: `AAPL.US` (liquid large-cap, clean trends) and
 demos) for single-name behaviour, and `VTI.US` (total-market ETF, naturally
 split-adjusted and corporate-action-light) for the mean-reversion demos that
 want a calmer, broad-market series.
+
+### Completing the migration locally (step by step)
+
+The fetch needs `eodhd.com` reachable, which the Claude Code web sandbox
+blocks (its outbound allowlist only covers Maven Central and GitHub). Run
+these steps on a local machine — or any environment with normal outbound
+network — to swap the synthetic CSVs for real EODHD data. No API key or
+secret is required; the free `demo` token is hardcoded.
+
+**Prerequisites:** JDK 25, Maven, and outbound access to `eodhd.com`.
+
+**1 — Fetch the data.** From the repository root:
+
+```sh
+mvn -q exec:java \
+  -Dexec.mainClass=net.jacopobiscella.wichtelm.demo.DemoDataDownloader \
+  -Dexec.args="demo/data-sources.toml"
+```
+
+This writes one CSV per `[[dataset]]` into `demo/data/` (e.g.
+`AAPL.US_1h.csv`, `TSLA.US_1d.csv`). Each line logs `OK`/`WARN`/`FAIL` with
+the bar count and time range. If everything `FAIL`s with a 403 / "Host not in
+allowlist", the network still can't reach EODHD.
+
+**2 — Sanity-check the CSVs.** Confirm non-empty files and plausible prices:
+
+```sh
+for f in demo/data/AAPL.US_*.csv demo/data/TSLA.US_*.csv demo/data/VTI.US_*.csv; do
+  echo "$f: $(($(wc -l < "$f") - 1)) bars"; sed -n '2p' "$f"
+done
+```
+
+Rough expected ranges for the manifest windows: AAPL ~$150–$260, TSLA
+~$140–$430, VTI ~$200–$300. 1h files should have a few thousand bars per
+window; 1d files a few hundred.
+
+**3 — Repoint each demo config** (`demo/*.toml`) to its real ticker and
+window. Change `symbol`, the `[date_range]` `from`/`to`, and the top comment.
+The `[csv].file = "data/{symbol}_{timeframe}.csv"` pattern already resolves to
+the new files once `symbol` is correct. Suggested mapping:
+
+| Config file | New `symbol` | New 1h window |
+|---|---|---|
+| `demo-backtest.toml` | `AAPL.US` | 2024-01-01 → 2024-03-31 |
+| `spx2020-backtest.toml` | `VTI.US` | 2023-04-01 → 2023-09-30 |
+| `spx2020-indicator-showcase.toml` | `AAPL.US` | 2023-07-01 → 2023-12-31 |
+| `spx2020-macd-backtest.toml` | `TSLA.US` | 2024-10-01 → 2024-12-31 |
+| `spx2022-backtest.toml` | `VTI.US` | 2024-10-01 → 2024-12-31 |
+| `spx2020-ha-pattern-backtest.toml` | `TSLA.US` | 2023-01-01 → 2023-06-30 |
+| `spx2020-macd-boolean-backtest.toml` *(once PR #32 merges)* | `AAPL.US` | 2024-01-01 → 2024-12-31 |
+| `spx2020-ha-streak-backtest.toml` *(once PR #34 merges)* | `TSLA.US` | 2023-07-01 → 2023-12-31 |
+
+Renaming the files to something self-documenting (e.g.
+`vti-mean-reversion-2023.toml`) is optional but recommended once they no
+longer describe SPX data.
+
+**4 — Regenerate the reports.** Build once, then run each config:
+
+```sh
+mvn -q clean package -DskipTests
+for cfg in demo/*.toml; do
+  [ "$cfg" = demo/data-sources.toml ] && continue
+  java -jar target/wichtelm.jar run "$cfg"
+done
+```
+
+Open the timestamped HTML files under `demo/reports/` and check each has a
+sensible trade count (aim for ≥ 5; ideally 5–20), the correct ticker in the
+header, and intact markers / RSI sub-pane / outcome shading.
+
+**5 — Tune if a demo is too quiet.** If a strategy produces 0–1 trades on its
+real window, relax a *parameter* in that demo's `.toml` (e.g.
+`overbought_threshold` 70 → 65) — do **not** change strategy logic. If results
+look pathological (e.g. an earnings gap blew through a stop for a 50% loss),
+pick a different window or document the event.
+
+**6 — Drop the synthetic data.** Once the real CSVs drive every demo:
+
+```sh
+git rm demo/data/SPX2020_*.csv demo/data/SPX2022_*.csv demo/data/DEMO_*.csv
+git rm demo/GenerateData.java
+```
+
+`SyntheticDataGenerator` / `DailyAggregator` can stay (they're covered by a
+unit test and document the prior approach) or also be removed if you want a
+clean break.
+
+**7 — Commit** the new CSVs, updated configs, regenerated reports, and
+deletions. The build stays green throughout because the CSV loader is
+unchanged — only the data behind it.
 
 ## The strategy
 
