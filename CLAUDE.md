@@ -745,3 +745,16 @@ This CLAUDE.md is the authoritative specification. Claude Code should:
 8. All factual claims in code or comments must be web-verified before being written
 
 The first implementation milestone is the parser (Block 1). Subsequent Blocks build on a working AST.
+
+## 17. Demo data and reports
+
+The `demo/` directory ships runnable examples. Demo market data is **synthetic fixtures**, committed under a deliberately fake instrument name (`TST`, never a real ticker) so it can never be mistaken for real prices: `TST2020` / `TST2022` (calibrated to the *shape* of the S&P 500 2020 COVID-year / 2022 bear-market regimes — macro statistics only, not the actual tape) and the smaller `DEMO` dataset.
+
+Each demo runs two ways, both through the `wichtelm` CLI with no bespoke tooling:
+
+- `data_source = "csv"` — offline, against the committed `demo/data/*.csv` fixtures. Zero network, zero credentials. These are the committed reference reports.
+- `data_source = "eodhd"` — live, against real market data through the `frau-holle-eodhd` driver: set `[eodhd].api_token_env`, export the free EODHD `demo` token, run `wichtelm run`. The free token serves a fixed set — `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`, `BTC-USD.CC`, `EURUSD.FOREX`.
+
+**Raw-data limitation.** Intraday data from EODHD (and most providers) is *raw* — not adjusted for splits or dividends, the industry-standard pattern for intraday endpoints. Demo windows are chosen to avoid corporate-action discontinuities (AAPL's last split was Aug 2020 4:1; TSLA's Aug 2022 3:1). A single-name backtest crossing a split would produce meaningless results; use a broad ETF (`VTI`), forex, crypto, or a split-free window.
+
+See `demo/README.md` for the full runbook (running the CSV demos, building the EODHD reports, and snapshotting EODHD data to a committed CSV).
