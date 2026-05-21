@@ -415,7 +415,8 @@ public final class HtmlReportGenerator {
 
         appendScenarioRow(html, entryHit, exitHit, "closed");
         appendChartFrames(html, data, renderer, trade.entryTime(), trade.exitTime(),
-                entryHit, exitHit, scenarioByName, false, dirClass, isWin);
+                entryHit, exitHit, scenarioByName, false, dirClass, isWin,
+                trade.entryPrice(), trade.quantity());
 
         html.append("</div></details>");
     }
@@ -486,7 +487,8 @@ public final class HtmlReportGenerator {
         appendScenarioRow(html, entryHit, null, "open");
         // Open trade — isWin irrelevant, the renderer will use NEUTRAL fill.
         appendChartFrames(html, data, renderer, open.entryTime(), windowEnd,
-                entryHit, null, scenarioByName, true, dirClass, false);
+                entryHit, null, scenarioByName, true, dirClass, false,
+                open.entryPrice(), open.quantity());
 
         html.append("</div></details>");
     }
@@ -574,7 +576,8 @@ public final class HtmlReportGenerator {
                                     Instant tradeEntry, Instant tradeExit,
                                     TriggerHit entryHit, TriggerHit exitHit,
                                     Map<String, StrategyScenario> scenarioByName,
-                                    boolean openTrade, String dirClass, boolean isWin) {
+                                    boolean openTrade, String dirClass, boolean isWin,
+                                    BigDecimal entryPrice, BigDecimal positionSize) {
         html.append("<div class=\"charts\">");
 
         Set<String> timeframes = collectScenarioTimeframes(entryHit, exitHit, scenarioByName, data);
@@ -607,7 +610,7 @@ public final class HtmlReportGenerator {
                     : snapToVisibleBar(window.bars(), timeframe, isPrimary, tradeExit);
             html.append(renderChartFrame(renderer, window, tf, isPrimary, entryMarker,
                     exitMarker, openTrade, dirClass, isWin, data, scenarioByName, entryHit, exitHit,
-                    tradeEntry, tradeExit));
+                    tradeEntry, tradeExit, entryPrice, positionSize));
         }
 
         html.append("</div>");
@@ -779,7 +782,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                                      ReportData data,
                                      Map<String, StrategyScenario> scenarioByName,
                                      TriggerHit entryHit, TriggerHit exitHit,
-                                     Instant tradeEntry, Instant tradeExit) {
+                                     Instant tradeEntry, Instant tradeExit,
+                                     BigDecimal entryPrice, BigDecimal positionSize) {
         String title = isPrimary ? "Price · primary" : "Background · higher-TF";
         String indicatorLabel = describeChartIndicators(timeframe, window.bars().size(), data);
         String tag = isPrimary ? "trade window + ctx" : "multi-TF context";
@@ -788,8 +792,13 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         // Forced exit = the runtime closed at an explicit price (stop_loss,
         // take_profit, or end-of-series) so no Scenario trigger maps to it.
         boolean exitScheduled = exitHit != null;
+        StrategyScenario entryScenario = entryHit != null
+                ? scenarioByName.get(entryHit.scenarioName()) : null;
+        StrategyScenario exitScenario = exitHit != null
+                ? scenarioByName.get(exitHit.scenarioName()) : null;
         String img = renderHeerwischImage(renderer, window, timeframe, entryMarker, exitMarker,
-                isLong, exitScheduled, openTrade, isWin, data);
+                isLong, exitScheduled, openTrade, isWin, data, isPrimary,
+                entryScenario, exitScenario, entryPrice, positionSize);
         Duration heldInWindow = Duration.between(tradeEntry, tradeExit);
         String heldLabel = formatHoldDuration(Math.max(0L, heldInWindow.toMinutes()));
 
@@ -872,10 +881,19 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                                          String timeframeLabel, Instant entryMarker,
                                          Instant exitMarker, boolean isLong,
                                          boolean exitScheduled, boolean openTrade,
-                                         boolean isWin, ReportData data) {
+                                         boolean isWin, ReportData data, boolean isPrimary,
+                                         StrategyScenario entryScenario,
+                                         StrategyScenario exitScenario,
+                                         BigDecimal entryPrice, BigDecimal positionSize) {
         try {
             ChartSpecBuilder builder = ChartSpec.builder().withSeries(series);
-            int subPaneCount = addIndicatorsForTimeframe(builder, timeframeLabel, series, data);
+            // Tier B primitives plot their underlying indicator on the primary
+            // pane (the boolean is read off the indicator, as TradingView / MT /
+            // NinjaTrader do). Background-series indicators dedupe against these.
+            List<Indicator> tierB = isPrimary
+                    ? tierBIndicators(entryScenario, exitScenario)
+                    : List.of();
+            int subPaneCount = addIndicatorsForTimeframe(builder, timeframeLabel, series, data, tierB);
             // Size the chart by sub-pane count: a fixed 320px split across a main
             // pane plus N stacked sub-panes leaves each sub-pane ~50px — too short
             // for its rotated range-axis title, which then overflows into the
@@ -1011,20 +1029,32 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
     // ─── Indicator dispatch (unchanged from main) ────────────────────────────
 
     private int addIndicatorsForTimeframe(ChartSpecBuilder builder, String timeframeLabel,
-                                            OHLCSeries underlying, ReportData data) {
+                                            OHLCSeries underlying, ReportData data,
+                                            List<Indicator> extraIndicators) {
         Pane[] subPanes = { Pane.SUBPLOT_1, Pane.SUBPLOT_2, Pane.SUBPLOT_3, Pane.SUBPLOT_4,
                 Pane.SUBPLOT_5, Pane.SUBPLOT_6, Pane.SUBPLOT_7, Pane.SUBPLOT_8 };
         int subPaneIdx = 0;
         int bars = underlying.bars().size();
         Set<String> addedKey = new HashSet<>();
+        List<Indicator> indicators = new ArrayList<>();
         for (BackgroundSeries series : seriesForTimeframe(timeframeLabel, data)) {
             Indicator indicator = toIndicator(series.expression(), data.parameters());
-            if (indicator == null || bars < indicator.minBars()) {
+            if (indicator != null) {
+                indicators.add(indicator);
+            }
+        }
+        // Tier B primitives' underlying indicators come after the Background
+        // ones so a strategy that declares both keeps the Background ordering;
+        // the dedup below collapses any overlap.
+        indicators.addAll(extraIndicators);
+        for (Indicator indicator : indicators) {
+            if (bars < indicator.minBars()) {
                 continue;
             }
             // De-dup identical indicators that come from multiple Background
             // series (e.g. macd_line + macd_signal + macd_histogram all map to
-            // the same Indicator.MACD record).
+            // the same Indicator.MACD record) or from a Tier B primitive that
+            // mirrors a declared Background series.
             String key = indicator.toString();
             if (!addedKey.add(key)) {
                 continue;
@@ -1037,6 +1067,44 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             }
         }
         return subPaneIdx;
+    }
+
+    /**
+     * The underlying indicators implied by the Tier B primitives a trade's
+     * entry / exit scenarios reference, so the chart shows the indicator the
+     * boolean is read from (e.g. macd-boolean-cross gets a MACD pane). MACD
+     * primitives → {@code MACD(12,26,9)}; RSI primitives → {@code RSI(14)} with
+     * danger zones; HA primitives need nothing (already on the HA candles).
+     * Periods are the Tier B defaults from CLAUDE.md §3.7.
+     */
+    private List<Indicator> tierBIndicators(StrategyScenario... scenarios) {
+        boolean macd = false;
+        boolean rsi = false;
+        for (StrategyScenario scenario : scenarios) {
+            if (scenario == null) {
+                continue;
+            }
+            for (StrategyStep step : scenario.conditionSteps()) {
+                String t = step.text();
+                if (t.contains("macd_bullish_cross") || t.contains("macd_bearish_cross")
+                        || t.contains("macd_zero_cross_up") || t.contains("macd_zero_cross_down")) {
+                    macd = true;
+                }
+                if (t.contains("rsi_overbought") || t.contains("rsi_oversold")
+                        || t.contains("rsi_crosses_50")) {
+                    rsi = true;
+                }
+            }
+        }
+        List<Indicator> out = new ArrayList<>();
+        if (macd) {
+            out.add(new Indicator.MACD(12, 26, 9, PriceSource.CLOSE));
+        }
+        if (rsi) {
+            out.add(new Indicator.RSI(14, DEFAULT_RSI_OVERBOUGHT, DEFAULT_RSI_OVERSOLD,
+                    PriceSource.CLOSE, Optional.of(Indicator.RsiVisualization.DANGER_ZONES_ON)));
+        }
+        return out;
     }
 
     private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ReportData data) {
