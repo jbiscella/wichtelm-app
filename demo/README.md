@@ -100,17 +100,32 @@ demos) for single-name behaviour, and `VTI.US` (total-market ETF, naturally
 split-adjusted and corporate-action-light) for the mean-reversion demos that
 want a calmer, broad-market series.
 
-### Completing the migration locally (step by step)
+### Using the downloader
 
-The fetch needs `eodhd.com` reachable, which the Claude Code web sandbox
-blocks (its outbound allowlist only covers Maven Central and GitHub). Run
-these steps on a local machine — or any environment with normal outbound
-network — to swap the synthetic CSVs for real EODHD data. No API key or
-secret is required; the free `demo` token is hardcoded.
+`DemoDataDownloader` is a small reusable CLI: give it a TOML manifest of
+datasets and it fetches each from EODHD into a wichtelm-app CSV. Use it to
+refresh the demo data, or to pull data for your own backtests.
 
-**Prerequisites:** JDK 25, Maven, and outbound access to `eodhd.com`.
+**Prerequisites:** JDK 25, Maven, and outbound access to `eodhd.com`. (The
+Claude Code web sandbox blocks it — its outbound allowlist only covers Maven
+Central and GitHub — so the fetch has to run somewhere with normal network.)
+No API key or secret is required; the free `demo` token is hardcoded.
 
-**1 — Fetch the data.** From the repository root:
+**1 — Describe what to fetch.** Each `[[dataset]]` entry in the manifest is one
+CSV. See [`data-sources.toml`](data-sources.toml) for the demo set; add your
+own the same way:
+
+```toml
+[[dataset]]
+symbol = "AAPL.US"        # any ticker the demo token serves
+timeframe = "1h"          # any Timeframe wire value, e.g. 1h, 1d
+from = "2024-01-01"       # inclusive ISO date
+to = "2024-03-31"         # inclusive ISO date
+description = "free text" # ignored by the tool, documents the entry
+# refetch = true          # optional; re-download even if the CSV exists
+```
+
+**2 — Run it.** From the repository root, pointing at any manifest:
 
 ```sh
 mvn -q exec:java \
@@ -118,77 +133,42 @@ mvn -q exec:java \
   -Dexec.args="demo/data-sources.toml"
 ```
 
-This writes one CSV per `[[dataset]]` into `demo/data/` (e.g.
-`AAPL.US_1h.csv`, `TSLA.US_1d.csv`). Each line logs `OK`/`WARN`/`FAIL` with
-the bar count and time range. If everything `FAIL`s with a 403 / "Host not in
-allowlist", the network still can't reach EODHD.
+It writes one `data/{symbol}_{timeframe}.csv` per entry (e.g.
+`AAPL.US_1h.csv`) and logs `OK`/`WARN`/`FAIL` with the bar count and time
+range for each. Existing files are left untouched unless the entry sets
+`refetch = true`. A failed entry (network error, unknown ticker) is logged and
+skipped; the batch continues. If everything `FAIL`s with a 403 / "Host not in
+allowlist", the network can't reach EODHD.
 
-**2 — Sanity-check the CSVs.** Confirm non-empty files and plausible prices:
+**3 — Verify the output.** Confirm non-empty files and plausible prices:
 
 ```sh
-for f in demo/data/AAPL.US_*.csv demo/data/TSLA.US_*.csv demo/data/VTI.US_*.csv; do
+for f in demo/data/*.csv; do
   echo "$f: $(($(wc -l < "$f") - 1)) bars"; sed -n '2p' "$f"
 done
 ```
 
-Rough expected ranges for the manifest windows: AAPL ~$150–$260, TSLA
-~$140–$430, VTI ~$200–$300. 1h files should have a few thousand bars per
-window; 1d files a few hundred.
+A 1h file spans a few thousand bars per multi-month window; a 1d file a few
+hundred per year. Prices should match the instrument (e.g. AAPL ~$150–$260,
+TSLA ~$140–$430, VTI ~$200–$300 over recent windows).
 
-**3 — Repoint each demo config** (`demo/*.toml`) to its real ticker and
-window. Change `symbol`, the `[date_range]` `from`/`to`, and the top comment.
-The `[csv].file = "data/{symbol}_{timeframe}.csv"` pattern already resolves to
-the new files once `symbol` is correct. Suggested mapping:
+**4 — Point a backtest at the CSV.** The CSV is in the canonical
+`time,open,high,low,close,volume` schema the loader already reads, so any demo
+or your own config consumes it through the standard CSV data source:
 
-| Config file | New `symbol` | New 1h window |
-|---|---|---|
-| `demo-backtest.toml` | `AAPL.US` | 2024-01-01 → 2024-03-31 |
-| `spx2020-backtest.toml` | `VTI.US` | 2023-04-01 → 2023-09-30 |
-| `spx2020-indicator-showcase.toml` | `AAPL.US` | 2023-07-01 → 2023-12-31 |
-| `spx2020-macd-backtest.toml` | `TSLA.US` | 2024-10-01 → 2024-12-31 |
-| `spx2022-backtest.toml` | `VTI.US` | 2024-10-01 → 2024-12-31 |
-| `spx2020-ha-pattern-backtest.toml` | `TSLA.US` | 2023-01-01 → 2023-06-30 |
-| `spx2020-macd-boolean-backtest.toml` *(once PR #32 merges)* | `AAPL.US` | 2024-01-01 → 2024-12-31 |
-| `spx2020-ha-streak-backtest.toml` *(once PR #34 merges)* | `TSLA.US` | 2023-07-01 → 2023-12-31 |
+```toml
+symbol      = "AAPL.US"
+data_source = "csv"
 
-Renaming the files to something self-documenting (e.g.
-`vti-mean-reversion-2023.toml`) is optional but recommended once they no
-longer describe SPX data.
+[date_range]
+from = 2024-01-01
+to   = 2024-03-31   # any window within the fetched range
 
-**4 — Regenerate the reports.** Build once, then run each config:
-
-```sh
-mvn -q clean package -DskipTests
-for cfg in demo/*.toml; do
-  [ "$cfg" = demo/data-sources.toml ] && continue
-  java -jar target/wichtelm.jar run "$cfg"
-done
+[csv]
+file = "data/{symbol}_{timeframe}.csv"   # resolves to data/AAPL.US_1h.csv
 ```
 
-Open the timestamped HTML files under `demo/reports/` and check each has a
-sensible trade count (aim for ≥ 5; ideally 5–20), the correct ticker in the
-header, and intact markers / RSI sub-pane / outcome shading.
-
-**5 — Tune if a demo is too quiet.** If a strategy produces 0–1 trades on its
-real window, relax a *parameter* in that demo's `.toml` (e.g.
-`overbought_threshold` 70 → 65) — do **not** change strategy logic. If results
-look pathological (e.g. an earnings gap blew through a stop for a 50% loss),
-pick a different window or document the event.
-
-**6 — Drop the synthetic data.** Once the real CSVs drive every demo:
-
-```sh
-git rm demo/data/SPX2020_*.csv demo/data/SPX2022_*.csv demo/data/DEMO_*.csv
-git rm demo/GenerateData.java
-```
-
-`SyntheticDataGenerator` / `DailyAggregator` can stay (they're covered by a
-unit test and document the prior approach) or also be removed if you want a
-clean break.
-
-**7 — Commit** the new CSVs, updated configs, regenerated reports, and
-deletions. The build stays green throughout because the CSV loader is
-unchanged — only the data behind it.
+Then `java -jar target/wichtelm.jar run <config>.toml` as usual.
 
 ## The strategy
 
