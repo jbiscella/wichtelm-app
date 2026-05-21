@@ -24,6 +24,7 @@ import org.hatrack.heerwisch.api.spec.FillColor;
 import org.hatrack.heerwisch.api.spec.GlyphStyle;
 import org.hatrack.heerwisch.api.spec.Indicator;
 import org.hatrack.heerwisch.api.spec.LayoutSpec;
+import org.hatrack.heerwisch.api.spec.LegendEntry;
 import org.hatrack.heerwisch.api.spec.LevelStyle;
 import org.hatrack.heerwisch.api.spec.MarkerDirection;
 import org.hatrack.heerwisch.api.spec.Pane;
@@ -1005,7 +1006,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
             return "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
-                    + esc(image.contentType()) + ";base64," + base64 + "\"/>";
+                    + esc(image.contentType()) + ";base64," + base64 + "\"/>"
+                    + legendStrip(image.legend());
         } catch (ChartRenderException e) {
             throw new ReportGenerationException(
                     "chart rendering failed for timeframe " + timeframeLabel, e);
@@ -1042,6 +1044,25 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         };
         return new ExpressionEvaluator(data.strategy().featureName(), Instant.EPOCH, 0)
                 .arithmetic(expression, new ExpressionEvaluator.Scope(values, NO_INDICATORS));
+    }
+
+    /**
+     * Renders the chart's indicator legend (0.50 {@link ChartImage#legend()})
+     * as a small swatch + label strip under the chart image, so multi-overlay
+     * panes are readable. Each {@link LegendEntry} carries the exact line colour
+     * the renderer used ({@code rgb}); empty when the chart has no indicators.
+     */
+    private String legendStrip(List<LegendEntry> legend) {
+        if (legend == null || legend.isEmpty()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder("<div class=\"chart-legend\">");
+        for (LegendEntry entry : legend) {
+            String hex = String.format(Locale.ROOT, "#%06x", entry.rgb() & 0xFFFFFF);
+            out.append("<span class=\"leg\"><span class=\"sw\" style=\"background:")
+                    .append(hex).append("\"></span>").append(esc(entry.label())).append("</span>");
+        }
+        return out.append("</div>").toString();
     }
 
     private String describeChartIndicators(String timeframe, int barCount, ReportData data) {

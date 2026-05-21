@@ -119,6 +119,9 @@ details.trigger[open] .chev{transform:rotate(180deg);color:var(--ink)}
 .chart .ch-head .tf .tag{display:inline-block;background:var(--surface);border:1px solid var(--border);padding:2px 8px;border-radius:3px;margin-left:6px;color:var(--ink-soft)}
 .chart .ph-body{padding:12px 14px}
 .chart .ph-body img{display:block;width:100%;height:auto;max-width:100%}
+.chart-legend{display:flex;flex-wrap:wrap;gap:6px 16px;padding:8px 2px 2px;font-family:var(--mono);font-size:10.5px;color:var(--ink-soft)}
+.chart-legend .leg{display:inline-flex;align-items:center;gap:6px}
+.chart-legend .sw{display:inline-block;width:14px;height:3px;border-radius:1px}
 .ch-foot{display:flex;justify-content:space-between;padding:0 14px 10px;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 .ch-foot .mk{display:inline-flex;align-items:center;gap:6px}
 .ch-foot .mk .tri{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent}
