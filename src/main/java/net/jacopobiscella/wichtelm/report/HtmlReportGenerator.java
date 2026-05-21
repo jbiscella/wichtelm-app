@@ -879,9 +879,16 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                                          boolean exitScheduled, boolean openTrade,
                                          boolean isWin, ReportData data) {
         try {
-            LayoutSpec layout = LayoutSpec.builder().withSize(900, 320).build();
-            ChartSpecBuilder builder = ChartSpec.builder().withSeries(series).withLayout(layout);
-            addIndicatorsForTimeframe(builder, timeframeLabel, series, data);
+            ChartSpecBuilder builder = ChartSpec.builder().withSeries(series);
+            int subPaneCount = addIndicatorsForTimeframe(builder, timeframeLabel, series, data);
+            // Size the chart by sub-pane count: a fixed 320px split across a main
+            // pane plus N stacked sub-panes leaves each sub-pane ~50px — too short
+            // for its rotated range-axis title, which then overflows into the
+            // neighbouring pane (the "ATR(14)MACD(...)" overprint). Give the main
+            // pane a stable 320px and every sub-pane its own 140px band so the
+            // titles fit within their pane.
+            int height = 320 + subPaneCount * 140;
+            builder.withLayout(LayoutSpec.builder().withSize(900, height).build());
             TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
             for (OHLCBar bar : series.bars()) {
                 closeByTime.put(bar.time(), bar.close());
@@ -1008,7 +1015,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
 
     // ─── Indicator dispatch (unchanged from main) ────────────────────────────
 
-    private void addIndicatorsForTimeframe(ChartSpecBuilder builder, String timeframeLabel,
+    private int addIndicatorsForTimeframe(ChartSpecBuilder builder, String timeframeLabel,
                                             OHLCSeries underlying, ReportData data) {
         Pane[] subPanes = { Pane.SUBPLOT_1, Pane.SUBPLOT_2, Pane.SUBPLOT_3, Pane.SUBPLOT_4,
                 Pane.SUBPLOT_5, Pane.SUBPLOT_6, Pane.SUBPLOT_7, Pane.SUBPLOT_8 };
@@ -1034,6 +1041,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 subPaneIdx++;
             }
         }
+        return subPaneIdx;
     }
 
     private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ReportData data) {
