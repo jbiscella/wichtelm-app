@@ -3,6 +3,9 @@ package net.jacopobiscella.wichtelm.report;
 import net.jacopobiscella.wichtelm.error.ReportGenerationException;
 import net.jacopobiscella.wichtelm.runtime.ExpressionEvaluator;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
+import net.jacopobiscella.wichtelm.strategy.FirstClassCondition;
+import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
+import net.jacopobiscella.wichtelm.strategy.PositionPrecondition;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import org.hatrack.commons.OHLCBar;
@@ -129,6 +132,7 @@ public final class HtmlReportGenerator {
                 .append("</head><body><div class=\"page\">");
 
         appendHeader(html, data);
+        appendStrategyRules(html, data);
         appendAggregateMetrics(html, data.result().metrics());
         appendEquityAndDrawdown(html, data);
         appendTradeList(html, data, renderer);
@@ -177,6 +181,150 @@ public final class HtmlReportGenerator {
     private static String describeHigherTfs(ReportData data) {
         List<String> wires = new ArrayList<>(data.higherTimeframeSeries().keySet());
         return String.join(" + ", wires);
+    }
+
+    // ─── Strategy rules ────────────────────────────────────────────────────────
+
+    /**
+     * Top-level "Strategy rules" section: every Scenario rendered as a
+     * Given/When/Then block. The natural-language When clause keeps each Tier B
+     * primitive's call form verbatim in monospace; non-Tier-B comparison steps
+     * (already English prose per the DSL) render as-is. A scenario is either an
+     * entry or an exit (one terminal condition), so each gets a single GWT block;
+     * entry scenarios additionally surface their stop_loss / take_profit
+     * expressions untranslated.
+     */
+    private void appendStrategyRules(StringBuilder html, ReportData data) {
+        ParsedStrategy strategy = data.strategy();
+        Map<String, BigDecimal> params = data.parameters();
+        html.append("<div class=\"section-title\"><h2>Strategy rules</h2>"
+                + "<div class=\"rule\"></div></div>");
+        html.append("<section class=\"strategy-rules\">");
+        html.append("<h3 class=\"sr-name\">Strategy: ")
+                .append(esc(strategy.featureName())).append("</h3>");
+        for (StrategyScenario s : strategy.scenarios()) {
+            boolean entry = s.terminalCondition().isEntry();
+            String dir = direction(s.terminalCondition());
+            html.append("<div class=\"scenario sr\">")
+                    .append("<h4>").append(esc(s.name())).append("</h4>")
+                    .append("<p class=\"dir\">Direction: ").append(dir).append("</p>")
+                    .append("<p class=\"gwt\">")
+                    .append("<b>GIVEN</b> ").append(esc(givenPhrase(s.precondition()))).append("<br>")
+                    .append("<b>WHEN</b> ").append(whenClause(s.conditionSteps(), params)).append("<br>")
+                    .append("<b>THEN</b> ")
+                    .append(entry ? "enter " + dir : "close the position")
+                    .append("</p>");
+            if (entry && (s.stopLossExpression().isPresent()
+                    || s.takeProfitExpression().isPresent())) {
+                html.append("<p class=\"protective\">");
+                s.stopLossExpression().ifPresent(e ->
+                        html.append("Stop: <code>").append(esc(e)).append("</code><br>"));
+                s.takeProfitExpression().ifPresent(e ->
+                        html.append("Take: <code>").append(esc(e)).append("</code>"));
+                html.append("</p>");
+            }
+            html.append("</div>");
+        }
+        html.append("</section>");
+    }
+
+    private static String direction(FirstClassCondition c) {
+        return switch (c) {
+            case LONG_ENTRY, LONG_EXIT -> "LONG";
+            case SHORT_ENTRY, SHORT_EXIT -> "SHORT";
+        };
+    }
+
+    private static String givenPhrase(PositionPrecondition p) {
+        return switch (p) {
+            case NO_OPEN_POSITION -> "no open position";
+            case LONG_POSITION_OPEN -> "an open long position";
+            case SHORT_POSITION_OPEN -> "an open short position";
+        };
+    }
+
+    /** Conjunction of When/And steps as natural language, joined with AND. */
+    private String whenClause(List<StrategyStep> steps, Map<String, BigDecimal> params) {
+        if (steps.isEmpty()) {
+            return "—";
+        }
+        List<String> parts = new ArrayList<>();
+        for (StrategyStep step : steps) {
+            parts.add(naturalStep(step, params));
+        }
+        return String.join(" AND ", parts);
+    }
+
+    /** Tier B primitive rendered as (natural phrase, call form). */
+    private record TierBRender(String phrase, String code) {
+    }
+
+    private static final Set<String> TIER_B_NAMES = Set.of(
+            "ha_bullish_reversal", "ha_bearish_reversal", "ha_doji", "ha_strong",
+            "ha_strong_bullish", "ha_strong_bearish", "rsi_overbought", "rsi_oversold",
+            "rsi_crosses_50", "macd_bullish_cross", "macd_bearish_cross",
+            "macd_zero_cross_up", "macd_zero_cross_down");
+
+    private static TierBRender tierBRender(String name, String arg) {
+        return switch (name) {
+            case "ha_bullish_reversal" -> new TierBRender(
+                    "a bullish HA reversal after " + arg + " bearish bars",
+                    "ha_bullish_reversal(" + arg + ")");
+            case "ha_bearish_reversal" -> new TierBRender(
+                    "a bearish HA reversal after " + arg + " bullish bars",
+                    "ha_bearish_reversal(" + arg + ")");
+            case "ha_doji" -> new TierBRender(
+                    "an HA doji within threshold " + arg, "ha_doji(" + arg + ")");
+            case "ha_strong" -> new TierBRender("a strong HA candle", "ha_strong()");
+            case "ha_strong_bullish" ->
+                    new TierBRender("a strong bullish HA candle", "ha_strong_bullish()");
+            case "ha_strong_bearish" ->
+                    new TierBRender("a strong bearish HA candle", "ha_strong_bearish()");
+            case "rsi_overbought" -> new TierBRender(
+                    "RSI crosses above " + arg + " (overbought)", "rsi_overbought(" + arg + ")");
+            case "rsi_oversold" -> new TierBRender(
+                    "RSI crosses below " + arg + " (oversold)", "rsi_oversold(" + arg + ")");
+            case "rsi_crosses_50" ->
+                    new TierBRender("RSI crosses the 50 mid-line", "rsi_crosses_50");
+            case "macd_bullish_cross" ->
+                    new TierBRender("MACD line crosses above signal line", "macd_bullish_cross");
+            case "macd_bearish_cross" ->
+                    new TierBRender("MACD line crosses below signal line", "macd_bearish_cross");
+            case "macd_zero_cross_up" ->
+                    new TierBRender("MACD line crosses above zero", "macd_zero_cross_up");
+            case "macd_zero_cross_down" ->
+                    new TierBRender("MACD line crosses below zero", "macd_zero_cross_down");
+            default -> null;
+        };
+    }
+
+    /** A single step as natural language: Tier B phrase + call form, else verbatim DSL. */
+    private String naturalStep(StrategyStep step, Map<String, BigDecimal> params) {
+        Matcher m = INDICATOR_CALL.matcher(step.text());
+        if (m.matches() && TIER_B_NAMES.contains(m.group(1))) {
+            TierBRender r = tierBRender(m.group(1), resolveArg(m.group(2), params));
+            return esc(r.phrase()) + " (<code>" + esc(r.code()) + "</code>)";
+        }
+        return "<code>" + esc(step.text()) + "</code>";
+    }
+
+    /** A single step as its bare call form (Tier B), else its verbatim DSL text. */
+    private String callFormStep(StrategyStep step, Map<String, BigDecimal> params) {
+        Matcher m = INDICATOR_CALL.matcher(step.text());
+        if (m.matches() && TIER_B_NAMES.contains(m.group(1))) {
+            return tierBRender(m.group(1), resolveArg(m.group(2), params)).code();
+        }
+        return step.text();
+    }
+
+    /** Resolve a single primitive argument to its effective value, or keep it verbatim. */
+    private static String resolveArg(String rawArgs, Map<String, BigDecimal> params) {
+        String a = rawArgs.trim();
+        if (a.isEmpty()) {
+            return "";
+        }
+        BigDecimal v = params.get(a);
+        return v != null ? v.stripTrailingZeros().toPlainString() : a;
     }
 
     // ─── Aggregate metrics ───────────────────────────────────────────────────
@@ -418,6 +566,7 @@ public final class HtmlReportGenerator {
                 .append("</div>");
 
         appendScenarioRow(html, entryHit, exitHit, "closed");
+        appendRuleLine(html, data, scenarioByName, entryHit, exitHit, false, trade);
         appendChartFrames(html, data, renderer, trade.entryTime(), trade.exitTime(),
                 entryHit, exitHit, scenarioByName, false, dirClass, isWin,
                 trade.entryPrice(), trade.quantity());
@@ -489,6 +638,7 @@ public final class HtmlReportGenerator {
                 .append("</div>");
 
         appendScenarioRow(html, entryHit, null, "open");
+        appendRuleLine(html, data, scenarioByName, entryHit, null, true, null);
         // Open trade — isWin irrelevant, the renderer will use NEUTRAL fill.
         appendChartFrames(html, data, renderer, open.entryTime(), windowEnd,
                 entryHit, null, scenarioByName, true, dirClass, false,
@@ -572,6 +722,69 @@ public final class HtmlReportGenerator {
         html.append("<div class=\"seg\"><span class=\"lbl\">exit</span><span class=\"")
                 .append(exitNameClass).append("\">").append(esc(exitName))
                 .append("</span></div></div>");
+    }
+
+    /**
+     * Compact monospace "Rule" line naming the primitive(s) that actually fired
+     * for this trade. The entry/exit scenarios fire only when their whole step
+     * conjunction holds, so the fired primitives are exactly those scenarios'
+     * steps. A forced exit (no exit trigger) is a stop_loss / take_profit hit;
+     * which one is inferred by matching the fill price to the evaluated levels.
+     */
+    private void appendRuleLine(StringBuilder html, ReportData data,
+                                Map<String, StrategyScenario> scenarioByName,
+                                TriggerHit entryHit, TriggerHit exitHit,
+                                boolean openTrade, Trade trade) {
+        Map<String, BigDecimal> params = data.parameters();
+        StrategyScenario entryScenario =
+                entryHit != null ? scenarioByName.get(entryHit.scenarioName()) : null;
+        String entered = entryScenario != null ? viaTerms(entryScenario, params) : "—";
+        String exited;
+        if (openTrade) {
+            exited = "still open at window end";
+        } else if (exitHit != null && scenarioByName.containsKey(exitHit.scenarioName())) {
+            exited = viaTerms(scenarioByName.get(exitHit.scenarioName()), params);
+        } else {
+            exited = forcedExitTerm(data, entryScenario, trade);
+        }
+        html.append("<div class=\"rule-line\"><span class=\"lbl\">Rule</span>")
+                .append("<span class=\"r\">entered via ").append(esc(entered))
+                .append(", exited via ").append(esc(exited)).append("</span></div>");
+    }
+
+    private String viaTerms(StrategyScenario scenario, Map<String, BigDecimal> params) {
+        if (scenario.conditionSteps().isEmpty()) {
+            return "—";
+        }
+        List<String> parts = new ArrayList<>();
+        for (StrategyStep step : scenario.conditionSteps()) {
+            parts.add(callFormStep(step, params));
+        }
+        return String.join(" AND ", parts);
+    }
+
+    private String forcedExitTerm(ReportData data, StrategyScenario entryScenario, Trade trade) {
+        String hitAt = formatPrice(trade.exitPrice());
+        if (entryScenario != null) {
+            Optional<BigDecimal> stop = entryScenario.stopLossExpression()
+                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(), data));
+            Optional<BigDecimal> take = entryScenario.takeProfitExpression()
+                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(), data));
+            boolean isStop;
+            if (stop.isPresent() && take.isPresent()) {
+                BigDecimal ex = trade.exitPrice();
+                isStop = ex.subtract(stop.get()).abs()
+                        .compareTo(ex.subtract(take.get()).abs()) <= 0;
+            } else if (stop.isPresent()) {
+                isStop = true;
+            } else if (take.isPresent()) {
+                isStop = false;
+            } else {
+                return "forced exit (hit at " + hitAt + ")";
+            }
+            return (isStop ? "stop_loss" : "take_profit") + " (forced, hit at " + hitAt + ")";
+        }
+        return "forced exit (hit at " + hitAt + ")";
     }
 
     // ─── Chart frames ────────────────────────────────────────────────────────
