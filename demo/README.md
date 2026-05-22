@@ -45,29 +45,47 @@ Each run writes a new timestamped HTML file under `demo/reports/`
 `reports/demo-backtest-report.html` is one such run, renamed to a stable
 path so it can be linked to.
 
-## Running against real data (EODHD)
+## Running a demo on real data (EODHD)
 
-A demo is a self-contained, reproducible rehearsal. Every demo can run **two
-ways**, and both are driven entirely by the `wichtelm` CLI — there is no
-bespoke demo tooling:
+**Quickstart — a full real-data backtest in two commands.** Seven ready-to-run
+configs are committed (one per strategy), all using EODHD's free public `demo`
+token, so there's no signup, key, or download step:
 
-- **`data_source = "csv"`** — offline, against the committed `data/*.csv`
-  files. This is what the configs in this folder use today, so the demos run
-  with zero network and zero credentials.
-- **`data_source = "eodhd"`** — live, against real market data through the
-  `frau-holle-eodhd` driver the app already ships. No download step, no
-  intermediate file: the driver fetches the bars at backtest time.
+```sh
+export EODHD_API_TOKEN=demo
+java -jar target/wichtelm.jar run demo/eodhd-aapl-macd-boolean.toml
+```
 
-### Live EODHD run
+That fetches real AAPL.US 2024 data live and writes a full HTML report to
+`reports/` — same pipeline as the CSV demos, just real prices. Pick any of:
 
-The app reads the EODHD API token from an environment variable named by
-`[eodhd].api_token_env`; the token itself never lives in the config. EODHD's
-public free token is the literal string `demo`, which serves a fixed set of
-tickers — `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`, `BTC-USD.CC`,
-`EURUSD.FOREX` — without a subscription.
+| Config | Strategy | Ticker · window |
+|---|---|---|
+| `eodhd-aapl-intro.toml` | mean reversion + daily trend | AAPL.US · Q1 2024 |
+| `eodhd-vti-mean-reversion.toml` | mean reversion + daily trend | VTI.US · Q2–Q3 2023 |
+| `eodhd-aapl-indicator-showcase.toml` | indicator showcase | AAPL.US · H2 2023 |
+| `eodhd-tsla-macd-breakout.toml` | MACD breakout | TSLA.US · Q4 2024 |
+| `eodhd-tsla-ha-pattern.toml` | HA pattern reversal at RSI extremes | TSLA.US · H1 2023 |
+| `eodhd-aapl-macd-boolean.toml` | MACD boolean cross | AAPL.US · 2024 |
+| `eodhd-tsla-ha-streak.toml` | pure HA pattern reversal after streak | TSLA.US · H2 2023 |
 
-Point a config at EODHD by setting `data_source = "eodhd"`, a real `symbol`,
-and the token env var:
+The free `demo` token serves `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
+`BTC-USD.CC`, `EURUSD.FOREX`.
+
+### How it works / using your own ticker
+
+Each demo runs two ways, both straight from the `wichtelm` CLI:
+
+- `data_source = "csv"` — offline, against the committed `data/*.csv` fixtures
+  (zero network, zero credentials). The reports committed under `reports/` are
+  these CSV runs.
+- `data_source = "eodhd"` — live, through the `frau-holle-eodhd` driver, which
+  fetches the bars at backtest time. The token is read from the env var named
+  by `[eodhd].api_token_env`; it never lives in the config.
+
+To run a different ticker, window, or your own EODHD key, copy a config and
+edit `symbol` / `[date_range]` (point `api_token_env` at your key's env var).
+Minimal shape:
 
 ```toml
 strategy    = "strategies/mean-reversion-trend.strat"
@@ -86,42 +104,9 @@ pyramiding        = false
 api_token_env = "EODHD_API_TOKEN"
 ```
 
-Then run it from the repository root:
-
-```sh
-export EODHD_API_TOKEN=demo          # free public token; or your own key
-java -jar target/wichtelm.jar run demo/<your-eodhd-config>.toml
-```
-
-The driver fetches the primary timeframe and any higher-timeframe Background
-series for `symbol` over the date range, and the backtest runs exactly as it
-does on CSV.
-
-**Ready-to-run EODHD configs.** One per demo strategy is committed, already
-pointing at a real ticker and a split-free window (run any of them with the
-`demo` token):
-
-| Config | Strategy | Ticker · window |
-|---|---|---|
-| `eodhd-aapl-intro.toml` | mean reversion + daily trend | AAPL.US · Q1 2024 |
-| `eodhd-vti-mean-reversion.toml` | mean reversion + daily trend | VTI.US · Q2–Q3 2023 |
-| `eodhd-aapl-indicator-showcase.toml` | indicator showcase | AAPL.US · H2 2023 |
-| `eodhd-tsla-macd-breakout.toml` | MACD breakout | TSLA.US · Q4 2024 |
-| `eodhd-tsla-ha-pattern.toml` | HA pattern reversal at RSI extremes | TSLA.US · H1 2023 |
-| `eodhd-aapl-macd-boolean.toml` | MACD boolean cross | AAPL.US · 2024 |
-| `eodhd-tsla-ha-streak.toml` | pure HA pattern reversal after streak | TSLA.US · H2 2023 |
-
-```sh
-export EODHD_API_TOKEN=demo
-java -jar target/wichtelm.jar run demo/eodhd-aapl-macd-boolean.toml
-```
-
-> **The committed reports under `reports/` are the CSV runs** (against the
-> synthetic `TST*` / `DEMO` fixtures), because the build/CI environment has no
-> outbound access to `eodhd.com`. To get **real-data reports you must run the
-> EODHD configs yourself** on a machine with network access (the two commands
-> above), then commit the generated HTML from `reports/` if you want them in
-> the repo. Nothing in the CSV pipeline changes — only the data behind it.
+The committed `reports/` are CSV runs only because this repo's CI has no
+outbound network — real-data reports are something you generate locally with
+the command above and can commit if you want them tracked.
 
 ### Snapshotting EODHD data to a committed CSV (optional)
 
