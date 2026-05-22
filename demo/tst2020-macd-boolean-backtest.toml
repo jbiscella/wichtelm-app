@@ -1,0 +1,27 @@
+# wichtelm-app TST2020 backtest — the MACD-boolean-cross strategy
+# run against the synthetic TST2020 (COVID year) dataset.
+# Run from the repository root:
+#   wichtelm run demo/tst2020-macd-boolean-backtest.toml
+# Paths below are resolved relative to this config file (the demo/ directory).
+
+strategy    = "strategies/macd-boolean-cross.strat"
+symbol      = "TST2020"
+data_source = "csv"
+
+[date_range]
+from = 2020-01-01
+to   = 2020-12-31
+
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+
+[parameters]
+stop_loss_pct   = 2
+take_profit_pct = 5
+
+[output]
+directory = "reports"
+
+[csv]
+file = "data/{symbol}_{timeframe}.csv"

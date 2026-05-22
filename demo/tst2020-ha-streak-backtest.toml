@@ -1,0 +1,28 @@
+# wichtelm-app TST2020 backtest — the pure-HA-pattern-reversal-after-streak
+# strategy run against the synthetic TST2020 (COVID year) dataset.
+# Run from the repository root:
+#   wichtelm run demo/tst2020-ha-streak-backtest.toml
+# Paths below are resolved relative to this config file (the demo/ directory).
+
+strategy    = "strategies/ha-streak-reversal.strat"
+symbol      = "TST2020"
+data_source = "csv"
+
+[date_range]
+from = 2020-01-01
+to   = 2020-12-31
+
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+
+[parameters]
+streak_length   = 12
+stop_loss_pct   = 1.5
+take_profit_pct = 4
+
+[output]
+directory = "reports"
+
+[csv]
+file = "data/{symbol}_{timeframe}.csv"

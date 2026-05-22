@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="wichtelm-app-logo.png" alt="wichtelm-app" width="320">
+  <img src="wichtelm-app-logo.png" alt="wichtelm-app" width="560">
 </p>
 
 # wichtelm-app

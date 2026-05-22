@@ -1,10 +1,10 @@
-# MACD breakout demo on the synthetic SPX 2020 (COVID year) dataset.
+# MACD breakout demo on the synthetic TST2020 (COVID year) dataset.
 # Run from the repository root:
-#   wichtelm run demo/spx2020-macd-backtest.toml
+#   wichtelm run demo/tst2020-macd-backtest.toml
 # Paths below are resolved relative to this config file (the demo/ directory).
 
 strategy    = "strategies/macd-breakout.strat"
-symbol      = "SPX2020"
+symbol      = "TST2020"
 data_source = "csv"
 
 # Constrained to the most demonstrative window: pre-crash, COVID crash,

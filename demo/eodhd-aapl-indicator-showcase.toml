@@ -1,0 +1,24 @@
+# EODHD demo — AAPL indicator showcase (trend with pullbacks, H2 2023).
+# Real-data counterpart of tst2020-indicator-showcase.toml.
+#   export EODHD_API_TOKEN=demo
+#   java -jar target/wichtelm.jar run demo/eodhd-aapl-indicator-showcase.toml
+
+strategy    = "strategies/indicator-showcase.strat"
+symbol      = "AAPL.US"
+data_source = "eodhd"
+
+[date_range]
+from = 2023-07-01
+to   = 2023-12-31
+
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+
+[parameters]
+sma_fast      = 20
+sma_slow      = 100
+stop_loss_pct = 2
+
+[eodhd]
+api_token_env = "EODHD_API_TOKEN"

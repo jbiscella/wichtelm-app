@@ -1,11 +1,11 @@
-# wichtelm-app SPX 2022 backtest — the mean-reversion-with-trend-filter
-# strategy run against the synthetic SPX 2022 (bear market) dataset.
+# wichtelm-app TST2022 backtest — the mean-reversion-with-trend-filter
+# strategy run against the synthetic TST2022 (bear market) dataset.
 # Run from the repository root:
-#   wichtelm run demo/spx2022-backtest.toml
+#   wichtelm run demo/tst2022-backtest.toml
 # Paths below are resolved relative to this config file (the demo/ directory).
 
 strategy    = "strategies/mean-reversion-trend.strat"
-symbol      = "SPX2022"
+symbol      = "TST2022"
 data_source = "csv"
 
 [date_range]
