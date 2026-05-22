@@ -989,18 +989,18 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             if (isPrimary && entryScenario != null) {
                 builder.addAnnotation(new Annotation.HorizontalLevel(
                         entryPrice, "Entry " + formatPrice(entryPrice),
-                        LevelStyle.DASHED, Optional.of(FillColor.NEUTRAL)));
+                        LevelStyle.SOLID, Optional.of(FillColor.NEUTRAL)));
                 entryScenario.stopLossExpression().ifPresent(expr -> {
                     BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
                     builder.addAnnotation(new Annotation.HorizontalLevel(
                             p, "Stop " + formatPrice(p),
-                            LevelStyle.DASHED, Optional.of(FillColor.LOSS)));
+                            LevelStyle.SOLID, Optional.of(FillColor.LOSS)));
                 });
                 entryScenario.takeProfitExpression().ifPresent(expr -> {
                     BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
                     builder.addAnnotation(new Annotation.HorizontalLevel(
                             p, "Take " + formatPrice(p),
-                            LevelStyle.DASHED, Optional.of(FillColor.WIN)));
+                            LevelStyle.SOLID, Optional.of(FillColor.WIN)));
                 });
             }
             ChartImage image = renderer.render(builder.build());
