@@ -22,6 +22,7 @@ import org.hatrack.heerwisch.api.spec.ChartSpec;
 import org.hatrack.heerwisch.api.spec.ChartSpecBuilder;
 import org.hatrack.heerwisch.api.spec.FillColor;
 import org.hatrack.heerwisch.api.spec.GlyphStyle;
+import org.hatrack.heerwisch.api.spec.ImageFormat;
 import org.hatrack.heerwisch.api.spec.Indicator;
 import org.hatrack.heerwisch.api.spec.LayoutSpec;
 import org.hatrack.heerwisch.api.spec.LegendEntry;
@@ -904,7 +905,12 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             // pane a stable 320px and every sub-pane its own 140px band so the
             // titles fit within their pane.
             int height = 320 + subPaneCount * 140;
-            builder.withLayout(LayoutSpec.builder().withSize(900, height).build());
+            // PNG (lossless) over the JPEG default: chart content is line art —
+            // thin candle wicks, dashed reference lines, gridlines, axis text —
+            // where JPEG's DCT ringing blurs edges. PNG also compresses these
+            // flat-background images smaller than JPEG here.
+            builder.withLayout(LayoutSpec.builder()
+                    .withSize(900, height).withFormat(ImageFormat.PNG).build());
             TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
             for (OHLCBar bar : series.bars()) {
                 closeByTime.put(bar.time(), bar.close());
