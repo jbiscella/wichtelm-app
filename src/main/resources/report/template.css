@@ -108,6 +108,22 @@ details.trigger[open] .chev{transform:rotate(180deg);color:var(--ink)}
 .scenario .nm{color:var(--ink);font-weight:500}
 .scenario .nm.code{font-family:var(--mono);font-size:12px;font-weight:500;color:var(--ink-soft)}
 
+/* Strategy rules (top section): one Given/When/Then block per Scenario. */
+.strategy-rules{margin-bottom:8px}
+.strategy-rules .sr-name{margin:0 0 16px;font-size:15px;font-weight:600;color:var(--ink)}
+.strategy-rules .scenario.sr{padding:0 0 14px}
+.strategy-rules .scenario.sr:last-child{border-bottom:none;margin-bottom:0;padding-bottom:0}
+.strategy-rules h4{margin:0 0 4px;font-size:13px;font-weight:600;color:var(--ink)}
+.strategy-rules .dir{margin:0 0 8px;font-family:var(--mono);font-size:10px;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-faint)}
+.strategy-rules .gwt{margin:0 0 8px;font-size:12.5px;line-height:1.75;color:var(--ink-soft)}
+.strategy-rules .gwt b{font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:0.08em;color:var(--accent);margin-right:4px}
+.strategy-rules .protective{margin:0;font-size:11px;color:var(--ink-faint)}
+.strategy-rules code,.cond code,.rule-line code{font-family:var(--mono);font-size:0.92em;background:var(--surface-2);padding:1px 5px;border-radius:3px;color:var(--ink)}
+
+/* Per-trade compact "Rule" line: which primitive actually fired. */
+.rule-line{margin:8px 0 0;font-family:var(--mono);font-size:11px;color:var(--ink-soft);line-height:1.55;letter-spacing:0.01em}
+.rule-line .lbl{color:var(--ink-faint);text-transform:uppercase;letter-spacing:0.08em;font-size:10px;margin-right:8px}
+
 /* Chart frames (per-trade). Chart contents are rendered by heerwisch-jfreechart
  * and embedded as raster images; only the frame is styled here. */
 .charts{display:flex;flex-direction:column;gap:12px}
