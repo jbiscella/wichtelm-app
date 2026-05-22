@@ -22,6 +22,7 @@ import org.hatrack.heerwisch.api.spec.ChartSpec;
 import org.hatrack.heerwisch.api.spec.ChartSpecBuilder;
 import org.hatrack.heerwisch.api.spec.FillColor;
 import org.hatrack.heerwisch.api.spec.GlyphStyle;
+import org.hatrack.heerwisch.api.spec.ImageFormat;
 import org.hatrack.heerwisch.api.spec.Indicator;
 import org.hatrack.heerwisch.api.spec.LayoutSpec;
 import org.hatrack.heerwisch.api.spec.LegendEntry;
@@ -904,7 +905,12 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             // pane a stable 320px and every sub-pane its own 140px band so the
             // titles fit within their pane.
             int height = 320 + subPaneCount * 140;
-            builder.withLayout(LayoutSpec.builder().withSize(900, height).build());
+            // PNG (lossless) over the JPEG default: chart content is line art —
+            // thin candle wicks, dashed reference lines, gridlines, axis text —
+            // where JPEG's DCT ringing blurs edges. PNG also compresses these
+            // flat-background images smaller than JPEG here.
+            builder.withLayout(LayoutSpec.builder()
+                    .withSize(900, height).withFormat(ImageFormat.PNG).build());
             TreeMap<Instant, BigDecimal> closeByTime = new TreeMap<>();
             for (OHLCBar bar : series.bars()) {
                 closeByTime.put(bar.time(), bar.close());
@@ -986,21 +992,24 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             // only (the higher-TF chart is context, not a trade reference). Stop
             // and take are evaluated at the trade's entry price from the entry
             // scenario's snapshotted expressions (semantic colors: 0.49+).
+            // All three use LevelStyle.DASHED (reference-line convention); levels
+            // outside the window's price range read faint until the ha-track 0.51
+            // chart Y-range fix includes HorizontalLevel annotations.
             if (isPrimary && entryScenario != null) {
                 builder.addAnnotation(new Annotation.HorizontalLevel(
                         entryPrice, "Entry " + formatPrice(entryPrice),
-                        LevelStyle.SOLID, Optional.of(FillColor.NEUTRAL)));
+                        LevelStyle.DASHED, Optional.of(FillColor.NEUTRAL)));
                 entryScenario.stopLossExpression().ifPresent(expr -> {
                     BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
                     builder.addAnnotation(new Annotation.HorizontalLevel(
                             p, "Stop " + formatPrice(p),
-                            LevelStyle.SOLID, Optional.of(FillColor.LOSS)));
+                            LevelStyle.DASHED, Optional.of(FillColor.LOSS)));
                 });
                 entryScenario.takeProfitExpression().ifPresent(expr -> {
                     BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
                     builder.addAnnotation(new Annotation.HorizontalLevel(
                             p, "Take " + formatPrice(p),
-                            LevelStyle.SOLID, Optional.of(FillColor.WIN)));
+                            LevelStyle.DASHED, Optional.of(FillColor.WIN)));
                 });
             }
             ChartImage image = renderer.render(builder.build());
