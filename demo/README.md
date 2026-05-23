@@ -68,9 +68,17 @@ That fetches real AAPL.US 2024 data live and writes a full HTML report to
 | `eodhd-tsla-ha-pattern.toml` | HA pattern reversal at RSI extremes | TSLA.US · H1 2023 |
 | `eodhd-aapl-macd-boolean.toml` | MACD boolean cross | AAPL.US · 2024 |
 | `eodhd-tsla-ha-streak.toml` | pure HA pattern reversal after streak | TSLA.US · H2 2023 |
+| `eodhd-vti-ma-atr-trend.toml` | MA trend filter + ATR stop (0.52) | VTI.US · Q2–Q3 2023 |
+| `eodhd-aapl-pivot-bias.toml` | daily pivot bias (0.52) | AAPL.US · H2 2023 |
 
 The free `demo` token serves `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 `BTC-USD.CC`, `EURUSD.FOREX`.
+
+To regenerate **every** EODHD report in one pass, run
+`./demo/run_eodhd_demos.sh` (after `export EODHD_API_TOKEN=demo`). It builds
+the JAR, runs each `eodhd-*.toml`, and promotes each result to a stable
+`reports/<config>-report.html` ready to commit; set `WICHTELM_SKIP_BUILD=1`
+to reuse an existing `target/wichtelm.jar`.
 
 ### How it works / using your own ticker
 
