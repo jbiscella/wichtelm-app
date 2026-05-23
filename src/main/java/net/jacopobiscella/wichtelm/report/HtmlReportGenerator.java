@@ -1,7 +1,9 @@
 package net.jacopobiscella.wichtelm.report;
 
 import net.jacopobiscella.wichtelm.error.ReportGenerationException;
+import net.jacopobiscella.wichtelm.runtime.BarIndicatorSource;
 import net.jacopobiscella.wichtelm.runtime.ExpressionEvaluator;
+import net.jacopobiscella.wichtelm.runtime.WichtelmSignalGenerator;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.FirstClassCondition;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
@@ -767,9 +769,11 @@ public final class HtmlReportGenerator {
         String hitAt = formatPrice(trade.exitPrice());
         if (entryScenario != null) {
             Optional<BigDecimal> stop = entryScenario.stopLossExpression()
-                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(), data));
+                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
+                            trade.entryTime(), data));
             Optional<BigDecimal> take = entryScenario.takeProfitExpression()
-                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(), data));
+                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
+                            trade.entryTime(), data));
             boolean isStop;
             if (stop.isPresent() && take.isPresent()) {
                 BigDecimal ex = trade.exitPrice();
@@ -1213,13 +1217,13 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                         entryPrice, "Entry " + formatPrice(entryPrice),
                         LevelStyle.DASHED, Optional.of(FillColor.NEUTRAL)));
                 entryScenario.stopLossExpression().ifPresent(expr -> {
-                    BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
+                    BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, entryMarker, data);
                     builder.addAnnotation(new Annotation.HorizontalLevel(
                             p, "Stop " + formatPrice(p),
                             LevelStyle.DASHED, Optional.of(FillColor.LOSS)));
                 });
                 entryScenario.takeProfitExpression().ifPresent(expr -> {
-                    BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
+                    BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, entryMarker, data);
                     builder.addAnnotation(new Annotation.HorizontalLevel(
                             p, "Take " + formatPrice(p),
                             LevelStyle.DASHED, Optional.of(FillColor.WIN)));
@@ -1250,7 +1254,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
      * should surface it, not guess a level.
      */
     private BigDecimal evaluateLevel(String expression, BigDecimal entryPrice,
-                                     BigDecimal positionSize, ReportData data) {
+                                     BigDecimal positionSize, Instant fill, ReportData data) {
         ExpressionEvaluator.Values values = name -> switch (name) {
             case "entry_price" -> entryPrice;
             case "position_size" -> positionSize;
@@ -1264,8 +1268,17 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 yield parameter;
             }
         };
-        return new ExpressionEvaluator(data.strategy().featureName(), Instant.EPOCH, 0)
-                .arithmetic(expression, new ExpressionEvaluator.Scope(values, NO_INDICATORS));
+        // atr_value(period) resolves to ATR at the entry fill, lookahead-safe:
+        // only bars that closed strictly before the fill (mirrors
+        // WichtelmSignalGenerator.evaluateProtective). Other functions stay banned.
+        List<OHLCBar> beforeFill = WichtelmSignalGenerator.barsStrictlyBefore(
+                data.primarySeries().bars(), fill);
+        ExpressionEvaluator.IndicatorSource source = beforeFill.isEmpty()
+                ? NO_INDICATORS
+                : new BarIndicatorSource(beforeFill, data.strategy().featureName(),
+                        beforeFill.getLast().time(), beforeFill.size() - 1);
+        return new ExpressionEvaluator(data.strategy().featureName(), fill, 0)
+                .arithmetic(expression, new ExpressionEvaluator.Scope(values, source));
     }
 
     /**

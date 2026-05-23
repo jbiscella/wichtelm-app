@@ -182,18 +182,40 @@ public class ReportGenerationSteps {
     @Given("a trend-gated Tier B strategy fixture with a stop-hit trade")
     public void aTrendGatedTierBStrategyFixtureWithStopHitTrade() {
         aTrendGatedTierBStrategyFixture();
-        // Use a series long enough for RSI(14) (referenced via rsi_oversold) to warm
-        // and actually plot — otherwise the chart has no sub-pane indicator and the
-        // legend strip is legitimately empty. Hourly bars from 2024-01-01T00:00Z.
+        installStopHitTrade("Enter long on oversold doji");
+    }
+
+    @Given("an ATR-stop strategy fixture with a stop-hit trade")
+    public void anAtrStopFixtureWithStopHitTrade() {
+        // Reproduces the report crash where evaluateLevel met an atr_value stop:
+        // the chart's stop HorizontalLevel must resolve atr_value at the fill.
+        strategy = StrategyParser.parse(
+                "Feature: ATR stop report\n"
+                        + "  Primary timeframe: 1h\n\n"
+                        + "  Scenario: Enter long\n"
+                        + "    Given no open position\n"
+                        + "    When close exceeds 0\n"
+                        + "    Then long_entry\n"
+                        + "    And with stop_loss at entry_price - 2 * atr_value(14)\n\n"
+                        + "  Scenario: Exit long on bearish strong\n"
+                        + "    Given a long position is open\n"
+                        + "    When ha_strong_bearish()\n"
+                        + "    Then long_exit\n", "atr-stop-report.strat");
+        installStopHitTrade("Enter long");
+    }
+
+    /**
+     * A 48-bar series with one closed LONG trade filling at bar 24 (signal at
+     * bar 23) and a forced exit (no exit trigger). {@code entryScenarioName}
+     * keys the entry trigger so the report attributes the protective stop to it.
+     */
+    private void installStopHitTrade(String entryScenarioName) {
         Instant seriesStart = Instant.parse("2024-01-01T00:00:00Z");
         primarySeriesOverride = series(seriesStart, Duration.ofHours(1), 48);
-        // A signal at bar T fills at the next bar's open. Trigger the entry at bar 23
-        // (fills at bar 24); the exit carries NO trigger, so the report must treat it
-        // as a forced (stop_loss / take_profit) close.
         Instant entryFill = seriesStart.plus(Duration.ofHours(24));
         Instant exitFill = seriesStart.plus(Duration.ofHours(30));
         BigDecimal entryPrice = new BigDecimal("124");
-        BigDecimal exitPrice = new BigDecimal("121.52"); // == entry_price * 0.98 → stop hit
+        BigDecimal exitPrice = new BigDecimal("121.52");
         Trade trade = new Trade(Direction.LONG, new BigDecimal("50"),
                 entryFill, entryPrice, exitFill, exitPrice,
                 new BigDecimal("-101.00"), new BigDecimal("-2.00"));
@@ -201,13 +223,13 @@ public class ReportGenerationSteps {
         BacktestMetrics metrics = new BacktestMetrics(zero, new BigDecimal("-2"), 1, zero, zero,
                 zero, zero, zero, zero, zero);
         List<EquityPoint> curve = List.of(
-                new EquityPoint(Instant.parse("2024-01-01T00:00:00Z"),
+                new EquityPoint(seriesStart,
                         BigDecimal.valueOf(10000), BigDecimal.valueOf(10000), zero),
                 new EquityPoint(exitFill,
                         BigDecimal.valueOf(9899), BigDecimal.valueOf(9899), zero));
         result = new BacktestResult(metrics, List.of(trade), curve, Optional.empty(),
                 new BacktestDiagnostics(0, 0, 0, 0, 1, 0, 0));
-        triggerTimes = Map.of("Enter long on oversold doji",
+        triggerTimes = Map.of(entryScenarioName,
                 List.of(seriesStart.plus(Duration.ofHours(23))));
     }
 
