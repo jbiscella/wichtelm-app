@@ -572,8 +572,18 @@ public final class StrategyParser {
 
     private void requirePositivePeriod(String arg, String name, int line) {
         BigDecimal literal = numericLiteral(arg);
-        if (literal != null && literal.signum() <= 0) {
+        if (literal == null) {
+            return;
+        }
+        if (literal.signum() <= 0) {
             throw fail("P21", line, 1, "period argument of " + name + " must be > 0, was " + arg);
+        }
+        // A period is a bar count: reject fractional literals at parse time so a
+        // value like 2.5 fails deterministically here instead of throwing
+        // ArithmeticException from intValueExact() during prepass construction.
+        if (literal.stripTrailingZeros().scale() > 0) {
+            throw fail("P21", line, 1,
+                    "period argument of " + name + " must be a whole number, was " + arg);
         }
     }
 

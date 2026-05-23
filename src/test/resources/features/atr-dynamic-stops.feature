@@ -28,6 +28,12 @@ Feature: ATR-based dynamic stops
     Then StrategyParseException is thrown
     And violatedRule is "P21"
 
+  Scenario: A fractional ATR period is rejected by P21
+    Given a strategy file with "And with stop_loss at entry_price - atr_value(2.5)"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P21"
+
   Scenario: An ATR-based stop runs end-to-end, resolving the ATR at fill time
     Given an ATR-stop long strategy whose stop_loss is "entry_price - 2 * atr_value(14)"
     And a CSV dataset of 120 primary bars

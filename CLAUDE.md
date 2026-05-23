@@ -89,7 +89,7 @@ A Scenario terminating with `Then long_entry` or `Then short_entry` MAY have one
 - `And with stop_loss at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
 - `And with take_profit at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
 
-The expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted in v1. (`entry_time` is reserved — see §15.)
+The expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted, with one exception: `atr_value(period)` — the frozen-at-fill ATR accessor (e.g. `entry_price - 2 * atr_value(14)`), evaluated once at the entry fill bar and held constant for the trade. It is valid ONLY inside `stop_loss` / `take_profit` (use `atr(period)` in conditions). (`entry_time` is reserved — see §15.)
 
 Each open position is bound at fill time to the scenario that emitted its Buy/Sell signal; the protective-exit evaluator uses that scenario's stop_loss / take_profit expressions, not the first same-direction entry scenario in source order. Two `long_entry` scenarios with different stops therefore each apply their own stop to the position they opened.
 
@@ -129,7 +129,8 @@ Expressions in Scenarios use the following syntax:
 | HA primitives (from nachtkrapp) — Tier B booleans | `ha_doji()` / `ha_doji(maxBodyRatio)`, `ha_strong()`, `ha_strong_bullish()`, `ha_strong_bearish()`, `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)` |
 | RSI level primitives (from nachtkrapp) — Tier B booleans | `rsi_overbought(threshold)`, `rsi_oversold(threshold)`, `rsi_crosses_50()` |
 | MACD primitives (from nachtkrapp) — Tier B booleans | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
-| Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `position_size` (`entry_time` reserved — see §15) |
+| MA trend filter primitives (from nachtkrapp 0.52) — Tier B booleans | `price_above_sma(period)`, `price_below_sma(period)`, `price_above_ema(period)`, `price_below_ema(period)`, `price_crosses_above_sma(period)`, `price_crosses_below_sma(period)`, `price_crosses_above_ema(period)`, `price_crosses_below_ema(period)`, `sma_above_ema(sma_period, ema_period)`, `sma_crosses_above_ema(sma_period, ema_period)`, `sma_crosses_below_ema(sma_period, ema_period)` — `PriceSource.CLOSE`; price-vs-MA via `PriceVsMARule`/`PriceMACrossRule`, MA-vs-MA via `MAVsMARule`/`MACrossMARule` |
+| Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `position_size`, `atr_value(period)` (stop_loss/take_profit only — frozen-at-fill ATR, §3.4) (`entry_time` reserved — see §15) |
 
 Composite indicators are exposed as flat per-component functions in v1: there is no callable `macd` — its components are the three `macd_*` functions listed above, consistent with how every other indicator in the catalog is exposed flat. A field-accessor syntax (`macd(...).macd_line`) was considered and rejected: it would require a postfix-access layer in the expression parser plus indicator-specific parse-time validation, for no gain over flat functions. If field accessors are ever wanted, that is a general parser feature, not a MACD concern.
 
@@ -251,7 +252,7 @@ Each rule below MUST be enforced at parse time. On violation, the parser throws 
 | P13 | Identifiers referenced in expressions MUST resolve to: a built-in market variable, a declared parameter, a declared Background series, a built-in function/indicator (from §3.7), or a trade-context variable (only in exit Scenarios and `And with` clauses on entry Scenarios) |
 | P14 | Function calls MUST match the arity and parameter types of the built-in function. Unknown function names produce a parse error |
 | P15 | Arithmetic expressions MUST be syntactically valid; unbalanced parentheses produce a parse error |
-| P16 | `And with stop_loss at <expr>` and `And with take_profit at <expr>` expressions MUST NOT reference built-in functions/indicators (§3.7) or Background-declared series. Only constants, parameters, and trade-context variables are allowed |
+| P16 | `And with stop_loss at <expr>` and `And with take_profit at <expr>` expressions MUST NOT reference built-in functions/indicators (§3.7) or Background-declared series. Only constants, parameters, trade-context variables, and `atr_value(period)` (the sole admitted function — the frozen-at-fill ATR accessor, §3.4) are allowed. A non-integer or non-positive `atr_value` period is rejected by P21 |
 | P17 | Trade-context variables (`entry_price`, `position_size`) MUST NOT appear in Scenarios terminating with `Then long_entry` or `Then short_entry` (no position exists at entry time) |
 | P18 | A Scenario starting with `Given no open position` MUST terminate with `Then long_entry` or `Then short_entry` (semantic consistency) |
 | P19 | A Scenario starting with `Given a long position is open` MUST terminate with `Then long_exit` (semantic consistency) |
@@ -720,9 +721,9 @@ The following are explicitly NOT implemented in v1:
 - Expression-typed first arguments for window aggregates (e.g. `highest(<expression>, period)` where the first arg is computed bar-by-bar). v1 covers the common cases via hard-coded variants (`highest_high`, `lowest_low`, `highest_close`, `lowest_close`). Generic expression-typed args may be introduced if Tier B's boolean primitives or future features require them.
 - Output formats beyond HTML (PDF, JSON, CSV trade export)
 - Boolean and String parameter types
-- Indicators and window aggregates in `And with stop_loss at` / `And with take_profit at` clauses (only constants, parameters, and trade-context variables allowed)
+- Indicators and window aggregates in `And with stop_loss at` / `And with take_profit at` clauses, EXCEPT `atr_value(period)` — the frozen-at-fill ATR accessor graduated into stop/take scope in the 0.52 increment (§3.4, P16). All other indicators/window aggregates remain disallowed there
 - Trailing stops (dynamic stop-loss that updates per bar)
-- `price_above_sma(period)`, `price_above_ema(period)`, `price_crosses_sma(period)`, `price_crosses_ema(period)` — flat Tier B variants for nachtkrapp's `PriceVsMARule` / `PriceMACrossRule` (the rule's `MAType` is a non-numeric parameter so it follows the flat-variant naming convention used by `ha_strong_bullish` / `ha_strong_bearish`). Not in the v1.0 catalog; add when a strategy / demo needs them — mechanical addition (4 catalog entries + 4 `NachtkrappMatchIndex` `KeySpec` arms)
+- ~~`price_above_sma` / `price_above_ema` / price-MA cross variants~~ — GRADUATED to the §3.7 catalog in the 0.52 MA-trend-filter increment as 11 flat Tier B primitives (8 price-vs-MA via nachtkrapp `PriceVsMARule`/`PriceMACrossRule`, 3 MA-vs-MA via `MAVsMARule`/`MACrossMARule`)
 - Diagnostic / visualization-only Scenarios in `.strat` files
 - Tags (`@xxx`), Rule, Scenario Outline, Examples, DocStrings, DataTable Gherkin features
 - Parallel execution of multiple backtests in a single CLI invocation

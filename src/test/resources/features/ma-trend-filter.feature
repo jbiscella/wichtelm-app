@@ -55,6 +55,12 @@ Feature: MA trend filter Tier B primitives
     Then StrategyParseException is thrown
     And violatedRule is "P21"
 
+  Scenario: A fractional period in a price-vs-MA primitive is rejected by P21
+    Given a strategy file with "When price_above_ema(2.5)"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P21"
+
   Scenario: Wrong arity on a price-vs-MA primitive is rejected by P14
     Given a strategy file with "When price_above_ema(50, 200)"
     When the parser reads the file
