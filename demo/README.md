@@ -47,7 +47,7 @@ path so it can be linked to.
 
 ## Running a demo on real data (EODHD)
 
-**Quickstart — a full real-data backtest in two commands.** Seven ready-to-run
+**Quickstart — a full real-data backtest in two commands.** Nine ready-to-run
 configs are committed (one per strategy), all using EODHD's free public `demo`
 token, so there's no signup, key, or download step:
 
@@ -56,23 +56,38 @@ export EODHD_API_TOKEN=demo
 java -jar target/wichtelm.jar run demo/eodhd-aapl-macd-boolean.toml
 ```
 
-That fetches real AAPL.US 2024 data live and writes a full HTML report to
+That fetches real AAPL.US data live and writes a full HTML report to
 `reports/` — same pipeline as the CSV demos, just real prices. Pick any of:
 
-| Config | Strategy | Ticker · window |
+| Config | Strategy | Ticker |
 |---|---|---|
-| `eodhd-aapl-intro.toml` | mean reversion + daily trend | AAPL.US · Q1 2024 |
-| `eodhd-vti-mean-reversion.toml` | mean reversion + daily trend | VTI.US · Q2–Q3 2023 |
-| `eodhd-aapl-indicator-showcase.toml` | indicator showcase | AAPL.US · H2 2023 |
-| `eodhd-tsla-macd-breakout.toml` | MACD breakout | TSLA.US · Q4 2024 |
-| `eodhd-tsla-ha-pattern.toml` | HA pattern reversal at RSI extremes | TSLA.US · H1 2023 |
-| `eodhd-aapl-macd-boolean.toml` | MACD boolean cross | AAPL.US · 2024 |
-| `eodhd-tsla-ha-streak.toml` | pure HA pattern reversal after streak | TSLA.US · H2 2023 |
-| `eodhd-vti-ma-atr-trend.toml` | MA trend filter + ATR stop (0.52) | VTI.US · Q2–Q3 2023 |
-| `eodhd-aapl-pivot-bias.toml` | daily pivot bias (0.52) | AAPL.US · H2 2023 |
+| `eodhd-aapl-intro.toml` | mean reversion + daily trend | AAPL.US |
+| `eodhd-vti-mean-reversion.toml` | mean reversion + daily trend | VTI.US |
+| `eodhd-aapl-indicator-showcase.toml` | indicator showcase | AAPL.US |
+| `eodhd-tsla-macd-breakout.toml` | MACD breakout | TSLA.US |
+| `eodhd-tsla-ha-pattern.toml` | HA pattern reversal at RSI extremes | TSLA.US |
+| `eodhd-aapl-macd-boolean.toml` | MACD boolean cross | AAPL.US |
+| `eodhd-tsla-ha-streak.toml` | pure HA pattern reversal after streak | TSLA.US |
+| `eodhd-vti-ma-atr-trend.toml` | MA trend filter + ATR stop (0.52) | VTI.US |
+| `eodhd-aapl-pivot-bias.toml` | daily pivot bias (0.52) | AAPL.US |
 
 The free `demo` token serves `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 `BTC-USD.CC`, `EURUSD.FOREX`.
+
+> **The `demo` token only serves a ROLLING recent intraday window (~4 months).**
+> Every config's `[date_range]` is set to that recent slice on purpose — a
+> historical window returns no bars and the run fails with
+> `DataSourceUnavailableException: ... insufficient ... [V5]`. The dates rot as
+> the window rolls forward, so refresh them when a run starts failing. Probe the
+> currently-served range with:
+>
+> ```sh
+> curl -s 'https://eodhd.com/api/intraday/AAPL.US?api_token=demo&interval=1h&fmt=json' \
+>   | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[0]["datetime"],"→",d[-1]["datetime"])'
+> ```
+>
+> then set every `[date_range]` inside that span. (A paid key has full history
+> and is not subject to this limit — point `api_token_env` at it.)
 
 To regenerate **every** EODHD report in one pass, run
 `./demo/run_eodhd_demos.sh` (after `export EODHD_API_TOKEN=demo`). It builds

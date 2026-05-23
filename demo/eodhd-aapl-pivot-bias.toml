@@ -1,18 +1,18 @@
-# EODHD demo — AAPL daily-pivot bias (split-free window, H2 2023), showcasing
-# the 0.52 INC3 pivot primitives (price_crosses_above_pivot(P) entry,
-# price_crosses_below_pivot(P) exit). Real-data counterpart of
-# tst2020-pivot-backtest.toml. AAPL's last split was Aug 2020, so any 2023+
-# window is corporate-action-free and safe for raw intraday (demo/README.md).
+# EODHD demo — AAPL daily-pivot bias, showcasing the 0.52 INC3 pivot primitives
+# (price_crosses_above_pivot(P) entry, price_crosses_below_pivot(P) exit). AAPL's
+# last split was Aug 2020, so any recent window is corporate-action-free and safe
+# for raw intraday (demo/README.md).
 #   export EODHD_API_TOKEN=demo
 #   java -jar target/wichtelm.jar run demo/eodhd-aapl-pivot-bias.toml
+# [date_range] tracks the demo token's rolling recent slice — see demo/README.md.
 
 strategy    = "strategies/pivot-breakout.strat"
 symbol      = "AAPL.US"
 data_source = "eodhd"
 
 [date_range]
-from = 2023-07-01
-to   = 2023-12-31
+from = 2026-01-27
+to   = 2026-05-21
 
 [sizing]
 position_size_pct = 50

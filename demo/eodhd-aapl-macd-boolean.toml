@@ -1,15 +1,16 @@
-# EODHD demo — AAPL MACD boolean cross (full year 2024, frequent crosses).
+# EODHD demo — AAPL MACD boolean cross (frequent crosses on 1h).
 # Real-data counterpart of tst2020-macd-boolean-backtest.toml.
 #   export EODHD_API_TOKEN=demo
 #   java -jar target/wichtelm.jar run demo/eodhd-aapl-macd-boolean.toml
+# [date_range] tracks the demo token's rolling recent slice — see demo/README.md.
 
 strategy    = "strategies/macd-boolean-cross.strat"
 symbol      = "AAPL.US"
 data_source = "eodhd"
 
 [date_range]
-from = 2024-01-01
-to   = 2024-12-31
+from = 2026-01-27
+to   = 2026-05-21
 
 [sizing]
 position_size_pct = 50

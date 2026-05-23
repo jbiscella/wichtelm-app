@@ -1,15 +1,16 @@
-# EODHD demo — TSLA HA pattern reversal at RSI extremes (H1 2023).
+# EODHD demo — TSLA HA pattern reversal at RSI extremes.
 # Real-data counterpart of tst2020-ha-pattern-backtest.toml.
 #   export EODHD_API_TOKEN=demo
 #   java -jar target/wichtelm.jar run demo/eodhd-tsla-ha-pattern.toml
+# [date_range] tracks the demo token's rolling recent slice — see demo/README.md.
 
 strategy    = "strategies/ha-pattern-reversal.strat"
 symbol      = "TSLA.US"
 data_source = "eodhd"
 
 [date_range]
-from = 2023-01-01
-to   = 2023-06-30
+from = 2026-01-27
+to   = 2026-05-21
 
 [sizing]
 position_size_pct = 50

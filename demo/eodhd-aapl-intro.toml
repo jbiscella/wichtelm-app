@@ -1,25 +1,30 @@
 # EODHD demo — AAPL intro (mean reversion + daily trend filter).
-# Real-data counterpart of demo-backtest.toml. Run on a machine with
-# outbound access to eodhd.com:
+# Real-data counterpart of demo-backtest.toml.
 #   export EODHD_API_TOKEN=demo
 #   java -jar target/wichtelm.jar run demo/eodhd-aapl-intro.toml
-# The free EODHD "demo" token serves AAPL.US / TSLA.US / VTI.US (and a few more).
+#
+# [date_range] tracks the EODHD "demo" token's ROLLING recent intraday slice
+# (~4 months); historical windows return no data ([V5]). Refresh it from the
+# probe in demo/README.md when a run fails.
 
 strategy    = "strategies/mean-reversion-trend.strat"
 symbol      = "AAPL.US"
 data_source = "eodhd"
 
 [date_range]
-from = 2024-01-01
-to   = 2024-03-31
+from = 2026-01-27
+to   = 2026-05-21
 
 [sizing]
 position_size_pct = 50
 pyramiding        = false
 
 [parameters]
-oversold   = 35
-overbought = 65
+oversold     = 35
+overbought   = 65
+# Keep the 1d trend EMA short enough to warm inside the ~4-month demo window
+# (the strategy default 200 would never warm over so few daily bars).
+trend_period = 20
 
 [eodhd]
 api_token_env = "EODHD_API_TOKEN"

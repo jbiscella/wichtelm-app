@@ -1,15 +1,16 @@
-# EODHD demo — TSLA MACD breakout (post-election volatile momentum, Q4 2024).
+# EODHD demo — TSLA MACD breakout (volatility-gated momentum).
 # Real-data counterpart of tst2020-macd-backtest.toml.
 #   export EODHD_API_TOKEN=demo
 #   java -jar target/wichtelm.jar run demo/eodhd-tsla-macd-breakout.toml
+# [date_range] tracks the demo token's rolling recent slice — see demo/README.md.
 
 strategy    = "strategies/macd-breakout.strat"
 symbol      = "TSLA.US"
 data_source = "eodhd"
 
 [date_range]
-from = 2024-10-01
-to   = 2024-12-31
+from = 2026-01-27
+to   = 2026-05-21
 
 [sizing]
 position_size_pct = 50

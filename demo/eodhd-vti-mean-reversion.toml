@@ -1,15 +1,16 @@
-# EODHD demo — VTI mean reversion in a consolidating broad market (Q2-Q3 2023).
+# EODHD demo — VTI mean reversion in the broad market.
 # Real-data counterpart of tst2020-backtest.toml.
 #   export EODHD_API_TOKEN=demo
 #   java -jar target/wichtelm.jar run demo/eodhd-vti-mean-reversion.toml
+# [date_range] tracks the demo token's rolling recent slice — see demo/README.md.
 
 strategy    = "strategies/mean-reversion-trend.strat"
 symbol      = "VTI.US"
 data_source = "eodhd"
 
 [date_range]
-from = 2023-04-01
-to   = 2023-09-30
+from = 2026-01-27
+to   = 2026-05-21
 
 [sizing]
 position_size_pct = 50
