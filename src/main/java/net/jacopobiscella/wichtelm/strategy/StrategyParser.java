@@ -391,13 +391,29 @@ public final class StrategyParser {
                 if (k < n && expr.charAt(k) == '(') {
                     validateFunction(word, expr, k, line, context, parameterNames);
                     if (BuiltinCatalog.isPivotPrimitive(word)) {
-                        // The pivot argument is a symbolic LEVEL token (R1, S2…),
-                        // already validated inside validateFunction. Skip past it
-                        // so the scanner does not re-read "R1" as an undeclared
-                        // identifier (P13). The numeric arithmetic evaluator is
-                        // bypassed for pivots — they resolve via a dedicated
-                        // boolean-step path in ExpressionEvaluator.condition.
-                        i = closeParenIndex(expr, k, line) + 1;
+                        int close = closeParenIndex(expr, k, line);
+                        // A pivot's level token (R1, S2…) is symbolic and resolves
+                        // ONLY through the dedicated boolean-step path in
+                        // ExpressionEvaluator.condition — it never enters the
+                        // numeric arithmetic evaluator. So a pivot is valid only
+                        // as a COMPLETE When/And condition step; embedded in a
+                        // comparison, arithmetic, or a Background series it would
+                        // reach the numeric path at runtime and fail on "R1".
+                        // Reject those usages here (the STOP_TAKE case is already
+                        // P16 via validateFunction).
+                        boolean bareConditionStep =
+                                (context == ExprContext.CONDITION_ENTRY
+                                        || context == ExprContext.CONDITION_EXIT)
+                                && expr.strip().equals(expr.substring(i, close + 1).strip());
+                        if (!bareConditionStep) {
+                            throw fail("P14", line, 1, word + " is a boolean pivot primitive and "
+                                    + "may only be used as a complete When/And step (e.g. \"When "
+                                    + word + "(R1)\"); it cannot appear inside a comparison, "
+                                    + "arithmetic, or a Background series");
+                        }
+                        // Skip past the symbolic level so the scanner does not
+                        // re-read "R1" as an undeclared identifier (P13).
+                        i = close + 1;
                         continue;
                     }
                 } else if (!BuiltinCatalog.isOperatorWord(word)) {
