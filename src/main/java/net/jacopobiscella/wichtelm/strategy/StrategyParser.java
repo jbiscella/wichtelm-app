@@ -382,6 +382,16 @@ public final class StrategyParser {
                 }
                 if (k < n && expr.charAt(k) == '(') {
                     validateFunction(word, expr, k, line, context, parameterNames);
+                    if (BuiltinCatalog.isPivotPrimitive(word)) {
+                        // The pivot argument is a symbolic LEVEL token (R1, S2…),
+                        // already validated inside validateFunction. Skip past it
+                        // so the scanner does not re-read "R1" as an undeclared
+                        // identifier (P13). The numeric arithmetic evaluator is
+                        // bypassed for pivots — they resolve via a dedicated
+                        // boolean-step path in ExpressionEvaluator.condition.
+                        i = closeParenIndex(expr, k, line) + 1;
+                        continue;
+                    }
                 } else if (!BuiltinCatalog.isOperatorWord(word)) {
                     validateIdentifier(word, line, context, parameterNames, seriesNames);
                 }
@@ -428,7 +438,25 @@ public final class StrategyParser {
                     + " argument(s) but got " + arguments.size());
         }
         checkNumericRanges(name, arguments, line);
+        checkPivotLevel(name, arguments, line);
         checkTierBArgumentsAreResolvable(name, arguments, parameterNames, line);
+    }
+
+    /**
+     * A pivot primitive's lone argument is a symbolic STANDARD level token, not
+     * a number. Reject any token outside the STANDARD set (P, R1-R3, S1-S3) at
+     * parse time (P21) — including CAMARILLA's R4/S4, which are out of scope in
+     * v1, and any unknown token like {@code X9}.
+     */
+    private void checkPivotLevel(String name, List<String> arguments, int line) {
+        if (!BuiltinCatalog.isPivotPrimitive(name) || arguments.size() != 1) {
+            return;
+        }
+        String level = arguments.getFirst().strip();
+        if (!BuiltinCatalog.PIVOT_LEVELS.contains(level)) {
+            throw fail("P21", line, 1, "pivot level of " + name
+                    + " must be one of P, R1, R2, R3, S1, S2, S3, was " + level);
+        }
     }
 
     /**
@@ -508,6 +536,23 @@ public final class StrategyParser {
                 }
             }
         }
+    }
+
+    /** Index of the {@code )} matching the {@code (} at {@code openParen}. */
+    private int closeParenIndex(String expr, int openParen, int line) {
+        int depth = 0;
+        for (int i = openParen; i < expr.length(); i++) {
+            char c = expr.charAt(i);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        throw fail("P15", line, 1, "unbalanced parentheses in expression");
     }
 
     private List<String> extractArguments(String expr, int openParen) {

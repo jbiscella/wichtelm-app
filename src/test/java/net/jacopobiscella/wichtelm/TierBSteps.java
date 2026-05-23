@@ -8,6 +8,7 @@ import net.jacopobiscella.wichtelm.config.DataSource;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunner;
 import net.jacopobiscella.wichtelm.runtime.NachtkrappMatchIndex;
+import net.jacopobiscella.wichtelm.strategy.BuiltinCatalog;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParser;
 import org.hatrack.frauholle.error.BacktestException;
@@ -183,6 +184,17 @@ public class TierBSteps {
 
     @Then("the prepass indexed the {string} key with arg {string}")
     public void prepassIndexedArg(String name, String arg) {
+        // A pivot primitive's arg is a symbolic level token (e.g. "R1"), which
+        // is not parseable as a number; index it as a symbolic Key. Numeric
+        // primitives (periods, thresholds) keep the BigDecimal arg.
+        if (BuiltinCatalog.isPivotPrimitive(name)) {
+            NachtkrappMatchIndex index = NachtkrappMatchIndex.buildFor(
+                    strategy, Map.of(), run.primarySeries(), Map.of());
+            assertTrue(index.hasKey(NachtkrappMatchIndex.Key.pivot(
+                            name, arg, strategy.primaryTimeframe().wire())),
+                    "the prepass should have indexed " + name + "(" + arg + ")");
+            return;
+        }
         assertPrepassKey(name, List.of(new BigDecimal(arg)));
     }
 

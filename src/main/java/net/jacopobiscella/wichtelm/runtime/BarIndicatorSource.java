@@ -104,6 +104,19 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
         };
     }
 
+    @Override
+    public boolean pivotPrimitive(String name, String level) {
+        NachtkrappMatchIndex.Key key =
+                NachtkrappMatchIndex.Key.pivot(name, level, timeframeWire);
+        if (!matchIndex.hasKey(key)) {
+            throw fail(name,
+                    "pivot primitive '" + name + "(" + level + ")' was not pre-indexed; the "
+                            + "strategy must declare it statically in a Scenario step so the "
+                            + "prepass can scan it");
+        }
+        return matchIndex.matches(key, barTime);
+    }
+
     private BigDecimal tierB(String name, List<BigDecimal> arguments) {
         NachtkrappMatchIndex.Key key = new NachtkrappMatchIndex.Key(name, arguments, timeframeWire);
         if (!matchIndex.hasKey(key)) {

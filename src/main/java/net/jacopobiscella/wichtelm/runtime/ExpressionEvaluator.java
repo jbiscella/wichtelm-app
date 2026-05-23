@@ -7,6 +7,8 @@ import java.math.MathContext;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Evaluates DSL condition and arithmetic expressions against a bar's values.
@@ -25,6 +27,19 @@ public final class ExpressionEvaluator {
     /** Resolves an indicator/function call to its numeric value at a given bar. */
     public interface IndicatorSource {
         BigDecimal evaluate(String functionName, List<BigDecimal> arguments);
+
+        /**
+         * Resolves a pivot Tier B primitive on a dedicated boolean-step path
+         * that keeps the symbolic level token (R1, S2…) out of the numeric
+         * arithmetic pipeline. The default throws: only the runtime
+         * {@code BarIndicatorSource} (which holds the prepass index) can
+         * resolve a pivot. The stop/take and pure-arithmetic contexts never
+         * reach a pivot step — P16 bars functions inside stop_loss/take_profit.
+         */
+        default boolean pivotPrimitive(String name, String level) {
+            throw new UnsupportedOperationException(
+                    "pivot primitive " + name + " cannot be evaluated in this context");
+        }
     }
 
     /** Identifier and function resolution for one bar. */
@@ -36,6 +51,11 @@ public final class ExpressionEvaluator {
     private static final List<String> COMPARATORS = List.of(
             "crosses below", "crosses above", "drops below", "rises above",
             "is above", "is below", "exceeds");
+
+    private static final Pattern PIVOT_STEP = Pattern.compile(
+            "^(price_above_pivot|price_below_pivot"
+                    + "|price_crosses_above_pivot|price_crosses_below_pivot)"
+                    + "\\s*\\(\\s*([A-Za-z][A-Za-z0-9]*)\\s*\\)$");
 
     private final String strategyName;
     private final Instant barTime;
@@ -64,6 +84,14 @@ public final class ExpressionEvaluator {
             }
         }
         if (operator == null) {
+            // Pivot primitive: a dedicated boolean-step path. Its argument is a
+            // symbolic level token (R1, S2…) that the numeric arithmetic Cursor
+            // cannot carry, so it is resolved directly against the prepass index
+            // here rather than through evaluate(name, List<BigDecimal>).
+            Matcher pivot = PIVOT_STEP.matcher(t);
+            if (pivot.matches()) {
+                return current.indicators().pivotPrimitive(pivot.group(1), pivot.group(2));
+            }
             // Bare boolean-valued primitive (Tier B): "When ha_doji()" or
             // "And rsi_oversold(30)". Evaluate the whole step as an
             // arithmetic expression; the boolean primitives return 1.0 / 0.0

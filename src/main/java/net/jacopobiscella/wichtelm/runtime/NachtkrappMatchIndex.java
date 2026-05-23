@@ -1,6 +1,7 @@
 package net.jacopobiscella.wichtelm.runtime;
 
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
+import net.jacopobiscella.wichtelm.strategy.BuiltinCatalog;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
@@ -9,7 +10,10 @@ import org.hatrack.commons.HASeries;
 import org.hatrack.commons.HeikinAshiCalculator;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
+import org.hatrack.commons.PivotLevel;
+import org.hatrack.commons.PivotPointVariant;
 import org.hatrack.commons.PriceSource;
+import org.hatrack.commons.Timeframe;
 import org.hatrack.nachtkrapp.detector.DetectionResult;
 import org.hatrack.nachtkrapp.detector.RuleBasedPatternDetector;
 import org.hatrack.nachtkrapp.error.DetectionException;
@@ -22,6 +26,7 @@ import org.hatrack.nachtkrapp.rule.DetectionRule.MACDSignalCrossRule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.MACDZeroCrossRule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.MACrossMARule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.MAVsMARule;
+import org.hatrack.nachtkrapp.rule.DetectionRule.PivotPointRule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.PriceMACrossRule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.PriceVsMARule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.RSILevel50CrossRule;
@@ -78,11 +83,27 @@ public final class NachtkrappMatchIndex {
      * strategy would conflate match instants between timeframes whenever
      * timestamps coincide (1d bar at midnight UTC vs 1h bar at midnight UTC).
      */
-    public record Key(String name, List<BigDecimal> args, String timeframeWire) {
+    public record Key(String name, List<BigDecimal> args, String timeframeWire,
+                      List<String> symbolicArgs) {
         public Key {
             Objects.requireNonNull(name, "name");
             Objects.requireNonNull(timeframeWire, "timeframeWire");
             args = List.copyOf(args);
+            symbolicArgs = List.copyOf(symbolicArgs);
+        }
+
+        /** Numeric-only key (all primitives except pivots): no symbolic args. */
+        public Key(String name, List<BigDecimal> args, String timeframeWire) {
+            this(name, args, timeframeWire, List.of());
+        }
+
+        /**
+         * Pivot key — the level (e.g. {@code "R1"}) stays symbolic end-to-end
+         * rather than being encoded as a sentinel number, so the prepass, the
+         * index lookup and the evaluator all speak the same level token.
+         */
+        public static Key pivot(String name, String level, String timeframeWire) {
+            return new Key(name, List.of(), timeframeWire, List.of(level));
         }
     }
 
@@ -106,7 +127,9 @@ public final class NachtkrappMatchIndex {
             "price_above_sma", "price_below_sma", "price_above_ema", "price_below_ema",
             "price_crosses_above_sma", "price_crosses_below_sma",
             "price_crosses_above_ema", "price_crosses_below_ema",
-            "sma_above_ema", "sma_crosses_above_ema", "sma_crosses_below_ema");
+            "sma_above_ema", "sma_crosses_above_ema", "sma_crosses_below_ema",
+            "price_above_pivot", "price_below_pivot",
+            "price_crosses_above_pivot", "price_crosses_below_pivot");
 
     private static final Pattern CALL_PATTERN = Pattern.compile(
             "\\b(ha_doji|ha_strong_bullish|ha_strong_bearish|ha_strong|"
@@ -117,7 +140,9 @@ public final class NachtkrappMatchIndex {
                     + "price_crosses_above_sma|price_crosses_below_sma|"
                     + "price_crosses_above_ema|price_crosses_below_ema|"
                     + "price_above_sma|price_below_sma|price_above_ema|price_below_ema|"
-                    + "sma_crosses_above_ema|sma_crosses_below_ema|sma_above_ema)"
+                    + "sma_crosses_above_ema|sma_crosses_below_ema|sma_above_ema|"
+                    + "price_crosses_above_pivot|price_crosses_below_pivot|"
+                    + "price_above_pivot|price_below_pivot)"
                     + "\\s*\\(([^)]*)\\)");
 
     /** Names of Tier B primitives — exposed for the evaluator / catalog. */
@@ -285,8 +310,11 @@ public final class NachtkrappMatchIndex {
         Matcher matcher = CALL_PATTERN.matcher(text);
         while (matcher.find()) {
             String name = matcher.group(1);
-            List<BigDecimal> args = parseArgs(name, matcher.group(2), parameters);
-            Key key = new Key(name, args, tfWire);
+            // Pivot primitives carry a symbolic level token (R1, S2…) — keep it
+            // symbolic rather than forcing it through the numeric parseArgs.
+            Key key = BuiltinCatalog.isPivotPrimitive(name)
+                    ? Key.pivot(name, matcher.group(2).strip(), tfWire)
+                    : new Key(name, parseArgs(name, matcher.group(2), parameters), tfWire);
             if (seen.add(key)) {
                 specs.add(buildKeySpec(key));
             }
@@ -430,6 +458,10 @@ public final class NachtkrappMatchIndex {
             case "sma_above_ema" -> maVsMa(key);
             case "sma_crosses_above_ema" -> maCross(key, true);
             case "sma_crosses_below_ema" -> maCross(key, false);
+            case "price_above_pivot" -> pivot(key, PivotKind.ABOVE);
+            case "price_below_pivot" -> pivot(key, PivotKind.BELOW);
+            case "price_crosses_above_pivot" -> pivot(key, PivotKind.CROSS_ABOVE);
+            case "price_crosses_below_pivot" -> pivot(key, PivotKind.CROSS_BELOW);
             default -> throw new IllegalArgumentException(
                     "not a Tier B primitive name: " + name);
         };
@@ -482,6 +514,35 @@ public final class NachtkrappMatchIndex {
                 : m -> m instanceof PatternMatch.MACrossedBelowMA x
                         && x.aType() == MAType.SMA && x.aPeriod() == smaPeriod
                         && x.bType() == MAType.EMA && x.bPeriod() == emaPeriod;
+        return new KeySpec(key, rule, filter, false);
+    }
+
+    // ─── Pivot point primitives (ha-track 0.52) ───────────────────────────────
+
+    private static final Timeframe DAILY_PIVOT_PERIOD = Timeframe.fromWire("1d");
+
+    private enum PivotKind { ABOVE, BELOW, CROSS_ABOVE, CROSS_BELOW }
+
+    /**
+     * Builds a STANDARD daily-pivot KeySpec. The {@link PivotPointRule}
+     * aggregates the source series to daily bars internally (UTC boundaries)
+     * and reads the prior completed day's OHLC, so it runs against the same
+     * primary OHLC stream as the other price primitives. The filter keeps only
+     * matches of the requested flavour AND the requested level (e.g. R1), so a
+     * second call on a different level reuses the one detection pass.
+     */
+    private static KeySpec pivot(Key key, PivotKind kind) {
+        PivotLevel level = PivotLevel.valueOf(key.symbolicArgs().getFirst());
+        DetectionRule rule = new PivotPointRule(
+                DAILY_PIVOT_PERIOD, PivotPointVariant.STANDARD, PriceSource.CLOSE);
+        Predicate<PatternMatch> filter = switch (kind) {
+            case ABOVE -> m -> m instanceof PatternMatch.PriceAbovePivot p && p.level() == level;
+            case BELOW -> m -> m instanceof PatternMatch.PriceBelowPivot p && p.level() == level;
+            case CROSS_ABOVE ->
+                    m -> m instanceof PatternMatch.PriceCrossedAbovePivot p && p.level() == level;
+            case CROSS_BELOW ->
+                    m -> m instanceof PatternMatch.PriceCrossedBelowPivot p && p.level() == level;
+        };
         return new KeySpec(key, rule, filter, false);
     }
 }
