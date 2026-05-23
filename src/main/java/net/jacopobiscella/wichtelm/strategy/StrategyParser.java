@@ -565,6 +565,23 @@ public final class StrategyParser {
                     requirePositivePeriod(arguments.get(1), name, line);
                 }
             }
+            case "highest_high", "lowest_low", "highest_close", "lowest_close" -> {
+                if (arguments.size() == 1) {
+                    requirePositivePeriod(arguments.getFirst(), name, line);
+                }
+            }
+            case "macd_line", "macd_signal", "macd_histogram" -> {
+                if (arguments.size() == 3) {
+                    requirePositivePeriod(arguments.get(0), name, line);
+                    requirePositivePeriod(arguments.get(1), name, line);
+                    requirePositivePeriod(arguments.get(2), name, line);
+                }
+            }
+            case "ha_bullish_reversal", "ha_bearish_reversal" -> {
+                if (arguments.size() == 1) {
+                    requirePositivePeriod(arguments.getFirst(), name, line);
+                }
+            }
             default -> {
             }
         }

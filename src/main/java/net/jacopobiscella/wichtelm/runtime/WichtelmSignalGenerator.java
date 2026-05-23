@@ -294,24 +294,36 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     }
 
     private BigDecimal evaluateProtective(String expression, Position position) {
-        // Resolve the expression at the entry FILL bar so atr_value(period)
-        // snapshots ATR there and stays frozen for the trade: every call uses
-        // position.entryTime(), independent of the current bar.
+        // Resolve at the entry fill so atr_value(period) snapshots ATR there and
+        // stays frozen for the trade (every call uses position.entryTime()).
+        // Lookahead-safety: ATR uses ONLY bars that closed strictly before the
+        // fill. OHLCBar.time() is the bar OPEN and the fill happens at that open,
+        // so the fill bar's own high/low/close are not yet known — including it
+        // would let atr_value depend on future data.
         Instant fill = position.entryTime();
-        List<OHLCBar> upToFill = new ArrayList<>();
-        for (OHLCBar candidate : primaryHistory) {
-            if (!candidate.time().isAfter(fill)) {
-                upToFill.add(candidate);
+        List<OHLCBar> beforeFill = barsStrictlyBefore(primaryHistory, fill);
+        ExpressionEvaluator.IndicatorSource source;
+        if (beforeFill.isEmpty()) {
+            source = NO_INDICATORS;
+        } else {
+            long idx = beforeFill.size() - 1;
+            source = new BarIndicatorSource(beforeFill, strategy.featureName(),
+                    beforeFill.getLast().time(), idx, matchIndex, timeframe.wire());
+        }
+        ExpressionEvaluator evaluator =
+                new ExpressionEvaluator(strategy.featureName(), fill, 0);
+        return evaluator.arithmetic(expression, new Scope(positionValues(position), source));
+    }
+
+    /** Bars that closed strictly before {@code exclusiveLimit} (lookahead-safe). */
+    public static List<OHLCBar> barsStrictlyBefore(List<OHLCBar> bars, Instant exclusiveLimit) {
+        List<OHLCBar> out = new ArrayList<>();
+        for (OHLCBar candidate : bars) {
+            if (candidate.time().isBefore(exclusiveLimit)) {
+                out.add(candidate);
             }
         }
-        long fillIndex = upToFill.isEmpty() ? 0 : upToFill.size() - 1;
-        ExpressionEvaluator.IndicatorSource source = upToFill.isEmpty()
-                ? NO_INDICATORS
-                : new BarIndicatorSource(upToFill, strategy.featureName(), fill, fillIndex,
-                        matchIndex, timeframe.wire());
-        ExpressionEvaluator evaluator =
-                new ExpressionEvaluator(strategy.featureName(), fill, fillIndex);
-        return evaluator.arithmetic(expression, new Scope(positionValues(position), source));
+        return out;
     }
 
     /**

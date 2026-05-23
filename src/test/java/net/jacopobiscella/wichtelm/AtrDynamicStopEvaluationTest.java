@@ -1,6 +1,7 @@
 package net.jacopobiscella.wichtelm;
 
 import net.jacopobiscella.wichtelm.runtime.BarIndicatorSource;
+import net.jacopobiscella.wichtelm.runtime.WichtelmSignalGenerator;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.indicators.Indicators;
 import org.junit.jupiter.api.Test;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Correctness of the atr_value(period) accessor (INC2). The Gherkin scenarios
@@ -54,5 +56,26 @@ class AtrDynamicStopEvaluationTest {
         BigDecimal expected = atr[atr.length - 1];
         assertEquals(0, got.compareTo(expected),
                 "atr_value(14) must equal ATR(14) at the bar; got " + got + " expected " + expected);
+    }
+
+    @Test
+    void atrSnapshotExcludesTheFillBarToAvoidLookahead() {
+        // The fill happens at the bar's OPEN, so the fill bar's high/low/close
+        // are unknown then; the ATR snapshot must use only bars that closed
+        // strictly before the fill. Build history that ends AT the fill instant.
+        Instant start = Instant.parse("2024-01-01T00:00:00Z");
+        List<OHLCBar> history = new ArrayList<>();
+        for (int i = 0; i < 6; i++) {
+            BigDecimal c = BigDecimal.valueOf(100 + i);
+            history.add(new OHLCBar(start.plus(Duration.ofHours(i)), c, c.add(BigDecimal.ONE),
+                    c.subtract(BigDecimal.ONE), c, Optional.empty()));
+        }
+        Instant fill = start.plus(Duration.ofHours(5)); // the last bar IS the fill bar
+
+        List<OHLCBar> beforeFill = WichtelmSignalGenerator.barsStrictlyBefore(history, fill);
+
+        assertEquals(5, beforeFill.size(), "the fill bar must be excluded from the ATR snapshot");
+        assertTrue(beforeFill.stream().noneMatch(b -> b.time().equals(fill)),
+                "no bar at the fill instant may feed atr_value (lookahead-safety)");
     }
 }
