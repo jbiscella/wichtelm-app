@@ -39,3 +39,13 @@ Feature: ATR-based dynamic stops
     And a CSV dataset of 120 primary bars
     When the backtest runs
     Then the backtest completes without throwing
+
+  # An ungated entry can match before its atr_value stop is computable (ATR not
+  # warm). The runtime suppresses that entry instead of crashing, and lists it
+  # in the report so the author sees why early trades are missing.
+  Scenario: An entry whose ATR stop is not yet warm is suppressed, not crashed
+    Given an ungated ATR-stop long strategy whose stop_loss is "entry_price - 2 * atr_value(14)"
+    And a CSV dataset of 120 primary bars
+    When the backtest runs
+    Then the backtest completes without throwing
+    And at least one entry was suppressed for ATR warmup

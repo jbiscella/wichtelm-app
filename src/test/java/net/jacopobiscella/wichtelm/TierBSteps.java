@@ -182,6 +182,31 @@ public class TierBSteps {
                         + "    Then long_exit\n", "atr-stop.strat");
     }
 
+    @Given("an ungated ATR-stop long strategy whose stop_loss is {string}")
+    public void ungatedAtrStopLongStrategy(String stopExpr) {
+        // No warmup gate: the entry condition is always true, so it matches on
+        // bar 1 — before ATR(14) is warm — exercising the suppression path.
+        strategy = StrategyParser.parse(
+                "Feature: ungated atr stop\n"
+                        + "  Primary timeframe: 1h\n\n"
+                        + "  Scenario: Enter long\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 0\n"
+                        + "    Then long_entry\n"
+                        + "    And with stop_loss at " + stopExpr + "\n\n"
+                        + "  Scenario: Exit long unconditionally\n"
+                        + "    Given a long position is open\n"
+                        + "    When close drops below 0\n"
+                        + "    Then long_exit\n", "ungated-atr-stop.strat");
+    }
+
+    @Then("at least one entry was suppressed for ATR warmup")
+    public void atLeastOneEntrySuppressed() {
+        assertTrue(run.suppressedEntries().stream()
+                        .anyMatch(s -> s.reason().contains("ATR not warm")),
+                "expected at least one ATR-warmup suppression, got " + run.suppressedEntries());
+    }
+
     @Then("the prepass indexed the {string} key with arg {string}")
     public void prepassIndexedArg(String name, String arg) {
         // A pivot primitive's arg is a symbolic level token (e.g. "R1"), which

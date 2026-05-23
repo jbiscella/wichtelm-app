@@ -29,6 +29,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.TreeMap;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * Translates a parsed strategy into frau-holle {@link Signal}s, one per primary
@@ -89,6 +91,17 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
      * {@code BarContext}.
      */
     private List<OHLCBar> primaryHistory = List.of();
+
+    /**
+     * Entries matched but not fired because their protective stop / take could
+     * not be evaluated at the prospective fill (atr_value warmup). Accumulated
+     * across the backtest and surfaced in the report.
+     */
+    private final List<SuppressedEntry> suppressedEntries = new ArrayList<>();
+
+    /** {@code atr_value(<arg>)} occurrences, for reporting the unwarmed period. */
+    private static final Pattern ATR_VALUE_CALL =
+            Pattern.compile("atr_value\\s*\\(\\s*([A-Za-z_][A-Za-z0-9_]*|\\d+)\\s*\\)");
 
     /** Generator for a strategy without higher-timeframe Background series. */
     public WichtelmSignalGenerator(ParsedStrategy strategy, Map<String, BigDecimal> parameters,
@@ -190,6 +203,16 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 continue;
             }
             if (conjunctionHolds(scenario, evaluator, current, previous)) {
+                Optional<String> warmupMiss = protectiveWarmupMiss(scenario);
+                if (warmupMiss.isPresent()) {
+                    // The declared protective stop / take cannot be snapshotted
+                    // at the prospective fill (atr_value not warm). Suppress the
+                    // entry — opening without its declared protection would
+                    // misrepresent the strategy; it fires later once ATR warms.
+                    suppressedEntries.add(new SuppressedEntry(
+                            context.currentBar().time(), scenario.name(), warmupMiss.get()));
+                    continue;
+                }
                 recordTrigger(scenario, context.currentBar().time());
                 pendingEntryScenarioName = scenario.name();
                 BigDecimal quantity = quantity(context);
@@ -243,6 +266,14 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
 
     private void recordTrigger(StrategyScenario scenario, Instant barTime) {
         triggerTimes.computeIfAbsent(scenario.name(), name -> new ArrayList<>()).add(barTime);
+    }
+
+    /**
+     * Entries matched but suppressed because their protective stop / take could
+     * not be evaluated at the prospective fill (atr_value warmup), chronological.
+     */
+    public List<SuppressedEntry> suppressedEntries() {
+        return List.copyOf(suppressedEntries);
     }
 
     /** Snapshotted stop_loss price for an open position, if its entry Scenario declared one. */
@@ -313,6 +344,69 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         ExpressionEvaluator evaluator =
                 new ExpressionEvaluator(strategy.featureName(), fill, 0);
         return evaluator.arithmetic(expression, new Scope(positionValues(position), source));
+    }
+
+    /**
+     * Probes, at the entry-signal bar, whether {@code scenario}'s protective
+     * stop / take could be snapshotted at the prospective fill. The fill is the
+     * NEXT bar's open, so the bars that will precede it are exactly
+     * {@link #primaryHistory} now (bars at or before the signal bar) — the same
+     * set {@link #evaluateProtective} will use. If an {@code atr_value(period)}
+     * is not yet warm over them, returns a reason string; otherwise empty.
+     *
+     * <p>The probe evaluates the expression with placeholder trade-context
+     * values: atr_value's warmup depends only on bar history, not on
+     * {@code entry_price} / {@code position_size}, so the placeholders cannot
+     * change whether it throws. Only {@link IndicatorWarmupException} is caught
+     * — any other failure is a genuine error and propagates.
+     */
+    private Optional<String> protectiveWarmupMiss(StrategyScenario scenario) {
+        List<String> expressions = new ArrayList<>();
+        scenario.stopLossExpression().ifPresent(expressions::add);
+        scenario.takeProfitExpression().ifPresent(expressions::add);
+        if (expressions.isEmpty() || primaryHistory.isEmpty()) {
+            return Optional.empty();
+        }
+        OHLCBar last = primaryHistory.getLast();
+        long idx = primaryHistory.size() - 1L;
+        ExpressionEvaluator.IndicatorSource source = new BarIndicatorSource(
+                primaryHistory, strategy.featureName(), last.time(), idx,
+                matchIndex, timeframe.wire());
+        ExpressionEvaluator.Values placeholders = name -> switch (name) {
+            case "entry_price", "position_size" -> BigDecimal.ONE;
+            default -> resolveParameter(name);
+        };
+        ExpressionEvaluator evaluator =
+                new ExpressionEvaluator(strategy.featureName(), last.time(), idx);
+        for (String expression : expressions) {
+            try {
+                evaluator.arithmetic(expression, new Scope(placeholders, source));
+            } catch (IndicatorWarmupException notWarm) {
+                int period = largestAtrValuePeriod(expression);
+                return Optional.of("ATR not warm: needs " + period + " pre-fill bars, only "
+                        + primaryHistory.size() + " available");
+            }
+        }
+        return Optional.empty();
+    }
+
+    /** Largest {@code atr_value(period)} period referenced in {@code expression}. */
+    private int largestAtrValuePeriod(String expression) {
+        Matcher matcher = ATR_VALUE_CALL.matcher(expression);
+        int largest = 0;
+        while (matcher.find()) {
+            String arg = matcher.group(1);
+            BigDecimal value;
+            try {
+                value = new BigDecimal(arg);
+            } catch (NumberFormatException notLiteral) {
+                value = parameters.get(arg);
+            }
+            if (value != null) {
+                largest = Math.max(largest, value.intValueExact());
+            }
+        }
+        return largest;
     }
 
     /** Bars that closed strictly before {@code exclusiveLimit} (lookahead-safe). */

@@ -112,7 +112,8 @@ public class ReportGenerationSteps {
 
     private ReportData reportData() {
         return new ReportData(configBasename, generatedAt, outputDirectory, strategy,
-                backtestResult(), primarySeries(), higherSeries, triggerTimes, Map.of(), "TEST");
+                backtestResult(), primarySeries(), higherSeries, triggerTimes, Map.of(), "TEST",
+                List.of());
     }
 
     @Given("a report for config basename {string} generated at {string}")

@@ -3,6 +3,7 @@ package net.jacopobiscella.wichtelm.report;
 import net.jacopobiscella.wichtelm.error.ReportGenerationException;
 import net.jacopobiscella.wichtelm.runtime.BarIndicatorSource;
 import net.jacopobiscella.wichtelm.runtime.ExpressionEvaluator;
+import net.jacopobiscella.wichtelm.runtime.SuppressedEntry;
 import net.jacopobiscella.wichtelm.runtime.WichtelmSignalGenerator;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.FirstClassCondition;
@@ -138,6 +139,7 @@ public final class HtmlReportGenerator {
         appendAggregateMetrics(html, data.result().metrics());
         appendEquityAndDrawdown(html, data);
         appendTradeList(html, data, renderer);
+        html.append(suppressedEntriesSection(data.suppressedEntries()));
         appendFooter(html, data);
 
         html.append("</div></body></html>");
@@ -196,6 +198,37 @@ public final class HtmlReportGenerator {
      * entry scenarios additionally surface their stop_loss / take_profit
      * expressions untranslated.
      */
+    /**
+     * Diagnostics section listing entries that matched but did not fire because
+     * their protective stop / take could not be evaluated at the fill (an
+     * atr_value stop whose ATR was still warming up). It answers "why did this
+     * strategy produce fewer trades than expected" inside the report, where the
+     * author is looking — not on stdout. Returns "" when nothing was suppressed
+     * so the section never renders for a clean run.
+     */
+    String suppressedEntriesSection(List<SuppressedEntry> entries) {
+        if (entries.isEmpty()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        out.append("<section class=\"suppressed-entries\">")
+                .append("<h3>Suppressed entries</h3>")
+                .append("<p class=\"note\">These entries matched all their conditions but did "
+                        + "not fire: their declared protective stop / take could not be evaluated "
+                        + "at the fill (an indicator was still warming up). Each fires on a later "
+                        + "bar once the indicator warms — they are not lost, only deferred.</p>")
+                .append("<table class=\"suppressed\"><thead><tr>")
+                .append("<th>Time</th><th>Scenario</th><th>Reason</th>")
+                .append("</tr></thead><tbody>");
+        for (SuppressedEntry entry : entries) {
+            out.append("<tr><td class=\"mono\">").append(esc(formatIsoMinute(entry.barTime())))
+                    .append("</td><td>").append(esc(entry.scenarioName()))
+                    .append("</td><td>").append(esc(entry.reason())).append("</td></tr>");
+        }
+        out.append("</tbody></table></section>");
+        return out.toString();
+    }
+
     private void appendStrategyRules(StringBuilder html, ReportData data) {
         ParsedStrategy strategy = data.strategy();
         Map<String, BigDecimal> params = data.parameters();

@@ -93,6 +93,8 @@ The expression is evaluated at the fill time of the entry, snapshotted, and comp
 
 Each open position is bound at fill time to the scenario that emitted its Buy/Sell signal; the protective-exit evaluator uses that scenario's stop_loss / take_profit expressions, not the first same-direction entry scenario in source order. Two `long_entry` scenarios with different stops therefore each apply their own stop to the position they opened.
 
+**Warmup suppression.** Because `atr_value(period)` is snapshotted at the entry fill, an entry that matches before its ATR is warm (fewer than `period` bars precede the fill) cannot be given its declared stop. Rather than open a position without its declared protection (misrepresenting the strategy) or abort the backtest, the runtime **suppresses that entry**: no position opens, and the same scenario fires naturally on a later bar once the indicator warms. Each suppressed entry is recorded (bar time, scenario name, reason) and listed in a "Suppressed entries" diagnostics section of the HTML report (§7), so the author can see why early trades are missing.
+
 ### 3.5 Multi-timeframe expressions
 
 The primary timeframe is declared in the Feature description block: `Primary timeframe: <TF>`.
@@ -457,7 +459,11 @@ Below the scenario row come **one or two chart frames**:
 
 The heerwisch chart images are deliberately produced **as the chart engine renders them today**. The styled frame around the image — header, footer, typography, palette — matches the design system; the chart contents themselves carry JFreeChart's native rendering. This is an accepted visual mismatch.
 
-### 7.6 Footer
+### 7.6 Suppressed entries (diagnostics)
+
+When one or more entries were suppressed for indicator warmup (§3.4), a "Suppressed entries" section renders after the trade list: a table of `bar time · scenario · reason` (e.g. `ATR not warm: needs 14 pre-fill bars, only 6 available`), introduced by a note that these entries are deferred rather than lost. The section is omitted entirely for a clean run (zero suppressions), so it never adds noise to a normal report.
+
+### 7.7 Footer
 
 `Strategy · Symbol · Bars` left, `wichtelm-app <version> · <date>` right. Below: the full disclaimer covering hypothetical-results / past-performance / look-ahead-bias / no-liability language.
 

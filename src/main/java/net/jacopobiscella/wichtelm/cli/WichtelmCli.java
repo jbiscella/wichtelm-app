@@ -178,7 +178,7 @@ public final class WichtelmCli {
         LocalDateTime generatedAt = LocalDateTime.now(ZoneOffset.UTC);
         ReportData data = new ReportData(basename, generatedAt, outputDirectory, strategy,
                 result.result(), new OHLCSeries(result.primarySeries()), higherSeries,
-                result.triggerTimes(), parameters, config.symbol());
+                result.triggerTimes(), parameters, config.symbol(), result.suppressedEntries());
         return new HtmlReportGenerator().generate(data);
     }
 
