@@ -448,7 +448,11 @@ public final class StrategyParser {
             "ha_bullish_reversal", "ha_bearish_reversal",
             "rsi_overbought", "rsi_oversold", "rsi_crosses_50",
             "macd_bullish_cross", "macd_bearish_cross",
-            "macd_zero_cross_up", "macd_zero_cross_down");
+            "macd_zero_cross_up", "macd_zero_cross_down",
+            "price_above_sma", "price_below_sma", "price_above_ema", "price_below_ema",
+            "price_crosses_above_sma", "price_crosses_below_sma",
+            "price_crosses_above_ema", "price_crosses_below_ema",
+            "sma_above_ema", "sma_crosses_above_ema", "sma_crosses_below_ema");
 
     private void validateIdentifier(String word, int line, ExprContext context,
                                     Set<String> parameterNames, Set<String> seriesNames) {
@@ -530,6 +534,19 @@ public final class StrategyParser {
             case "rsi_overbought", "rsi_oversold" -> {
                 if (arguments.size() == 1) {
                     requireRsiThreshold(arguments.getFirst(), name, line);
+                }
+            }
+            case "price_above_sma", "price_below_sma", "price_above_ema", "price_below_ema",
+                 "price_crosses_above_sma", "price_crosses_below_sma",
+                 "price_crosses_above_ema", "price_crosses_below_ema" -> {
+                if (arguments.size() == 1) {
+                    requirePositivePeriod(arguments.getFirst(), name, line);
+                }
+            }
+            case "sma_above_ema", "sma_crosses_above_ema", "sma_crosses_below_ema" -> {
+                if (arguments.size() == 2) {
+                    requirePositivePeriod(arguments.get(0), name, line);
+                    requirePositivePeriod(arguments.get(1), name, line);
                 }
             }
             default -> {

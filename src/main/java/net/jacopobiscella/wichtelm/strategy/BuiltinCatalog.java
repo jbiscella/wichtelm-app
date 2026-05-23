@@ -54,7 +54,20 @@ public final class BuiltinCatalog {
             Map.entry("macd_bullish_cross", 0),
             Map.entry("macd_bearish_cross", 0),
             Map.entry("macd_zero_cross_up", 0),
-            Map.entry("macd_zero_cross_down", 0));
+            Map.entry("macd_zero_cross_down", 0),
+            // MA trend filter Tier B primitives (ha-track 0.52). Eight price-vs-MA
+            // (one period arg) + three MA-vs-MA (two period args).
+            Map.entry("price_above_sma", 1),
+            Map.entry("price_below_sma", 1),
+            Map.entry("price_above_ema", 1),
+            Map.entry("price_below_ema", 1),
+            Map.entry("price_crosses_above_sma", 1),
+            Map.entry("price_crosses_below_sma", 1),
+            Map.entry("price_crosses_above_ema", 1),
+            Map.entry("price_crosses_below_ema", 1),
+            Map.entry("sma_above_ema", 2),
+            Map.entry("sma_crosses_above_ema", 2),
+            Map.entry("sma_crosses_below_ema", 2));
 
     private BuiltinCatalog() {
     }

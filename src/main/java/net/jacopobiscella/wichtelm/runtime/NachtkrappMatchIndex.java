@@ -20,8 +20,13 @@ import org.hatrack.nachtkrapp.rule.DetectionRule.HADojiRule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.HAStrongCandleRule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.MACDSignalCrossRule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.MACDZeroCrossRule;
+import org.hatrack.nachtkrapp.rule.DetectionRule.MACrossMARule;
+import org.hatrack.nachtkrapp.rule.DetectionRule.MAVsMARule;
+import org.hatrack.nachtkrapp.rule.DetectionRule.PriceMACrossRule;
+import org.hatrack.nachtkrapp.rule.DetectionRule.PriceVsMARule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.RSILevel50CrossRule;
 import org.hatrack.nachtkrapp.rule.DetectionRule.RSIThresholdRule;
+import org.hatrack.nachtkrapp.rule.MAType;
 import org.hatrack.nachtkrapp.spec.DetectionSpec;
 
 import java.math.BigDecimal;
@@ -97,14 +102,22 @@ public final class NachtkrappMatchIndex {
             "ha_bullish_reversal", "ha_bearish_reversal",
             "rsi_overbought", "rsi_oversold", "rsi_crosses_50",
             "macd_bullish_cross", "macd_bearish_cross",
-            "macd_zero_cross_up", "macd_zero_cross_down");
+            "macd_zero_cross_up", "macd_zero_cross_down",
+            "price_above_sma", "price_below_sma", "price_above_ema", "price_below_ema",
+            "price_crosses_above_sma", "price_crosses_below_sma",
+            "price_crosses_above_ema", "price_crosses_below_ema",
+            "sma_above_ema", "sma_crosses_above_ema", "sma_crosses_below_ema");
 
     private static final Pattern CALL_PATTERN = Pattern.compile(
             "\\b(ha_doji|ha_strong_bullish|ha_strong_bearish|ha_strong|"
                     + "ha_bullish_reversal|ha_bearish_reversal|"
                     + "rsi_overbought|rsi_oversold|rsi_crosses_50|"
                     + "macd_bullish_cross|macd_bearish_cross|"
-                    + "macd_zero_cross_up|macd_zero_cross_down)"
+                    + "macd_zero_cross_up|macd_zero_cross_down|"
+                    + "price_crosses_above_sma|price_crosses_below_sma|"
+                    + "price_crosses_above_ema|price_crosses_below_ema|"
+                    + "price_above_sma|price_below_sma|price_above_ema|price_below_ema|"
+                    + "sma_crosses_above_ema|sma_crosses_below_ema|sma_above_ema)"
                     + "\\s*\\(([^)]*)\\)");
 
     /** Names of Tier B primitives — exposed for the evaluator / catalog. */
@@ -183,18 +196,32 @@ public final class NachtkrappMatchIndex {
                     throw new IllegalStateException("no bars supplied for timeframe "
                             + group.tfWire() + " referenced by a Tier B primitive");
                 }
+                // A rule whose warmup exceeds the available series cannot emit
+                // any match, and nachtkrapp rejects such a spec ([V6] insufficient
+                // data). Drop those rules so the primitive simply evaluates false
+                // everywhere (warmup → false, no exception); their keys fall
+                // through to an empty match set in the per-KeySpec loop below.
+                Set<DetectionRule> validRules = new LinkedHashSet<>();
+                for (DetectionRule rule : rules) {
+                    if (rule.minBars() <= sourceBars.size()) {
+                        validRules.add(rule);
+                    }
+                }
+                if (validRules.isEmpty()) {
+                    continue;
+                }
                 DetectionSpec spec;
                 if (group.ha()) {
                     List<HABar> haBars = HeikinAshiCalculator.computeChain(
                             Optional.empty(), sourceBars);
                     spec = DetectionSpec.builder()
                             .withSeries(new HASeries(haBars))
-                            .addAllRules(rules)
+                            .addAllRules(validRules)
                             .build();
                 } else {
                     spec = DetectionSpec.builder()
                             .withSeries(new OHLCSeries(sourceBars))
-                            .addAllRules(rules)
+                            .addAllRules(validRules)
                             .build();
                 }
                 DetectionResult result = new RuleBasedPatternDetector().detect(spec);
@@ -392,8 +419,69 @@ public final class NachtkrappMatchIndex {
                 Predicate<PatternMatch> filter = m -> m instanceof PatternMatch.MACDCrossedBelowZero;
                 yield new KeySpec(key, rule, filter, false);
             }
+            case "price_above_sma" -> priceVsMa(key, MAType.SMA, true);
+            case "price_below_sma" -> priceVsMa(key, MAType.SMA, false);
+            case "price_above_ema" -> priceVsMa(key, MAType.EMA, true);
+            case "price_below_ema" -> priceVsMa(key, MAType.EMA, false);
+            case "price_crosses_above_sma" -> priceMaCross(key, MAType.SMA, true);
+            case "price_crosses_below_sma" -> priceMaCross(key, MAType.SMA, false);
+            case "price_crosses_above_ema" -> priceMaCross(key, MAType.EMA, true);
+            case "price_crosses_below_ema" -> priceMaCross(key, MAType.EMA, false);
+            case "sma_above_ema" -> maVsMa(key);
+            case "sma_crosses_above_ema" -> maCross(key, true);
+            case "sma_crosses_below_ema" -> maCross(key, false);
             default -> throw new IllegalArgumentException(
                     "not a Tier B primitive name: " + name);
         };
+    }
+
+    // ─── MA trend filter primitives (ha-track 0.52) ───────────────────────────
+
+    private static KeySpec priceVsMa(Key key, MAType maType, boolean above) {
+        int period = key.args().getFirst().intValueExact();
+        DetectionRule rule = new PriceVsMARule(maType, period, PriceSource.CLOSE);
+        Predicate<PatternMatch> filter = above
+                ? m -> m instanceof PatternMatch.PriceAboveMA a
+                        && a.maType() == maType && a.period() == period
+                : m -> m instanceof PatternMatch.PriceBelowMA b
+                        && b.maType() == maType && b.period() == period;
+        return new KeySpec(key, rule, filter, false);
+    }
+
+    private static KeySpec priceMaCross(Key key, MAType maType, boolean up) {
+        int period = key.args().getFirst().intValueExact();
+        DetectionRule rule = new PriceMACrossRule(maType, period, PriceSource.CLOSE);
+        Predicate<PatternMatch> filter = up
+                ? m -> m instanceof PatternMatch.PriceCrossedAboveMA a
+                        && a.maType() == maType && a.period() == period
+                : m -> m instanceof PatternMatch.PriceCrossedBelowMA b
+                        && b.maType() == maType && b.period() == period;
+        return new KeySpec(key, rule, filter, false);
+    }
+
+    private static KeySpec maVsMa(Key key) {
+        int smaPeriod = key.args().get(0).intValueExact();
+        int emaPeriod = key.args().get(1).intValueExact();
+        DetectionRule rule = new MAVsMARule(MAType.SMA, smaPeriod, MAType.EMA, emaPeriod,
+                PriceSource.CLOSE);
+        Predicate<PatternMatch> filter = m -> m instanceof PatternMatch.MAAboveMA x
+                && x.aType() == MAType.SMA && x.aPeriod() == smaPeriod
+                && x.bType() == MAType.EMA && x.bPeriod() == emaPeriod;
+        return new KeySpec(key, rule, filter, false);
+    }
+
+    private static KeySpec maCross(Key key, boolean up) {
+        int smaPeriod = key.args().get(0).intValueExact();
+        int emaPeriod = key.args().get(1).intValueExact();
+        DetectionRule rule = new MACrossMARule(MAType.SMA, smaPeriod, MAType.EMA, emaPeriod,
+                PriceSource.CLOSE);
+        Predicate<PatternMatch> filter = up
+                ? m -> m instanceof PatternMatch.MACrossedAboveMA x
+                        && x.aType() == MAType.SMA && x.aPeriod() == smaPeriod
+                        && x.bType() == MAType.EMA && x.bPeriod() == emaPeriod
+                : m -> m instanceof PatternMatch.MACrossedBelowMA x
+                        && x.aType() == MAType.SMA && x.aPeriod() == smaPeriod
+                        && x.bType() == MAType.EMA && x.bPeriod() == emaPeriod;
+        return new KeySpec(key, rule, filter, false);
     }
 }
