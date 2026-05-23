@@ -8,3 +8,8 @@ tst2020-indicator-showcase_*.html
 tst2020-ha-pattern-backtest_*.html
 tst2020-ha-streak-backtest_*.html
 tst2020-macd-boolean-backtest_*.html
+tst2020-ma-atr-trend-backtest_*.html
+tst2020-pivot-backtest_*.html
+# Timestamped EODHD reports produced by run_eodhd_demos.sh before it promotes
+# the freshest one to the stable eodhd-<config>-report.html reference copy.
+eodhd-*_*.html

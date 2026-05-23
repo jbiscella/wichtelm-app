@@ -111,7 +111,7 @@ public final class BacktestRunner {
 
         BacktestResult result = new Backtester().run(spec);
         return new BacktestRunResult(result, primarySeries, higherTimeframeBars,
-                generator.triggerTimes());
+                generator.triggerTimes(), generator.suppressedEntries());
     }
 
     /**

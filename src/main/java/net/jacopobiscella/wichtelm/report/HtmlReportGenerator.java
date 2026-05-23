@@ -1,7 +1,10 @@
 package net.jacopobiscella.wichtelm.report;
 
 import net.jacopobiscella.wichtelm.error.ReportGenerationException;
+import net.jacopobiscella.wichtelm.runtime.BarIndicatorSource;
 import net.jacopobiscella.wichtelm.runtime.ExpressionEvaluator;
+import net.jacopobiscella.wichtelm.runtime.SuppressedEntry;
+import net.jacopobiscella.wichtelm.runtime.WichtelmSignalGenerator;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.FirstClassCondition;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
@@ -136,6 +139,7 @@ public final class HtmlReportGenerator {
         appendAggregateMetrics(html, data.result().metrics());
         appendEquityAndDrawdown(html, data);
         appendTradeList(html, data, renderer);
+        html.append(suppressedEntriesSection(data.suppressedEntries()));
         appendFooter(html, data);
 
         html.append("</div></body></html>");
@@ -194,6 +198,37 @@ public final class HtmlReportGenerator {
      * entry scenarios additionally surface their stop_loss / take_profit
      * expressions untranslated.
      */
+    /**
+     * Diagnostics section listing entries that matched but did not fire because
+     * their protective stop / take could not be evaluated at the fill (an
+     * atr_value stop whose ATR was still warming up). It answers "why did this
+     * strategy produce fewer trades than expected" inside the report, where the
+     * author is looking — not on stdout. Returns "" when nothing was suppressed
+     * so the section never renders for a clean run.
+     */
+    String suppressedEntriesSection(List<SuppressedEntry> entries) {
+        if (entries.isEmpty()) {
+            return "";
+        }
+        StringBuilder out = new StringBuilder();
+        out.append("<section class=\"suppressed-entries\">")
+                .append("<h3>Suppressed entries</h3>")
+                .append("<p class=\"note\">These entries matched all their conditions but did "
+                        + "not fire: their declared protective stop / take could not be evaluated "
+                        + "at the fill (an indicator was still warming up). Each fires on a later "
+                        + "bar once the indicator warms — they are not lost, only deferred.</p>")
+                .append("<table class=\"suppressed\"><thead><tr>")
+                .append("<th>Time</th><th>Scenario</th><th>Reason</th>")
+                .append("</tr></thead><tbody>");
+        for (SuppressedEntry entry : entries) {
+            out.append("<tr><td class=\"mono\">").append(esc(formatIsoMinute(entry.barTime())))
+                    .append("</td><td>").append(esc(entry.scenarioName()))
+                    .append("</td><td>").append(esc(entry.reason())).append("</td></tr>");
+        }
+        out.append("</tbody></table></section>");
+        return out.toString();
+    }
+
     private void appendStrategyRules(StringBuilder html, ReportData data) {
         ParsedStrategy strategy = data.strategy();
         Map<String, BigDecimal> params = data.parameters();
@@ -569,7 +604,7 @@ public final class HtmlReportGenerator {
         appendRuleLine(html, data, scenarioByName, entryHit, exitHit, false, trade);
         appendChartFrames(html, data, renderer, trade.entryTime(), trade.exitTime(),
                 entryHit, exitHit, scenarioByName, false, dirClass, isWin,
-                trade.entryPrice(), trade.quantity());
+                trade.entryPrice(), trade.exitPrice(), trade.quantity());
 
         html.append("</div></details>");
     }
@@ -640,9 +675,10 @@ public final class HtmlReportGenerator {
         appendScenarioRow(html, entryHit, null, "open");
         appendRuleLine(html, data, scenarioByName, entryHit, null, true, null);
         // Open trade — isWin irrelevant, the renderer will use NEUTRAL fill.
+        // exitPrice is null: an open position has not closed, so no Exit line.
         appendChartFrames(html, data, renderer, open.entryTime(), windowEnd,
                 entryHit, null, scenarioByName, true, dirClass, false,
-                open.entryPrice(), open.quantity());
+                open.entryPrice(), null, open.quantity());
 
         html.append("</div></details>");
     }
@@ -767,9 +803,11 @@ public final class HtmlReportGenerator {
         String hitAt = formatPrice(trade.exitPrice());
         if (entryScenario != null) {
             Optional<BigDecimal> stop = entryScenario.stopLossExpression()
-                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(), data));
+                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
+                            trade.entryTime(), data));
             Optional<BigDecimal> take = entryScenario.takeProfitExpression()
-                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(), data));
+                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
+                            trade.entryTime(), data));
             boolean isStop;
             if (stop.isPresent() && take.isPresent()) {
                 BigDecimal ex = trade.exitPrice();
@@ -794,7 +832,8 @@ public final class HtmlReportGenerator {
                                     TriggerHit entryHit, TriggerHit exitHit,
                                     Map<String, StrategyScenario> scenarioByName,
                                     boolean openTrade, String dirClass, boolean isWin,
-                                    BigDecimal entryPrice, BigDecimal positionSize) {
+                                    BigDecimal entryPrice, BigDecimal exitPrice,
+                                    BigDecimal positionSize) {
         html.append("<div class=\"charts\">");
 
         Set<String> timeframes = collectScenarioTimeframes(entryHit, exitHit, scenarioByName, data);
@@ -827,7 +866,7 @@ public final class HtmlReportGenerator {
                     : snapToVisibleBar(window.bars(), timeframe, isPrimary, tradeExit);
             html.append(renderChartFrame(renderer, window, tf, isPrimary, entryMarker,
                     exitMarker, openTrade, dirClass, isWin, data, scenarioByName, entryHit, exitHit,
-                    tradeEntry, tradeExit, entryPrice, positionSize));
+                    tradeEntry, tradeExit, entryPrice, exitPrice, positionSize));
         }
 
         html.append("</div>");
@@ -1000,7 +1039,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                                      Map<String, StrategyScenario> scenarioByName,
                                      TriggerHit entryHit, TriggerHit exitHit,
                                      Instant tradeEntry, Instant tradeExit,
-                                     BigDecimal entryPrice, BigDecimal positionSize) {
+                                     BigDecimal entryPrice, BigDecimal exitPrice,
+                                     BigDecimal positionSize) {
         String title = isPrimary ? "Price · primary" : "Background · higher-TF";
         String indicatorLabel = describeChartIndicators(timeframe, window.bars().size(), data);
         String tag = isPrimary ? "trade window + ctx" : "multi-TF context";
@@ -1015,7 +1055,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 ? scenarioByName.get(exitHit.scenarioName()) : null;
         String img = renderHeerwischImage(renderer, window, timeframe, entryMarker, exitMarker,
                 isLong, exitScheduled, openTrade, isWin, data, isPrimary,
-                entryScenario, exitScenario, entryPrice, positionSize);
+                entryScenario, exitScenario, entryPrice, exitPrice, positionSize);
         Duration heldInWindow = Duration.between(tradeEntry, tradeExit);
         String heldLabel = formatHoldDuration(Math.max(0L, heldInWindow.toMinutes()));
 
@@ -1101,7 +1141,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                                          boolean isWin, ReportData data, boolean isPrimary,
                                          StrategyScenario entryScenario,
                                          StrategyScenario exitScenario,
-                                         BigDecimal entryPrice, BigDecimal positionSize) {
+                                         BigDecimal entryPrice, BigDecimal exitPrice,
+                                         BigDecimal positionSize) {
         try {
             ChartSpecBuilder builder = ChartSpec.builder().withSeries(series);
             // Tier B primitives plot their underlying indicator on the primary
@@ -1201,29 +1242,9 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 builder.addAnnotation(new Annotation.TimeRangeHighlight(
                         rangeStart, rangeEnd, fill, new BigDecimal("0.15")));
             }
-            // Entry / stop_loss / take_profit reference lines on the PRIMARY pane
-            // only (the higher-TF chart is context, not a trade reference). Stop
-            // and take are evaluated at the trade's entry price from the entry
-            // scenario's snapshotted expressions (semantic colors: 0.49+).
-            // All three use LevelStyle.DASHED (reference-line convention); levels
-            // outside the window's price range read faint until the ha-track 0.51
-            // chart Y-range fix includes HorizontalLevel annotations.
-            if (isPrimary && entryScenario != null) {
-                builder.addAnnotation(new Annotation.HorizontalLevel(
-                        entryPrice, "Entry " + formatPrice(entryPrice),
-                        LevelStyle.DASHED, Optional.of(FillColor.NEUTRAL)));
-                entryScenario.stopLossExpression().ifPresent(expr -> {
-                    BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
-                    builder.addAnnotation(new Annotation.HorizontalLevel(
-                            p, "Stop " + formatPrice(p),
-                            LevelStyle.DASHED, Optional.of(FillColor.LOSS)));
-                });
-                entryScenario.takeProfitExpression().ifPresent(expr -> {
-                    BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, data);
-                    builder.addAnnotation(new Annotation.HorizontalLevel(
-                            p, "Take " + formatPrice(p),
-                            LevelStyle.DASHED, Optional.of(FillColor.WIN)));
-                });
+            for (Annotation level : referenceLevels(isPrimary, openTrade, entryScenario,
+                    isLong, entryPrice, exitPrice, positionSize, entryMarker, data)) {
+                builder.addAnnotation(level);
             }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
@@ -1234,6 +1255,70 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             throw new ReportGenerationException(
                     "chart rendering failed for timeframe " + timeframeLabel, e);
         }
+    }
+
+    /**
+     * Builds the dashed price-reference lines drawn on the PRIMARY pane only
+     * (the higher-TF chart is context, not a trade reference). All lines use
+     * {@link LevelStyle#DASHED}; levels outside the window's price range read
+     * faint until the ha-track 0.51 Y-range fix folds HorizontalLevel
+     * annotations into the chart range.
+     *
+     * <ul>
+     *   <li><b>Entry</b> — the fill price ({@link FillColor#NEUTRAL}).</li>
+     *   <li><b>Stop / Take</b> — the entry scenario's snapshotted
+     *       stop_loss / take_profit expressions evaluated at the entry price
+     *       (semantic {@link FillColor#LOSS} / {@link FillColor#WIN}).</li>
+     *   <li><b>Exit</b> — the close price of a CLOSED trade only, colored by
+     *       trade OUTCOME so the result reads off the Y axis at a glance the
+     *       same way the pre-declared stop/take levels do: {@link
+     *       FillColor#WIN} when the close was profitable, {@link
+     *       FillColor#LOSS} when it lost, {@link FillColor#NEUTRAL} on the
+     *       rare breakeven. Open positions have no exit price yet and get no
+     *       Exit line. Outcome is read off the entry-vs-exit price spread for
+     *       the trade direction, which equals the sign of the trade P/L —
+     *       v1 models no commissions or slippage (CLAUDE.md section 15).</li>
+     * </ul>
+     */
+    List<Annotation> referenceLevels(boolean isPrimary, boolean openTrade,
+                                     StrategyScenario entryScenario, boolean isLong,
+                                     BigDecimal entryPrice, BigDecimal exitPrice,
+                                     BigDecimal positionSize, Instant entryMarker,
+                                     ReportData data) {
+        List<Annotation> levels = new ArrayList<>();
+        if (!isPrimary || entryScenario == null) {
+            return levels;
+        }
+        levels.add(new Annotation.HorizontalLevel(
+                entryPrice, "Entry " + formatPrice(entryPrice),
+                LevelStyle.DASHED, Optional.of(FillColor.NEUTRAL)));
+        entryScenario.stopLossExpression().ifPresent(expr -> {
+            BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, entryMarker, data);
+            levels.add(new Annotation.HorizontalLevel(
+                    p, "Stop " + formatPrice(p),
+                    LevelStyle.DASHED, Optional.of(FillColor.LOSS)));
+        });
+        entryScenario.takeProfitExpression().ifPresent(expr -> {
+            BigDecimal p = evaluateLevel(expr, entryPrice, positionSize, entryMarker, data);
+            levels.add(new Annotation.HorizontalLevel(
+                    p, "Take " + formatPrice(p),
+                    LevelStyle.DASHED, Optional.of(FillColor.WIN)));
+        });
+        if (!openTrade && exitPrice != null) {
+            // Outcome sign is the entry→exit spread taken in the trade's
+            // direction: a LONG wins when it exits higher, a SHORT when it
+            // exits lower. This equals sign(trade P/L) since v1 has no fees.
+            int pnlSign = isLong
+                    ? exitPrice.compareTo(entryPrice)
+                    : entryPrice.compareTo(exitPrice);
+            FillColor outcome = pnlSign > 0 ? FillColor.WIN
+                    : pnlSign < 0 ? FillColor.LOSS
+                    : FillColor.NEUTRAL;
+            levels.add(new Annotation.HorizontalLevel(
+                    exitPrice, "Exit " + formatPrice(exitPrice),
+                    LevelStyle.DASHED, Optional.of(outcome)));
+        }
+        return levels;
     }
 
     /** Indicator source for stop/take expressions; rule P16 forbids functions there. */
@@ -1250,7 +1335,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
      * should surface it, not guess a level.
      */
     private BigDecimal evaluateLevel(String expression, BigDecimal entryPrice,
-                                     BigDecimal positionSize, ReportData data) {
+                                     BigDecimal positionSize, Instant fill, ReportData data) {
         ExpressionEvaluator.Values values = name -> switch (name) {
             case "entry_price" -> entryPrice;
             case "position_size" -> positionSize;
@@ -1264,8 +1349,17 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 yield parameter;
             }
         };
-        return new ExpressionEvaluator(data.strategy().featureName(), Instant.EPOCH, 0)
-                .arithmetic(expression, new ExpressionEvaluator.Scope(values, NO_INDICATORS));
+        // atr_value(period) resolves to ATR at the entry fill, lookahead-safe:
+        // only bars that closed strictly before the fill (mirrors
+        // WichtelmSignalGenerator.evaluateProtective). Other functions stay banned.
+        List<OHLCBar> beforeFill = WichtelmSignalGenerator.barsStrictlyBefore(
+                data.primarySeries().bars(), fill);
+        ExpressionEvaluator.IndicatorSource source = beforeFill.isEmpty()
+                ? NO_INDICATORS
+                : new BarIndicatorSource(beforeFill, data.strategy().featureName(),
+                        beforeFill.getLast().time(), beforeFill.size() - 1);
+        return new ExpressionEvaluator(data.strategy().featureName(), fill, 0)
+                .arithmetic(expression, new ExpressionEvaluator.Scope(values, source));
     }
 
     /**

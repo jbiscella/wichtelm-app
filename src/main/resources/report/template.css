@@ -145,6 +145,16 @@ details.trigger[open] .chev{transform:rotate(180deg);color:var(--ink)}
 .ch-foot .mk .tri.dn{border-top:7px solid var(--short)}
 
 /* Footer */
+/* Suppressed entries (diagnostics) */
+.suppressed-entries{margin-top:44px;padding:18px 20px;background:var(--surface);border:1px solid var(--border);border-left:3px solid var(--loss);border-radius:6px}
+.suppressed-entries h3{margin:0 0 6px;font-size:13px;font-weight:600;text-transform:uppercase;letter-spacing:0.12em;color:var(--ink)}
+.suppressed-entries .note{margin:0 0 14px;font-size:12px;line-height:1.6;color:var(--ink-soft)}
+.suppressed-entries table.suppressed{width:100%;border-collapse:collapse;font-size:12px}
+.suppressed-entries table.suppressed th{text-align:left;font-size:10px;font-weight:600;text-transform:uppercase;letter-spacing:0.1em;color:var(--ink-faint);padding:0 16px 6px 0;border-bottom:1px solid var(--border)}
+.suppressed-entries table.suppressed td{padding:7px 16px 7px 0;border-bottom:1px solid var(--border);color:var(--ink-soft);vertical-align:top}
+.suppressed-entries table.suppressed tr:last-child td{border-bottom:none}
+.suppressed-entries td.mono{font-family:var(--mono);color:var(--ink);white-space:nowrap}
+
 .doc-footer{margin-top:48px;padding-top:20px;border-top:1px solid var(--border);color:var(--ink-faint);font-family:var(--mono);font-size:11px;line-height:1.7}
 .doc-footer .row{display:flex;justify-content:space-between;gap:24px;margin-bottom:6px}
 .doc-footer .legal{margin-top:14px;padding-top:14px;border-top:1px dashed var(--border);color:var(--ink-soft)}

@@ -54,9 +54,43 @@ public final class BuiltinCatalog {
             Map.entry("macd_bullish_cross", 0),
             Map.entry("macd_bearish_cross", 0),
             Map.entry("macd_zero_cross_up", 0),
-            Map.entry("macd_zero_cross_down", 0));
+            Map.entry("macd_zero_cross_down", 0),
+            // MA trend filter Tier B primitives (ha-track 0.52). Eight price-vs-MA
+            // (one period arg) + three MA-vs-MA (two period args).
+            Map.entry("price_above_sma", 1),
+            Map.entry("price_below_sma", 1),
+            Map.entry("price_above_ema", 1),
+            Map.entry("price_below_ema", 1),
+            Map.entry("price_crosses_above_sma", 1),
+            Map.entry("price_crosses_below_sma", 1),
+            Map.entry("price_crosses_above_ema", 1),
+            Map.entry("price_crosses_below_ema", 1),
+            Map.entry("sma_above_ema", 2),
+            Map.entry("sma_crosses_above_ema", 2),
+            Map.entry("sma_crosses_below_ema", 2),
+            // Pivot point Tier B primitives (ha-track 0.52). The single argument
+            // is a symbolic STANDARD pivot LEVEL token (P, R1.., S1..), not a
+            // numeric period — validated against PIVOT_LEVELS, not as a number.
+            Map.entry("price_above_pivot", 1),
+            Map.entry("price_below_pivot", 1),
+            Map.entry("price_crosses_above_pivot", 1),
+            Map.entry("price_crosses_below_pivot", 1));
+
+    /** The four pivot Tier B primitives, whose lone argument is a symbolic level token. */
+    public static final Set<String> PIVOT_PRIMITIVES = Set.of(
+            "price_above_pivot", "price_below_pivot",
+            "price_crosses_above_pivot", "price_crosses_below_pivot");
+
+    // STANDARD daily pivot level set (v1). CAMARILLA's R4/S4 and the WOODIE /
+    // CAMARILLA variants are out of scope — see CLAUDE.md §3.7.
+    public static final Set<String> PIVOT_LEVELS =
+            Set.of("P", "R1", "R2", "R3", "S1", "S2", "S3");
 
     private BuiltinCatalog() {
+    }
+
+    public static boolean isPivotPrimitive(String name) {
+        return PIVOT_PRIMITIVES.contains(name);
     }
 
     public static boolean isMarketVariable(String name) {

@@ -78,3 +78,43 @@ Feature: Strategy parser parse-time validation
     And the parsed AST contains 2 Background series declarations
     And the parsed AST contains 5 Scenarios
     And each Scenario terminates with one of long_entry/long_exit/short_entry/short_exit
+
+  # P21 period/streak validation across the FULL class of period-typed builtins
+  # (regression coverage: a fractional or non-positive period must fail at parse,
+  # not crash via intValueExact() during prepass).
+
+  Scenario: A zero period in a window aggregate is rejected by P21
+    Given a strategy file with "When close crosses above highest_high(0)"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P21"
+
+  Scenario: A fractional period in a window aggregate is rejected by P21
+    Given a strategy file with "When close crosses below lowest_low(2.5)"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P21"
+
+  Scenario: A zero period in a MACD component is rejected by P21
+    Given a strategy file with "When macd_line(0, 26, 9) crosses above 0"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P21"
+
+  Scenario: A fractional period in a MACD component is rejected by P21
+    Given a strategy file with "When macd_histogram(12, 26, 2.5) crosses above 0"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P21"
+
+  Scenario: A zero streak in an HA reversal primitive is rejected by P21
+    Given a strategy file with "When ha_bullish_reversal(0)"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P21"
+
+  Scenario: A fractional streak in an HA reversal primitive is rejected by P21
+    Given a strategy file with "When ha_bearish_reversal(2.5)"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P21"

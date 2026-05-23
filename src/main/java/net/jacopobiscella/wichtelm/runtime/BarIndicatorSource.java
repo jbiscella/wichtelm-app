@@ -70,6 +70,12 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
             case "rsi" -> latest(functionName, Indicators.rsi(closes(), period(functionName, arguments)));
             case "atr" -> latest(functionName,
                     Indicators.atr(highs(), lows(), closes(), period(functionName, arguments)));
+            // atr_value is the stop/take-only frozen-ATR accessor (INC2). At
+            // evaluation time it is just ATR at the source's bar; the freeze
+            // comes from evaluateProtective always positioning this source at
+            // the entry fill bar.
+            case "atr_value" -> latest(functionName,
+                    Indicators.atr(highs(), lows(), closes(), period(functionName, arguments)));
             case "stddev" -> stddev(period(functionName, arguments));
             case "macd_line" -> latest(functionName, macd(functionName, arguments).macdLine());
             case "macd_signal" -> latest(functionName, macd(functionName, arguments).signalLine());
@@ -87,10 +93,28 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
                  "ha_bullish_reversal", "ha_bearish_reversal",
                  "rsi_overbought", "rsi_oversold", "rsi_crosses_50",
                  "macd_bullish_cross", "macd_bearish_cross",
-                 "macd_zero_cross_up", "macd_zero_cross_down" -> tierB(functionName, arguments);
+                 "macd_zero_cross_up", "macd_zero_cross_down",
+                 "price_above_sma", "price_below_sma", "price_above_ema", "price_below_ema",
+                 "price_crosses_above_sma", "price_crosses_below_sma",
+                 "price_crosses_above_ema", "price_crosses_below_ema",
+                 "sma_above_ema", "sma_crosses_above_ema", "sma_crosses_below_ema"
+                    -> tierB(functionName, arguments);
             default -> throw fail(functionName,
                     "indicator '" + functionName + "' is not implemented in this increment");
         };
+    }
+
+    @Override
+    public boolean pivotPrimitive(String name, String level) {
+        NachtkrappMatchIndex.Key key =
+                NachtkrappMatchIndex.Key.pivot(name, level, timeframeWire);
+        if (!matchIndex.hasKey(key)) {
+            throw fail(name,
+                    "pivot primitive '" + name + "(" + level + ")' was not pre-indexed; the "
+                            + "strategy must declare it statically in a Scenario step so the "
+                            + "prepass can scan it");
+        }
+        return matchIndex.matches(key, barTime);
     }
 
     private BigDecimal tierB(String name, List<BigDecimal> arguments) {

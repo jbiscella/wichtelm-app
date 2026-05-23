@@ -8,6 +8,7 @@ import net.jacopobiscella.wichtelm.config.DataSource;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunner;
 import net.jacopobiscella.wichtelm.runtime.NachtkrappMatchIndex;
+import net.jacopobiscella.wichtelm.strategy.BuiltinCatalog;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParser;
 import org.hatrack.frauholle.error.BacktestException;
@@ -125,6 +126,160 @@ public class TierBSteps {
     @Then("the backtest completes without throwing")
     public void backtestCompleted() {
         assertNotNull(run);
+    }
+
+    // ── MA trend filter (ma-trend-filter.feature) ────────────────────────────
+
+    private ParsedStrategy gatedStrategy;
+    private BacktestRunResult ungatedRun;
+    private BacktestRunResult gatedRun;
+
+    private static String entryExitStrategy(String entryStep, String extraEntryStep) {
+        return "Feature: prepass\n"
+                + "  Primary timeframe: 1h\n\n"
+                + "  Scenario: Enter long\n"
+                + "    Given no open position\n"
+                + "    When " + entryStep + "\n"
+                + extraEntryStep
+                + "    Then long_entry\n\n"
+                + "  Scenario: Exit long unconditionally\n"
+                + "    Given a long position is open\n"
+                + "    When close exceeds 0\n"
+                + "    Then long_exit\n";
+    }
+
+    private BacktestConfig csvConfig() {
+        return new BacktestConfig(
+                tempCsvDir.resolve("config.toml"), tempCsvDir.resolve("strategy.strat"),
+                "TBX", LocalDate.parse("2024-03-01"), LocalDate.parse("2024-04-01"),
+                DataSource.CSV, BigDecimal.valueOf(50), false,
+                Map.of(), Optional.empty(),
+                Optional.of(tempCsvDir.resolve("{symbol}_{timeframe}.csv")),
+                Optional.empty(), List.of());
+    }
+
+    @Given("a backtestable strategy whose entry fires when {}")
+    public void backtestableEntryFiresWhen(String boolStep) {
+        strategy = StrategyParser.parse(entryExitStrategy(boolStep, ""), "prepass.strat");
+    }
+
+    @Given("an ATR-stop long strategy whose stop_loss is {string}")
+    public void atrStopLongStrategy(String stopExpr) {
+        strategy = StrategyParser.parse(
+                "Feature: atr stop\n"
+                        + "  Primary timeframe: 1h\n\n"
+                        + "  Scenario: Enter long\n"
+                        + "    Given no open position\n"
+                        // Gate the entry past the ATR(14) warmup so atr_value is
+                        // defined at the fill bar (a realistic atr_value strategy
+                        // never enters before its ATR has warmed).
+                        + "    When bar_index exceeds 20\n"
+                        + "    Then long_entry\n"
+                        + "    And with stop_loss at " + stopExpr + "\n\n"
+                        + "  Scenario: Exit long unconditionally\n"
+                        + "    Given a long position is open\n"
+                        + "    When close drops below 0\n"
+                        + "    Then long_exit\n", "atr-stop.strat");
+    }
+
+    @Given("an ungated ATR-stop long strategy whose stop_loss is {string}")
+    public void ungatedAtrStopLongStrategy(String stopExpr) {
+        // No warmup gate: the entry condition is always true, so it matches on
+        // bar 1 — before ATR(14) is warm — exercising the suppression path.
+        strategy = StrategyParser.parse(
+                "Feature: ungated atr stop\n"
+                        + "  Primary timeframe: 1h\n\n"
+                        + "  Scenario: Enter long\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 0\n"
+                        + "    Then long_entry\n"
+                        + "    And with stop_loss at " + stopExpr + "\n\n"
+                        + "  Scenario: Exit long unconditionally\n"
+                        + "    Given a long position is open\n"
+                        + "    When close drops below 0\n"
+                        + "    Then long_exit\n", "ungated-atr-stop.strat");
+    }
+
+    @Then("at least one entry was suppressed for ATR warmup")
+    public void atLeastOneEntrySuppressed() {
+        assertTrue(run.suppressedEntries().stream()
+                        .anyMatch(s -> s.reason().contains("ATR not warm")),
+                "expected at least one ATR-warmup suppression, got " + run.suppressedEntries());
+    }
+
+    @Then("the prepass indexed the {string} key with arg {string}")
+    public void prepassIndexedArg(String name, String arg) {
+        // A pivot primitive's arg is a symbolic level token (e.g. "R1"), which
+        // is not parseable as a number; index it as a symbolic Key. Numeric
+        // primitives (periods, thresholds) keep the BigDecimal arg.
+        if (BuiltinCatalog.isPivotPrimitive(name)) {
+            NachtkrappMatchIndex index = NachtkrappMatchIndex.buildFor(
+                    strategy, Map.of(), run.primarySeries(), Map.of());
+            assertTrue(index.hasKey(NachtkrappMatchIndex.Key.pivot(
+                            name, arg, strategy.primaryTimeframe().wire())),
+                    "the prepass should have indexed " + name + "(" + arg + ")");
+            return;
+        }
+        assertPrepassKey(name, List.of(new BigDecimal(arg)));
+    }
+
+    @Then("the prepass indexed the {string} key with args {string}")
+    public void prepassIndexedArgs(String name, String args) {
+        List<BigDecimal> parsed = new java.util.ArrayList<>();
+        for (String p : args.split("\\s*,\\s*")) {
+            parsed.add(new BigDecimal(p.strip()));
+        }
+        assertPrepassKey(name, parsed);
+    }
+
+    private void assertPrepassKey(String name, List<BigDecimal> args) {
+        NachtkrappMatchIndex index = NachtkrappMatchIndex.buildFor(
+                strategy, Map.of(), run.primarySeries(), Map.of());
+        assertTrue(index.hasKey(new NachtkrappMatchIndex.Key(
+                        name, args, strategy.primaryTimeframe().wire())),
+                "the prepass should have indexed " + name + args);
+    }
+
+    @Then("no entry fired before bar {int}")
+    public void noEntryFiredBeforeBar(int bar) {
+        // With fewer than `bar` bars the gating MA never warms up, so no long
+        // entry can fire: the backtest produced no trades and no open position.
+        assertTrue(run.result().trades().isEmpty()
+                        && run.result().openPositionAtEnd().isEmpty(),
+                "no entry should fire before the gating MA has warmed up");
+    }
+
+    @Given("a backtestable strategy that enters long on ha_bullish_reversal\\(2)")
+    public void ungatedReversalStrategy() {
+        strategy = StrategyParser.parse(
+                entryExitStrategy("ha_bullish_reversal(2)", ""), "ungated.strat");
+    }
+
+    @Given("the same strategy with an added {string} trend gate")
+    public void gatedReversalStrategy(String gate) {
+        gatedStrategy = StrategyParser.parse(
+                entryExitStrategy("ha_bullish_reversal(2)", "    " + gate + "\n"),
+                "gated.strat");
+    }
+
+    @When("both backtests run")
+    public void bothBacktestsRun() throws BacktestException {
+        BacktestConfig config = csvConfig();
+        ungatedRun = new BacktestRunner().run(strategy, config, Map.of());
+        gatedRun = new BacktestRunner().run(gatedStrategy, config, Map.of());
+    }
+
+    @Then("the trend-gated strategy fires no more entries than the ungated one")
+    public void trendGatedFiresNoMore() {
+        int ungated = entryCount(ungatedRun);
+        int gated = entryCount(gatedRun);
+        assertTrue(gated <= ungated,
+                "trend-gated entries (" + gated + ") should not exceed ungated (" + ungated + ")");
+    }
+
+    private static int entryCount(BacktestRunResult r) {
+        return r.result().trades().size()
+                + (r.result().openPositionAtEnd().isPresent() ? 1 : 0);
     }
 
     @Then("the prepass-derived match count for ha_doji\\() is queryable")

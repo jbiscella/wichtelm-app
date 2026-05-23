@@ -10,8 +10,10 @@ import java.math.MathContext;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -35,6 +37,11 @@ public final class StrategyParser {
 
     private final String filePath;
     private final String[] lines;
+    // Declared Parameter name -> default value. A parameter passed where an
+    // integer period is expected must have an integer default; resolving the
+    // value here lets period validation (P21) catch a fractional/negative
+    // default at parse time instead of crashing at prepass intValueExact().
+    private final Map<String, BigDecimal> parameterDefaults = new HashMap<>();
 
     private StrategyParser(String filePath, String content) {
         this.filePath = filePath;
@@ -98,6 +105,7 @@ public final class StrategyParser {
                     throw fail("P4", i + 1, 1, "duplicate parameter declaration: " + p.name());
                 }
                 parameters.add(p);
+                parameterDefaults.put(p.name(), p.value());
             }
             i++;
         }
@@ -382,6 +390,32 @@ public final class StrategyParser {
                 }
                 if (k < n && expr.charAt(k) == '(') {
                     validateFunction(word, expr, k, line, context, parameterNames);
+                    if (BuiltinCatalog.isPivotPrimitive(word)) {
+                        int close = closeParenIndex(expr, k, line);
+                        // A pivot's level token (R1, S2…) is symbolic and resolves
+                        // ONLY through the dedicated boolean-step path in
+                        // ExpressionEvaluator.condition — it never enters the
+                        // numeric arithmetic evaluator. So a pivot is valid only
+                        // as a COMPLETE When/And condition step; embedded in a
+                        // comparison, arithmetic, or a Background series it would
+                        // reach the numeric path at runtime and fail on "R1".
+                        // Reject those usages here (the STOP_TAKE case is already
+                        // P16 via validateFunction).
+                        boolean bareConditionStep =
+                                (context == ExprContext.CONDITION_ENTRY
+                                        || context == ExprContext.CONDITION_EXIT)
+                                && expr.strip().equals(expr.substring(i, close + 1).strip());
+                        if (!bareConditionStep) {
+                            throw fail("P14", line, 1, word + " is a boolean pivot primitive and "
+                                    + "may only be used as a complete When/And step (e.g. \"When "
+                                    + word + "(R1)\"); it cannot appear inside a comparison, "
+                                    + "arithmetic, or a Background series");
+                        }
+                        // Skip past the symbolic level so the scanner does not
+                        // re-read "R1" as an undeclared identifier (P13).
+                        i = close + 1;
+                        continue;
+                    }
                 } else if (!BuiltinCatalog.isOperatorWord(word)) {
                     validateIdentifier(word, line, context, parameterNames, seriesNames);
                 }
@@ -397,6 +431,33 @@ public final class StrategyParser {
 
     private void validateFunction(String name, String expr, int openParen, int line,
                                   ExprContext context, Set<String> parameterNames) {
+        if (name.equals("atr_value")) {
+            // INC2: atr_value(period) is a stop/take-only frozen-ATR accessor —
+            // the one function P16 admits inside stop_loss / take_profit. It is
+            // evaluated once at the entry fill bar and frozen for the trade.
+            if (context != ExprContext.STOP_TAKE) {
+                throw fail("P16", line, 1,
+                        "atr_value(...) is only valid in stop_loss/take_profit expressions; "
+                                + "use atr(...) in conditions");
+            }
+            List<String> atrArgs = extractArguments(expr, openParen);
+            if (atrArgs.size() != 1) {
+                throw fail("P14", line, 1, "atr_value expects 1 argument but got " + atrArgs.size());
+            }
+            String periodArg = atrArgs.getFirst();
+            // The atr_value period is a bar count. The argument re-scan in
+            // analyzeExpression rejects market vars (P16) and unknown names
+            // (P13), but trade-context variables (entry_price, position_size)
+            // are individually legal in stop/take scope yet are prices, not
+            // integer periods — reject them here. A literal or a declared
+            // parameter is then range-checked (positive whole number, P21).
+            if (numericLiteral(periodArg) == null && !parameterNames.contains(periodArg)) {
+                throw fail("P16", line, 1, "atr_value period must be a positive integer literal "
+                        + "or a declared parameter, was " + periodArg);
+            }
+            requirePositivePeriod(periodArg, name, line);
+            return;
+        }
         if (context == ExprContext.STOP_TAKE) {
             throw fail("P16", line, 1,
                     "stop_loss/take_profit expressions must not reference functions or indicators: "
@@ -412,7 +473,25 @@ public final class StrategyParser {
                     + " argument(s) but got " + arguments.size());
         }
         checkNumericRanges(name, arguments, line);
+        checkPivotLevel(name, arguments, line);
         checkTierBArgumentsAreResolvable(name, arguments, parameterNames, line);
+    }
+
+    /**
+     * A pivot primitive's lone argument is a symbolic STANDARD level token, not
+     * a number. Reject any token outside the STANDARD set (P, R1-R3, S1-S3) at
+     * parse time (P21) — including CAMARILLA's R4/S4, which are out of scope in
+     * v1, and any unknown token like {@code X9}.
+     */
+    private void checkPivotLevel(String name, List<String> arguments, int line) {
+        if (!BuiltinCatalog.isPivotPrimitive(name) || arguments.size() != 1) {
+            return;
+        }
+        String level = arguments.getFirst().strip();
+        if (!BuiltinCatalog.PIVOT_LEVELS.contains(level)) {
+            throw fail("P21", line, 1, "pivot level of " + name
+                    + " must be one of P, R1, R2, R3, S1, S2, S3, was " + level);
+        }
     }
 
     /**
@@ -448,7 +527,11 @@ public final class StrategyParser {
             "ha_bullish_reversal", "ha_bearish_reversal",
             "rsi_overbought", "rsi_oversold", "rsi_crosses_50",
             "macd_bullish_cross", "macd_bearish_cross",
-            "macd_zero_cross_up", "macd_zero_cross_down");
+            "macd_zero_cross_up", "macd_zero_cross_down",
+            "price_above_sma", "price_below_sma", "price_above_ema", "price_below_ema",
+            "price_crosses_above_sma", "price_crosses_below_sma",
+            "price_crosses_above_ema", "price_crosses_below_ema",
+            "sma_above_ema", "sma_crosses_above_ema", "sma_crosses_below_ema");
 
     private void validateIdentifier(String word, int line, ExprContext context,
                                     Set<String> parameterNames, Set<String> seriesNames) {
@@ -488,6 +571,23 @@ public final class StrategyParser {
                 }
             }
         }
+    }
+
+    /** Index of the {@code )} matching the {@code (} at {@code openParen}. */
+    private int closeParenIndex(String expr, int openParen, int line) {
+        int depth = 0;
+        for (int i = openParen; i < expr.length(); i++) {
+            char c = expr.charAt(i);
+            if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                depth--;
+                if (depth == 0) {
+                    return i;
+                }
+            }
+        }
+        throw fail("P15", line, 1, "unbalanced parentheses in expression");
     }
 
     private List<String> extractArguments(String expr, int openParen) {
@@ -532,6 +632,36 @@ public final class StrategyParser {
                     requireRsiThreshold(arguments.getFirst(), name, line);
                 }
             }
+            case "price_above_sma", "price_below_sma", "price_above_ema", "price_below_ema",
+                 "price_crosses_above_sma", "price_crosses_below_sma",
+                 "price_crosses_above_ema", "price_crosses_below_ema" -> {
+                if (arguments.size() == 1) {
+                    requirePositivePeriod(arguments.getFirst(), name, line);
+                }
+            }
+            case "sma_above_ema", "sma_crosses_above_ema", "sma_crosses_below_ema" -> {
+                if (arguments.size() == 2) {
+                    requirePositivePeriod(arguments.get(0), name, line);
+                    requirePositivePeriod(arguments.get(1), name, line);
+                }
+            }
+            case "highest_high", "lowest_low", "highest_close", "lowest_close" -> {
+                if (arguments.size() == 1) {
+                    requirePositivePeriod(arguments.getFirst(), name, line);
+                }
+            }
+            case "macd_line", "macd_signal", "macd_histogram" -> {
+                if (arguments.size() == 3) {
+                    requirePositivePeriod(arguments.get(0), name, line);
+                    requirePositivePeriod(arguments.get(1), name, line);
+                    requirePositivePeriod(arguments.get(2), name, line);
+                }
+            }
+            case "ha_bullish_reversal", "ha_bearish_reversal" -> {
+                if (arguments.size() == 1) {
+                    requirePositivePeriod(arguments.getFirst(), name, line);
+                }
+            }
             default -> {
             }
         }
@@ -539,8 +669,26 @@ public final class StrategyParser {
 
     private void requirePositivePeriod(String arg, String name, int line) {
         BigDecimal literal = numericLiteral(arg);
-        if (literal != null && literal.signum() <= 0) {
+        if (literal == null) {
+            // A period passed as a declared Parameter must still be a positive
+            // whole number — the prepass / indicator layer calls intValueExact()
+            // on it, so a fractional or non-positive default (e.g. Parameter p
+            // default 2.5) must fail here, not at setup. Non-parameter identifiers
+            // are resolved elsewhere (validateIdentifier / the atr_value gate).
+            literal = parameterDefaults.get(arg);
+            if (literal == null) {
+                return;
+            }
+        }
+        if (literal.signum() <= 0) {
             throw fail("P21", line, 1, "period argument of " + name + " must be > 0, was " + arg);
+        }
+        // A period is a bar count: reject fractional literals at parse time so a
+        // value like 2.5 fails deterministically here instead of throwing
+        // ArithmeticException from intValueExact() during prepass construction.
+        if (literal.stripTrailingZeros().scale() > 0) {
+            throw fail("P21", line, 1,
+                    "period argument of " + name + " must be a whole number, was " + arg);
         }
     }
 

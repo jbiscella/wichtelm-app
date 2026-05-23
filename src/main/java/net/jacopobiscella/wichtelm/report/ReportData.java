@@ -1,5 +1,6 @@
 package net.jacopobiscella.wichtelm.report;
 
+import net.jacopobiscella.wichtelm.runtime.SuppressedEntry;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.frauholle.result.BacktestResult;
@@ -29,6 +30,9 @@ import java.util.Objects;
  *                             expressions when rendering indicator overlays
  * @param symbol               instrument symbol (from the TOML config) — surfaced in
  *                             the report header
+ * @param suppressedEntries    entries matched but not fired because their protective
+ *                             stop / take was not evaluable at fill (atr_value warmup);
+ *                             rendered as a diagnostics section
  */
 public record ReportData(String configBasename,
                          LocalDateTime generatedAt,
@@ -39,7 +43,8 @@ public record ReportData(String configBasename,
                          Map<String, OHLCSeries> higherTimeframeSeries,
                          Map<String, List<Instant>> triggersByScenario,
                          Map<String, BigDecimal> parameters,
-                         String symbol) {
+                         String symbol,
+                         List<SuppressedEntry> suppressedEntries) {
 
     public ReportData {
         Objects.requireNonNull(configBasename, "configBasename");
@@ -54,5 +59,6 @@ public record ReportData(String configBasename,
         triggersByScenario.forEach((name, times) -> triggers.put(name, List.copyOf(times)));
         triggersByScenario = Map.copyOf(triggers);
         parameters = Map.copyOf(parameters);
+        suppressedEntries = List.copyOf(suppressedEntries);
     }
 }

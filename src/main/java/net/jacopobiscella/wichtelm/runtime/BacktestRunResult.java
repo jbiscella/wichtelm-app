@@ -17,11 +17,15 @@ import java.util.Objects;
  * @param primarySeries       the primary-timeframe bars the backtest ran over
  * @param higherTimeframeBars higher-timeframe bars per timeframe wire
  * @param triggerTimes        trigger bar times per Scenario name, chronological
+ * @param suppressedEntries   entries matched but not fired because their
+ *                            protective stop / take was not evaluable at fill
+ *                            (atr_value warmup), chronological
  */
 public record BacktestRunResult(BacktestResult result,
                                 List<OHLCBar> primarySeries,
                                 Map<String, List<OHLCBar>> higherTimeframeBars,
-                                Map<String, List<Instant>> triggerTimes) {
+                                Map<String, List<Instant>> triggerTimes,
+                                List<SuppressedEntry> suppressedEntries) {
 
     public BacktestRunResult {
         Objects.requireNonNull(result, "result");
@@ -30,5 +34,6 @@ public record BacktestRunResult(BacktestResult result,
         Map<String, List<Instant>> triggers = new LinkedHashMap<>();
         triggerTimes.forEach((name, times) -> triggers.put(name, List.copyOf(times)));
         triggerTimes = Map.copyOf(triggers);
+        suppressedEntries = List.copyOf(suppressedEntries);
     }
 }

@@ -55,3 +55,9 @@ Feature: HTML report generation
     And the report output directory is a fresh temporary directory
     When the report is generated
     Then the report contains a chart legend strip
+
+  Scenario: A report renders an atr_value stop line without crashing
+    Given an ATR-stop strategy fixture with a stop-hit trade
+    And the report output directory is a fresh temporary directory
+    When the report is generated
+    Then every embedded chart image is a PNG
