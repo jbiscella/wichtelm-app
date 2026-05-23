@@ -9,7 +9,9 @@ import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParser;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
+import org.hatrack.frauholle.model.Direction;
 import org.hatrack.frauholle.model.EquityPoint;
+import org.hatrack.frauholle.model.Trade;
 import org.hatrack.frauholle.result.BacktestDiagnostics;
 import org.hatrack.frauholle.result.BacktestMetrics;
 import org.hatrack.frauholle.result.BacktestResult;
@@ -46,6 +48,24 @@ public class ReportGenerationSteps {
                 Then long_entry
             """;
 
+    private static final String TIER_B_STRATEGY = """
+            Feature: Trend gated Tier B
+              Primary timeframe: 1h
+
+              Scenario: Enter long on oversold doji
+                Given no open position
+                When ha_doji(0.1)
+                And rsi_oversold(30)
+                Then long_entry
+                And with stop_loss at entry_price * 0.98
+                And with take_profit at entry_price * 1.04
+
+              Scenario: Exit long on bearish strong
+                Given a long position is open
+                When ha_strong_bearish()
+                Then long_exit
+            """;
+
     private String configBasename = "report";
     private LocalDateTime generatedAt = LocalDateTime.parse("2026-01-01T00:00:00");
     private Path outputDirectory;
@@ -67,8 +87,11 @@ public class ReportGenerationSteps {
         return new OHLCSeries(bars);
     }
 
+    private OHLCSeries primarySeriesOverride;
+
     private OHLCSeries primarySeries() {
-        return series(Instant.parse("2024-01-01T00:00:00Z"), Duration.ofHours(1), 6);
+        return primarySeriesOverride != null ? primarySeriesOverride
+                : series(Instant.parse("2024-01-01T00:00:00Z"), Duration.ofHours(1), 6);
     }
 
     private BacktestResult backtestResult() {
@@ -147,6 +170,111 @@ public class ReportGenerationSteps {
                 "footer should carry the financial-advice disclaimer");
         assertTrue(reportHtml.contains("Past performance is not indicative"),
                 "footer should carry the past-performance disclaimer");
+    }
+
+    // ─── Fixtures + assertions for the 0.5x chart-quality report features ──────
+
+    @Given("a trend-gated Tier B strategy fixture")
+    public void aTrendGatedTierBStrategyFixture() {
+        strategy = StrategyParser.parse(TIER_B_STRATEGY, "trend-gated.strat");
+    }
+
+    @Given("a trend-gated Tier B strategy fixture with a stop-hit trade")
+    public void aTrendGatedTierBStrategyFixtureWithStopHitTrade() {
+        aTrendGatedTierBStrategyFixture();
+        // Use a series long enough for RSI(14) (referenced via rsi_oversold) to warm
+        // and actually plot — otherwise the chart has no sub-pane indicator and the
+        // legend strip is legitimately empty. Hourly bars from 2024-01-01T00:00Z.
+        Instant seriesStart = Instant.parse("2024-01-01T00:00:00Z");
+        primarySeriesOverride = series(seriesStart, Duration.ofHours(1), 48);
+        // A signal at bar T fills at the next bar's open. Trigger the entry at bar 23
+        // (fills at bar 24); the exit carries NO trigger, so the report must treat it
+        // as a forced (stop_loss / take_profit) close.
+        Instant entryFill = seriesStart.plus(Duration.ofHours(24));
+        Instant exitFill = seriesStart.plus(Duration.ofHours(30));
+        BigDecimal entryPrice = new BigDecimal("124");
+        BigDecimal exitPrice = new BigDecimal("121.52"); // == entry_price * 0.98 → stop hit
+        Trade trade = new Trade(Direction.LONG, new BigDecimal("50"),
+                entryFill, entryPrice, exitFill, exitPrice,
+                new BigDecimal("-101.00"), new BigDecimal("-2.00"));
+        BigDecimal zero = BigDecimal.ZERO;
+        BacktestMetrics metrics = new BacktestMetrics(zero, new BigDecimal("-2"), 1, zero, zero,
+                zero, zero, zero, zero, zero);
+        List<EquityPoint> curve = List.of(
+                new EquityPoint(Instant.parse("2024-01-01T00:00:00Z"),
+                        BigDecimal.valueOf(10000), BigDecimal.valueOf(10000), zero),
+                new EquityPoint(exitFill,
+                        BigDecimal.valueOf(9899), BigDecimal.valueOf(9899), zero));
+        result = new BacktestResult(metrics, List.of(trade), curve, Optional.empty(),
+                new BacktestDiagnostics(0, 0, 0, 0, 1, 0, 0));
+        triggerTimes = Map.of("Enter long on oversold doji",
+                List.of(seriesStart.plus(Duration.ofHours(23))));
+    }
+
+    @Then("the report contains the strategy rules section")
+    public void theReportContainsTheStrategyRulesSection() {
+        assertTrue(reportHtml.contains("class=\"strategy-rules\""),
+                "report is missing the Strategy rules section");
+        assertTrue(reportHtml.contains("Strategy: Trend gated Tier B"),
+                "Strategy rules section is missing the strategy name heading");
+    }
+
+    @Then("the rules section uses Given, When and Then labels")
+    public void theRulesSectionUsesGwtLabels() {
+        assertTrue(reportHtml.contains("<b>GIVEN</b>"), "missing GIVEN label");
+        assertTrue(reportHtml.contains("<b>WHEN</b>"), "missing WHEN label");
+        assertTrue(reportHtml.contains("<b>THEN</b>"), "missing THEN label");
+    }
+
+    @Then("the rules section translates a Tier B step keeping its call form verbatim")
+    public void theRulesSectionTranslatesATierBStep() {
+        assertTrue(reportHtml.contains("HA doji within threshold 0.1"),
+                "ha_doji was not translated to its natural-language phrase");
+        assertTrue(reportHtml.contains("<code>ha_doji(0.1)</code>"),
+                "ha_doji call form was not kept verbatim in monospace");
+        assertTrue(reportHtml.contains("(oversold)"),
+                "rsi_oversold natural-language phrase is missing");
+    }
+
+    @Then("the rules section shows the stop_loss and take_profit expressions untranslated")
+    public void theRulesSectionShowsStopTakeUntranslated() {
+        assertTrue(reportHtml.contains("entry_price * 0.98"),
+                "stop_loss expression missing/translated in the rules section");
+        assertTrue(reportHtml.contains("entry_price * 1.04"),
+                "take_profit expression missing/translated in the rules section");
+    }
+
+    @Then("every embedded chart image is a PNG")
+    public void everyEmbeddedChartImageIsPng() {
+        assertTrue(reportHtml.contains("data:image/png;base64,"),
+                "no lossless-PNG chart image was embedded");
+    }
+
+    @Then("no embedded chart image is a JPEG")
+    public void noEmbeddedChartImageIsJpeg() {
+        assertFalse(reportHtml.contains("data:image/jpeg") || reportHtml.contains("data:image/jpg"),
+                "a JPEG chart image was embedded — chart export should be lossless PNG");
+    }
+
+    @Then("a trade Rule line names the fired entry primitives")
+    public void aTradeRuleLineNamesTheFiredEntryPrimitives() {
+        assertTrue(reportHtml.contains("class=\"rule-line\""),
+                "expanded trade is missing the compact Rule line");
+        assertTrue(reportHtml.contains("entered via ha_doji(0.1) AND rsi_oversold(30)"),
+                "Rule line does not name the fired entry primitives with resolved call forms");
+    }
+
+    @Then("the forced exit Rule line is tagged as a stop_loss or take_profit hit")
+    public void theForcedExitRuleLineIsTagged() {
+        assertTrue(reportHtml.contains("exited via stop_loss (forced, hit at")
+                        || reportHtml.contains("exited via take_profit (forced, hit at"),
+                "forced exit was not tagged as a stop_loss / take_profit hit");
+    }
+
+    @Then("the report contains a chart legend strip")
+    public void theReportContainsAChartLegendStrip() {
+        assertTrue(reportHtml.contains("class=\"chart-legend\""),
+                "rendered chart is missing its indicator legend strip");
     }
 
     private static int countMatches(String haystack, String needle) {
