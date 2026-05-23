@@ -10,8 +10,10 @@ import java.math.MathContext;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.regex.Matcher;
@@ -35,6 +37,11 @@ public final class StrategyParser {
 
     private final String filePath;
     private final String[] lines;
+    // Declared Parameter name -> default value. A parameter passed where an
+    // integer period is expected must have an integer default; resolving the
+    // value here lets period validation (P21) catch a fractional/negative
+    // default at parse time instead of crashing at prepass intValueExact().
+    private final Map<String, BigDecimal> parameterDefaults = new HashMap<>();
 
     private StrategyParser(String filePath, String content) {
         this.filePath = filePath;
@@ -98,6 +105,7 @@ public final class StrategyParser {
                     throw fail("P4", i + 1, 1, "duplicate parameter declaration: " + p.name());
                 }
                 parameters.add(p);
+                parameterDefaults.put(p.name(), p.value());
             }
             i++;
         }
@@ -420,7 +428,18 @@ public final class StrategyParser {
             if (atrArgs.size() != 1) {
                 throw fail("P14", line, 1, "atr_value expects 1 argument but got " + atrArgs.size());
             }
-            requirePositivePeriod(atrArgs.getFirst(), name, line);
+            String periodArg = atrArgs.getFirst();
+            // The atr_value period is a bar count. The argument re-scan in
+            // analyzeExpression rejects market vars (P16) and unknown names
+            // (P13), but trade-context variables (entry_price, position_size)
+            // are individually legal in stop/take scope yet are prices, not
+            // integer periods — reject them here. A literal or a declared
+            // parameter is then range-checked (positive whole number, P21).
+            if (numericLiteral(periodArg) == null && !parameterNames.contains(periodArg)) {
+                throw fail("P16", line, 1, "atr_value period must be a positive integer literal "
+                        + "or a declared parameter, was " + periodArg);
+            }
+            requirePositivePeriod(periodArg, name, line);
             return;
         }
         if (context == ExprContext.STOP_TAKE) {
@@ -635,7 +654,15 @@ public final class StrategyParser {
     private void requirePositivePeriod(String arg, String name, int line) {
         BigDecimal literal = numericLiteral(arg);
         if (literal == null) {
-            return;
+            // A period passed as a declared Parameter must still be a positive
+            // whole number — the prepass / indicator layer calls intValueExact()
+            // on it, so a fractional or non-positive default (e.g. Parameter p
+            // default 2.5) must fail here, not at setup. Non-parameter identifiers
+            // are resolved elsewhere (validateIdentifier / the atr_value gate).
+            literal = parameterDefaults.get(arg);
+            if (literal == null) {
+                return;
+            }
         }
         if (literal.signum() <= 0) {
             throw fail("P21", line, 1, "period argument of " + name + " must be > 0, was " + arg);
