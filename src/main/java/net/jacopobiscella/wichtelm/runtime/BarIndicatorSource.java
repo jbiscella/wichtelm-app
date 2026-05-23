@@ -70,6 +70,12 @@ public final class BarIndicatorSource implements ExpressionEvaluator.IndicatorSo
             case "rsi" -> latest(functionName, Indicators.rsi(closes(), period(functionName, arguments)));
             case "atr" -> latest(functionName,
                     Indicators.atr(highs(), lows(), closes(), period(functionName, arguments)));
+            // atr_value is the stop/take-only frozen-ATR accessor (INC2). At
+            // evaluation time it is just ATR at the source's bar; the freeze
+            // comes from evaluateProtective always positioning this source at
+            // the entry fill bar.
+            case "atr_value" -> latest(functionName,
+                    Indicators.atr(highs(), lows(), closes(), period(functionName, arguments)));
             case "stddev" -> stddev(period(functionName, arguments));
             case "macd_line" -> latest(functionName, macd(functionName, arguments).macdLine());
             case "macd_signal" -> latest(functionName, macd(functionName, arguments).signalLine());

@@ -162,6 +162,25 @@ public class TierBSteps {
         strategy = StrategyParser.parse(entryExitStrategy(boolStep, ""), "prepass.strat");
     }
 
+    @Given("an ATR-stop long strategy whose stop_loss is {string}")
+    public void atrStopLongStrategy(String stopExpr) {
+        strategy = StrategyParser.parse(
+                "Feature: atr stop\n"
+                        + "  Primary timeframe: 1h\n\n"
+                        + "  Scenario: Enter long\n"
+                        + "    Given no open position\n"
+                        // Gate the entry past the ATR(14) warmup so atr_value is
+                        // defined at the fill bar (a realistic atr_value strategy
+                        // never enters before its ATR has warmed).
+                        + "    When bar_index exceeds 20\n"
+                        + "    Then long_entry\n"
+                        + "    And with stop_loss at " + stopExpr + "\n\n"
+                        + "  Scenario: Exit long unconditionally\n"
+                        + "    Given a long position is open\n"
+                        + "    When close drops below 0\n"
+                        + "    Then long_exit\n", "atr-stop.strat");
+    }
+
     @Then("the prepass indexed the {string} key with arg {string}")
     public void prepassIndexedArg(String name, String arg) {
         assertPrepassKey(name, List.of(new BigDecimal(arg)));

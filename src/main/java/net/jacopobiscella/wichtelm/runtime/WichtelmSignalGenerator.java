@@ -81,6 +81,14 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
      */
     private String pendingEntryScenarioName;
     private NachtkrappMatchIndex matchIndex = NachtkrappMatchIndex.empty();
+    /**
+     * Primary bars seen so far (chronological), refreshed each {@link #generate}
+     * call. Lets {@link #evaluateProtective} resolve atr_value(period) at the
+     * entry fill bar even when the public {@link #stopLossPriceFor} /
+     * {@link #takeProfitPriceFor} are called by the backtester without a
+     * {@code BarContext}.
+     */
+    private List<OHLCBar> primaryHistory = List.of();
 
     /** Generator for a strategy without higher-timeframe Background series. */
     public WichtelmSignalGenerator(ParsedStrategy strategy, Map<String, BigDecimal> parameters,
@@ -126,6 +134,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     @Override
     public Signal generate(BarContext context) {
         OHLCBar bar = context.currentBar();
+        primaryHistory = barsUpToAndIncluding(context, bar);
         OHLCBar previousBar = previousBar(context);
         ExpressionEvaluator evaluator =
                 new ExpressionEvaluator(strategy.featureName(), bar.time(), context.barIndex());
@@ -285,9 +294,24 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     }
 
     private BigDecimal evaluateProtective(String expression, Position position) {
+        // Resolve the expression at the entry FILL bar so atr_value(period)
+        // snapshots ATR there and stays frozen for the trade: every call uses
+        // position.entryTime(), independent of the current bar.
+        Instant fill = position.entryTime();
+        List<OHLCBar> upToFill = new ArrayList<>();
+        for (OHLCBar candidate : primaryHistory) {
+            if (!candidate.time().isAfter(fill)) {
+                upToFill.add(candidate);
+            }
+        }
+        long fillIndex = upToFill.isEmpty() ? 0 : upToFill.size() - 1;
+        ExpressionEvaluator.IndicatorSource source = upToFill.isEmpty()
+                ? NO_INDICATORS
+                : new BarIndicatorSource(upToFill, strategy.featureName(), fill, fillIndex,
+                        matchIndex, timeframe.wire());
         ExpressionEvaluator evaluator =
-                new ExpressionEvaluator(strategy.featureName(), position.entryTime(), 0);
-        return evaluator.arithmetic(expression, new Scope(positionValues(position), NO_INDICATORS));
+                new ExpressionEvaluator(strategy.featureName(), fill, fillIndex);
+        return evaluator.arithmetic(expression, new Scope(positionValues(position), source));
     }
 
     /**

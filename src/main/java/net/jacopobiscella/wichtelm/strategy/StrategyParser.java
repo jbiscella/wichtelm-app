@@ -397,6 +397,22 @@ public final class StrategyParser {
 
     private void validateFunction(String name, String expr, int openParen, int line,
                                   ExprContext context, Set<String> parameterNames) {
+        if (name.equals("atr_value")) {
+            // INC2: atr_value(period) is a stop/take-only frozen-ATR accessor —
+            // the one function P16 admits inside stop_loss / take_profit. It is
+            // evaluated once at the entry fill bar and frozen for the trade.
+            if (context != ExprContext.STOP_TAKE) {
+                throw fail("P16", line, 1,
+                        "atr_value(...) is only valid in stop_loss/take_profit expressions; "
+                                + "use atr(...) in conditions");
+            }
+            List<String> atrArgs = extractArguments(expr, openParen);
+            if (atrArgs.size() != 1) {
+                throw fail("P14", line, 1, "atr_value expects 1 argument but got " + atrArgs.size());
+            }
+            requirePositivePeriod(atrArgs.getFirst(), name, line);
+            return;
+        }
         if (context == ExprContext.STOP_TAKE) {
             throw fail("P16", line, 1,
                     "stop_loss/take_profit expressions must not reference functions or indicators: "
