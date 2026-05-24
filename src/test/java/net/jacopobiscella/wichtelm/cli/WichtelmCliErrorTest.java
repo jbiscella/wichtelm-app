@@ -15,6 +15,22 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class WichtelmCliErrorTest {
 
     @Test
+    void causeChainSurfacesNestedReasons() {
+        // A BacktestException ("signal generation failed at bar N") hides the
+        // real reason in its cause; causeChain must render it so the operator
+        // isn't left with an opaque message.
+        Throwable root = new IllegalStateException(
+                "avg_volume requires volume data, absent for a bar in the window");
+        Throwable wrapped = new RuntimeException("signal generation failed at bar 60", root);
+
+        String chain = WichtelmCli.causeChain(wrapped);
+
+        assertTrue(chain.contains("caused by"), "cause chain rendered");
+        assertTrue(chain.contains("avg_volume requires volume data"),
+                "the deepest actionable reason is surfaced");
+    }
+
+    @Test
     void describeSurfacesTheWrappedCause() {
         // ARRANGE: the runtime's wrapper around a driver-level EODHD error.
         Throwable driver = new IllegalStateException(

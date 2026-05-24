@@ -134,7 +134,7 @@ public final class WichtelmCli {
             err.println(describe(e));
             return EXIT_ERROR;
         } catch (BacktestException e) {
-            err.println("BacktestException: " + e.getMessage());
+            err.println("BacktestException: " + e.getMessage() + causeChain(e));
             return EXIT_ERROR;
         }
     }
@@ -200,7 +200,7 @@ public final class WichtelmCli {
      * top-level message alone ("failed to load ... data for symbol ...") is not
      * enough to act on, so each cause is rendered on its own line.
      */
-    private static String causeChain(Throwable error) {
+    static String causeChain(Throwable error) {
         StringBuilder out = new StringBuilder();
         Throwable cause = error.getCause();
         int depth = 0;
