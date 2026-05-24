@@ -1,6 +1,5 @@
-# Daily pivot-level breakouts (INC3 pivot primitives) on TSTX, ~6 months of
-# daily bars (pivot crosses are frequent, so a half-year keeps the trade list
-# readable).
+# Daily pivot-level breakouts (INC3 pivot primitives) on the synthetic EQUITY
+# TSTX — ~6 months of weekday daily bars (pivot crosses are frequent).
 strategy    = "strategies/pivot-levels.strat"
 symbol      = "TSTX"
 data_source = "csv"

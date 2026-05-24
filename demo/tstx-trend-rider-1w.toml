@@ -1,5 +1,5 @@
-# Weekly trend rider (INC1 MA trend-filter primitives) on the synthetic TSTX
-# instrument — a clean weekly chart spanning ~3 years.
+# Weekly trend rider (INC1 MA trend-filter primitives) on the synthetic EQUITY
+# TSTX — weekly bars over ~3 years.
 strategy    = "strategies/trend-rider.strat"
 symbol      = "TSTX"
 data_source = "csv"

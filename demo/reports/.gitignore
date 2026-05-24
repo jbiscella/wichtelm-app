@@ -1,6 +1,7 @@
 # Ignore the timestamped reports produced by re-running the CSV demos; the
-# committed tstx-*-report.html files are the stable reference copies.
+# committed tstx-*/tstc-*-report.html files are the stable reference copies.
 tstx-*_*.html
+tstc-*_*.html
 
 # EODHD reports embed LICENSED market data (and the free `demo` token is for
 # evaluation only), so they are NEVER committed — generate and view them

@@ -8,19 +8,24 @@ produced** from them. `run_demo.sh` doubles as an end-to-end smoke test
 ## The demo suite
 
 Five strategies, one per **timeframe**, chosen to cover the whole DSL feature
-surface with the fewest demos. All run on one synthetic instrument, **`TSTX`**
-(a deliberately fake name per CLAUDE.md §17 — never a real ticker), generated at
-1h / 4h / 1d / 1w from a single price path with bull → bear → bull regimes. The
-data is continuous (a bar every period, weekends included), so the charts are
-clean at every timeframe.
+surface with the fewest demos. Two synthetic instruments (deliberately fake
+names per CLAUDE.md §17, never real tickers), each modelling its asset class
+**realistically**:
+
+- **`TSTX`** — a synthetic **equity** at `1d` / `1w`. Bars exist on **weekdays
+  only** (Mon–Fri), exactly like a real stock, so daily/weekly charts show the
+  normal small weekend gaps — realistic, and still clean.
+- **`TSTC`** — a synthetic **crypto** asset at `1h` / `4h`. Crypto trades 24/7,
+  so continuous hourly bars are the realistic shape here — and the intraday
+  charts stay gap-free.
 
 | Demo (timeframe) | Strategy | Showcases | CSV report | EODHD config |
 |---|---|---|---|---|
-| **Trend Rider** · `1w` | `trend-rider.strat` | MA trend-filter primitives (`price_crosses_above/below_ema`, `sma_above_ema`), long+short, stop/take | `reports/tstx-trend-rider-1w-report.html` | `eodhd-vti-trend-rider.toml` |
-| **Swing** · `1d` (+`1w` background) | `swing-multi-tf.strat` | multi-timeframe, RSI primitives (`rsi_oversold/overbought`), window aggregates (`highest_high`/`lowest_low` on 1w), stop+take | `reports/tstx-swing-1d-report.html` | `eodhd-aapl-swing.toml` |
-| **Pivot Levels** · `1d` | `pivot-levels.strat` | pivot primitives (`price_crosses_above/below_pivot` on R1/P/S1), long+short | `reports/tstx-pivot-1d-report.html` | `eodhd-aapl-pivot.toml` |
-| **MACD Momentum** · `4h` | `macd-momentum.strat` | all four MACD primitives, `avg_volume`/`volume`, **`atr_value` stop + warmup-suppression** (INC2), pyramiding | `reports/tstx-macd-4h-report.html` | — (driver has no 4h) |
-| **Heikin-Ashi Reversal** · `1h` | `ha-reversal.strat` | HA primitives (`ha_bullish/bearish_reversal`, `ha_strong_bullish/bearish`), RSI extremes, long+short, stop/take | `reports/tstx-ha-1h-report.html` | `eodhd-btc-ha.toml` (crypto, 24/7) |
+| **Trend Rider** · `1w` (equity) | `trend-rider.strat` | MA trend-filter primitives (`price_crosses_above/below_ema`, `sma_above_ema`), long+short, stop/take | `reports/tstx-trend-rider-1w-report.html` | `eodhd-vti-trend-rider.toml` |
+| **Swing** · `1d` (+`1w` background, equity) | `swing-multi-tf.strat` | multi-timeframe, RSI primitives (`rsi_oversold/overbought`), window aggregates (`highest_high`/`lowest_low` on 1w), stop+take | `reports/tstx-swing-1d-report.html` | `eodhd-aapl-swing.toml` |
+| **Pivot Levels** · `1d` (equity) | `pivot-levels.strat` | pivot primitives (`price_crosses_above/below_pivot` on R1/P/S1), long+short | `reports/tstx-pivot-1d-report.html` | `eodhd-aapl-pivot.toml` |
+| **MACD Momentum** · `4h` (crypto) | `macd-momentum.strat` | all four MACD primitives, `avg_volume`/`volume`, **`atr_value` stop + warmup-suppression** (INC2), pyramiding | `reports/tstc-macd-4h-report.html` | — (driver has no 4h) |
+| **Heikin-Ashi Reversal** · `1h` (crypto) | `ha-reversal.strat` | HA primitives (`ha_bullish/bearish_reversal`, `ha_strong_bullish/bearish`), RSI extremes, long+short, stop/take | `reports/tstc-ha-1h-report.html` | `eodhd-btc-ha.toml` (crypto, 24/7) |
 
 Between them the demos exercise: base indicators, MACD, RSI primitives, HA
 primitives, MA trend-filter primitives, pivot primitives, window aggregates,
@@ -40,24 +45,32 @@ Or step by step:
 
 ```sh
 mvn clean package -DskipTests                       # build target/wichtelm.jar
-java demo/GenerateData.java                          # (re)create the TSTX CSVs
+java demo/GenerateData.java                          # (re)create the TSTX/TSTC CSVs
 java -jar target/wichtelm.jar validate demo/strategies/swing-multi-tf.strat
 java -jar target/wichtelm.jar run demo/tstx-swing-1d.toml
 ```
 
 Each run writes a new timestamped HTML file under `demo/reports/` (reports are
-never overwritten); the committed `tstx-*-report.html` files are stable copies.
+never overwritten); the committed `tstx-*` / `tstc-*-report.html` files are
+stable copies.
 
 ## The synthetic data
 
-`GenerateData.java` is a deterministic, JDK-only single-file program. It builds
-one 1h base series (156 whole weeks ≈ 3 years from a Monday) and aggregates it
-to 4h / 1d / 1w, so every timeframe is mutually consistent. The price path
-layers a ~2-year regime cycle (bull → bear → bull), ~26- and ~41-day swings, a
-~5-day swing, an intraday cycle, and a small wobble — enough structure that each
-strategy gets a realistic mix of winning and losing trades. Volume is synthetic
-but always positive (the volume-gated demo needs it). Re-running reproduces the
-committed `data/TSTX_*.csv` exactly.
+`GenerateData.java` is a deterministic, JDK-only single-file program (it lives
+under `demo/`, outside `src/` — it is never compiled into the app, only run on
+demand). It emits two instruments:
+
+- **`TSTX`** (equity): a daily price path over ~3 calendar years, emitting bars
+  on **weekdays only**, then grouping them into Monday-anchored weekly bars
+  (`TSTX_1d.csv`, `TSTX_1w.csv`).
+- **`TSTC`** (crypto): a continuous 1h base over one year, aggregated to 4h
+  (`TSTC_1h.csv`, `TSTC_4h.csv`).
+
+Each price path layers a multi-year regime cycle (bull → bear → bull), medium
+and short swings, and a small wobble — enough structure for a realistic mix of
+winning and losing trades. Volume is synthetic but always positive (the
+volume-gated demo needs it). Re-running reproduces the committed `data/*.csv`
+exactly.
 
 ## Running on real data (EODHD)
 
@@ -122,9 +135,10 @@ don't commit it.)
 - **Raw, not adjusted.** Intraday EODHD data is not adjusted for splits or
   dividends. Choose windows that don't cross a corporate action (AAPL's last
   split was Aug 2020), or use a broad ETF (`VTI`), forex, or crypto.
-- **Continuous vs. gapped charts.** The synthetic `TSTX` data is 24/7, so its
-  charts draw a continuous line. Real **equity** intraday is market-hours-only
-  (overnight/weekend gaps), so its charts look "jumpier"; a 24/7 instrument like
-  `BTC-USD.CC` is the closest real analogue to the smooth synthetic shape.
+- **Continuous vs. gapped charts.** The synthetic data matches each asset class:
+  `TSTX` (equity) is weekday-only, `TSTC` (crypto) is 24/7. Real **equity
+  intraday** (1h) is market-hours-only, so its charts look "jumpier" than the
+  daily/weekly views; a 24/7 instrument like `BTC-USD.CC` is the realistic
+  analogue for the intraday demos.
 - **Network.** A live EODHD run needs `eodhd.com` reachable; the CSV path needs
   no network.

@@ -1,7 +1,7 @@
-# Heikin-Ashi reversals at RSI extremes on TSTX, a two-month window of hourly
-# bars (kept short so the trade list stays readable at 1h granularity).
+# Heikin-Ashi reversals at RSI extremes on the synthetic CRYPTO TSTC (24/7) —
+# a two-month window of hourly bars (short, so the trade list stays readable).
 strategy    = "strategies/ha-reversal.strat"
-symbol      = "TSTX"
+symbol      = "TSTC"
 data_source = "csv"
 [date_range]
 from = 2022-03-01

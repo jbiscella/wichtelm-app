@@ -24,14 +24,14 @@ else
   mvn -q clean package -DskipTests
 fi
 
-echo "==> regenerating synthetic OHLC data (TSTX at 1h/4h/1d/1w)"
+echo "==> regenerating synthetic OHLC data (TSTX equity 1d/1w, TSTC crypto 1h/4h)"
 java demo/GenerateData.java
 
 echo "==> validating a demo strategy"
 java -jar "$JAR" validate demo/strategies/swing-multi-tf.strat
 
 echo "==> running every CSV demo"
-for cfg in demo/tstx-*.toml; do
+for cfg in demo/tstx-*.toml demo/tstc-*.toml; do
   echo "  - $cfg"
   java -jar "$JAR" run "$cfg"
 done

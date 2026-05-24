@@ -1,5 +1,5 @@
-# Daily swing with a weekly trend+channel filter (multi-timeframe) on TSTX,
-# ~2 years of daily bars.
+# Daily swing with a weekly channel filter (multi-timeframe) on the synthetic
+# EQUITY TSTX — ~2 years of weekday daily bars + weekly background.
 strategy    = "strategies/swing-multi-tf.strat"
 symbol      = "TSTX"
 data_source = "csv"

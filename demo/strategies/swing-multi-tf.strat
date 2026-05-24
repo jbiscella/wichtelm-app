@@ -1,7 +1,7 @@
 Feature: Daily Swing with Weekly Channel Filter
   Primary timeframe: 1d
-  Parameter oversold default 30
-  Parameter overbought default 70
+  Parameter oversold default 35
+  Parameter overbought default 65
   Parameter stop_loss_pct default 5
   Parameter take_profit_pct default 12
 
