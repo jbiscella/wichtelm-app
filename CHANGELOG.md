@@ -50,6 +50,23 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   prefix sizes that cover warmup, mid-series and end-of-series boundaries.
   Failure of this test implies a non-causal nachtkrapp rule and warrants a
   ha-track issue with the failing reproducer.
+- **Per-trade chart overlays now auto-plot** — `HtmlReportGenerator` draws the
+  indicators a trade's conditions key off, so a reader can see what each rule
+  reads: MA-trend-filter primitives (`price_*_sma/ema`, `sma_*_ema`) → `SMA` /
+  `EMA` main-pane overlays; pivot primitives (`price_*_pivot`) → a STANDARD
+  daily `Annotation.PivotPointLevels` set computed from the prior completed UTC
+  day; window-aggregate Background series (`highest_high` / `lowest_low` /
+  `highest_close` / `lowest_close`) → `RollingMax` / `RollingMin` (HHV / LLV)
+  per-bar channel overlays, with the period read from the strategy and a
+  field-matched `PriceSource`. Covered by `OverlayWiringTest`.
+
+### Changed
+
+- **ha-track 0.53.0-alpha → 0.54.0-alpha** — picks up the `RollingMax` /
+  `RollingMin` (Donchian-style) overlay indicators that back the
+  window-aggregate channel rendering above; that channel was deferred in the
+  prior increment until the indicator landed upstream. `THIRD-PARTY.txt`
+  regenerated.
 
 ### Changed (housekeeping)
 
