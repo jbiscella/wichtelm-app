@@ -7,9 +7,10 @@ produced** from them. `run_demo.sh` doubles as an end-to-end smoke test
 
 ## The demo suite
 
-Five strategies, one per **timeframe**, chosen to cover the whole DSL feature
-surface with the fewest demos. Two synthetic instruments (deliberately fake
-names per CLAUDE.md §17, never real tickers), each modelling its asset class
+**Seven** strategies. **Five** "clean" demos — one per **timeframe**, realistic
+per asset class — cover most of the surface; **two** "showcase" demos sweep up
+every remaining primitive. Two synthetic instruments (deliberately fake names
+per CLAUDE.md §17, never real tickers), each modelling its asset class
 **realistically**:
 
 - **`TSTX`** — a synthetic **equity** at `1d` / `1w`. Bars exist on **weekdays
@@ -21,17 +22,18 @@ names per CLAUDE.md §17, never real tickers), each modelling its asset class
 
 | Demo (timeframe) | Strategy | Showcases | CSV report | EODHD config |
 |---|---|---|---|---|
-| **Trend Rider** · `1w` (equity) | `trend-rider.strat` | MA trend-filter primitives (`price_crosses_above/below_ema`, `sma_above_ema`), long+short, stop/take | `reports/tstx-trend-rider-1w-report.html` | `eodhd-vti-trend-rider.toml` |
-| **Swing** · `1d` (+`1w` background, equity) | `swing-multi-tf.strat` | multi-timeframe, RSI primitives (`rsi_oversold/overbought`), window aggregates (`highest_high`/`lowest_low` on 1w), stop+take | `reports/tstx-swing-1d-report.html` | `eodhd-aapl-swing.toml` |
-| **Pivot Levels** · `1d` (equity) | `pivot-levels.strat` | pivot primitives (`price_crosses_above/below_pivot` on R1/P/S1), long+short | `reports/tstx-pivot-1d-report.html` | `eodhd-aapl-pivot.toml` |
+| **Trend Rider** · `1w` (equity) | `trend-rider.strat` | MA trend-filter primitives (`price_crosses_above/below_ema`, `sma_above_ema`), long+short, stop/take | `reports/tstx-trend-rider-1w-report.html` | `eodhd-aapl-trend-rider.toml` *(profit)* |
+| **Swing** · `1d` (+`1w` background, equity) | `swing-multi-tf.strat` | multi-timeframe, RSI primitives (`rsi_oversold/overbought`), window aggregates (`highest_high`/`lowest_low` on 1w), stop+take | `reports/tstx-swing-1d-report.html` | `eodhd-vti-swing.toml` *(profit)* |
+| **Pivot Levels** · `1d` (equity) | `pivot-levels.strat` | pivot primitives (`price_crosses_above/below_pivot` on R1/P/S1), long+short | `reports/tstx-pivot-1d-report.html` | `eodhd-tsla-pivot.toml` *(profit)* |
 | **MACD Momentum** · `4h` (crypto) | `macd-momentum.strat` | all four MACD primitives, `avg_volume`/`volume`, **`atr_value` stop + warmup-suppression** (INC2), pyramiding | `reports/tstc-macd-4h-report.html` | — (driver has no 4h) |
 | **Heikin-Ashi Reversal** · `1h` (crypto) | `ha-reversal.strat` | HA primitives (`ha_bullish/bearish_reversal`, `ha_strong_bullish/bearish`), RSI extremes, long+short, stop/take | `reports/tstc-ha-1h-report.html` | — (free demo token serves only ~4 mo of intraday) |
+| **MA & RSI Showcase** · `1d` (equity) | `showcase-ma-rsi.strat` | the remaining MA-filter primitives (`price_above/below_sma/ema`, `price_crosses_above/below_sma`, `sma_crosses_above/below_ema`), `rsi_crosses_50`, pivot **states** (`price_above/below_pivot`), `stddev` | `reports/tstx-showcase-ma-1d-report.html` | `eodhd-aapl-showcase-ma.toml` *(showcase)* |
+| **MACD & HA Showcase** · `1d` (equity) | `showcase-macd-ha.strat` | MACD **numeric** series (`macd_line`/`signal`/`histogram`) + crosses, `ha_doji`, `ha_strong`, `highest_close`/`lowest_close`, `avg_volume`, `atr_value` stop | `reports/tstx-showcase-macd-1d-report.html` | `eodhd-vti-showcase-macd.toml` *(showcase)* |
 
-Between them the demos exercise: base indicators, MACD, RSI primitives, HA
-primitives, MA trend-filter primitives, pivot primitives, window aggregates,
-`atr_value` dynamic stops + warmup suppression, percentage stop/take, multi-
-timeframe Background series, long/short entries and exits, pyramiding, and
-parameter overrides — across weekly, daily, 4-hour and hourly charts.
+The five clean demos + two showcases together exercise **every** primitive in
+the §3.7 catalog, across weekly / daily / 4-hour / hourly charts. The two
+showcase demos are deliberately *not* profit-tuned — their job is feature
+coverage, not returns.
 
 ## Running it
 
@@ -74,16 +76,28 @@ exactly.
 
 ## Running on real data (EODHD)
 
-The three **daily/weekly** strategies also run against live EODHD data — just
-`data_source = "eodhd"` instead of `"csv"`. Committed `eodhd-*.toml` configs use
-EODHD's free public `demo` token (no signup):
+The daily/weekly strategies also run against live EODHD data — just
+`data_source = "eodhd"` instead of `"csv"`. There are **five** `eodhd-*.toml`
+configs, all on EODHD's free public `demo` token (no signup), in two groups:
+
+- **Profit** (3) — instrument + window selected so the strategy's *style* matches
+  the *regime* and the run is positive: trend-follow on AAPL's 2021-2024 uptrend
+  (`eodhd-aapl-trend-rider`), pivot breakouts on volatile TSLA 2023-2024
+  (`eodhd-tsla-pivot`), mean-reversion on range-bound VTI 2015-2016
+  (`eodhd-vti-swing`).
+- **Showcase** (2) — *not* profit-tuned; they just exercise the remaining
+  primitives on real daily data (`eodhd-aapl-showcase-ma`, `eodhd-vti-showcase-macd`).
 
 ```sh
 export EODHD_API_TOKEN=demo
-java -jar target/wichtelm.jar run demo/eodhd-aapl-swing.toml
+java -jar target/wichtelm.jar run demo/eodhd-aapl-trend-rider.toml
 # or, to run every EODHD config in one pass:
 ./demo/run_eodhd_demos.sh
 ```
+
+(Picking a favourable instrument+window for the "profit" group is *selection*,
+not prediction — the report disclaimer already says past ≠ future. It's there to
+show the tool producing a clean positive run, nothing more.)
 
 The free `demo` token serves `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 `BTC-USD.CC`, `EURUSD.FOREX`.

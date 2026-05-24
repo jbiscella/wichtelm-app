@@ -1,12 +1,12 @@
 # Local-only EODHD run — NEVER commit the generated report (licensed data; see README).
-# Daily swing with a weekly channel filter (multi-timeframe) on real AAPL bars.
-# ~5 years (post the Aug-2020 split, so raw intraday/EOD is corporate-action-free).
+# PROFIT candidate: daily mean-reversion swing on the broad market (VTI) over a
+# range-bound stretch (2015-2016), where mean-reversion tends to pay. ~2 years.
 strategy = "strategies/swing-multi-tf.strat"
-symbol = "AAPL.US"
+symbol = "VTI.US"
 data_source = "eodhd"
 [date_range]
-from = 2021-01-01
-to   = 2026-05-01
+from = 2015-01-01
+to   = 2016-12-31
 [sizing]
 position_size_pct = 50
 pyramiding = false

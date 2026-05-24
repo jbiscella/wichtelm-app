@@ -1,11 +1,12 @@
 # Local-only EODHD run — NEVER commit the generated report (licensed data; see README).
-# Daily pivot-level breakouts (INC3) on real AAPL daily bars. ~5 years.
+# PROFIT candidate: daily pivot breakouts on a high-volatility name (TSLA),
+# 2023-2024 (post the Aug-2022 3:1 split, so raw EOD is split-free). ~2 years.
 strategy = "strategies/pivot-levels.strat"
-symbol = "AAPL.US"
+symbol = "TSLA.US"
 data_source = "eodhd"
 [date_range]
-from = 2021-01-01
-to   = 2026-05-01
+from = 2023-01-01
+to   = 2024-12-31
 [sizing]
 position_size_pct = 50
 pyramiding = false
