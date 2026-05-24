@@ -1,0 +1,32 @@
+Feature: Daily Pivot Levels
+  Primary timeframe: 1d
+  Parameter stop_loss_pct default 4
+  Parameter take_profit_pct default 9
+
+  # Showcases the 0.52 pivot-point primitives (INC3) on daily bars: trade
+  # breakouts of the STANDARD daily pivot levels (R1 / P / S1), computed from
+  # the prior completed day's OHLC. Pivot primitives are bare boolean steps.
+
+  Scenario: Enter long on a break above R1 resistance
+    Given no open position
+    When price_crosses_above_pivot(R1)
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 + take_profit_pct / 100)
+
+  Scenario: Exit long when price falls back below the pivot
+    Given a long position is open
+    When price_crosses_below_pivot(P)
+    Then long_exit
+
+  Scenario: Enter short on a break below S1 support
+    Given no open position
+    When price_crosses_below_pivot(S1)
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 - take_profit_pct / 100)
+
+  Scenario: Exit short when price reclaims the pivot
+    Given a short position is open
+    When price_crosses_above_pivot(P)
+    Then short_exit

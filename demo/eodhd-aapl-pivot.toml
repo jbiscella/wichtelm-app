@@ -1,0 +1,13 @@
+# Local-only EODHD run — NEVER commit the generated report (licensed data; see README).
+# Daily pivot-level breakouts (INC3) on real AAPL daily bars.
+strategy = "strategies/pivot-levels.strat"
+symbol = "AAPL.US"
+data_source = "eodhd"
+[date_range]
+from = 2022-01-01
+to   = 2024-06-30
+[sizing]
+position_size_pct = 50
+pyramiding = false
+[eodhd]
+api_token_env = "EODHD_API_TOKEN"

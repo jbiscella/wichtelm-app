@@ -1,0 +1,14 @@
+# Local-only EODHD run — NEVER commit the generated report (licensed data; see README).
+# Weekly trend rider on real VTI weekly bars (EOD endpoint has years of history).
+#   export EODHD_API_TOKEN=demo && java -jar target/wichtelm.jar run demo/eodhd-vti-trend-rider.toml
+strategy = "strategies/trend-rider.strat"
+symbol = "VTI.US"
+data_source = "eodhd"
+[date_range]
+from = 2021-01-01
+to   = 2024-06-30
+[sizing]
+position_size_pct = 50
+pyramiding = false
+[eodhd]
+api_token_env = "EODHD_API_TOKEN"

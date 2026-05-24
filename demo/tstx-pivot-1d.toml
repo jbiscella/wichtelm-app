@@ -1,0 +1,16 @@
+# Daily pivot-level breakouts (INC3 pivot primitives) on TSTX, ~6 months of
+# daily bars (pivot crosses are frequent, so a half-year keeps the trade list
+# readable).
+strategy    = "strategies/pivot-levels.strat"
+symbol      = "TSTX"
+data_source = "csv"
+[date_range]
+from = 2022-01-01
+to   = 2022-06-30
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+[output]
+directory = "reports"
+[csv]
+file = "data/{symbol}_{timeframe}.csv"

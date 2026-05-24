@@ -24,13 +24,16 @@ else
   mvn -q clean package -DskipTests
 fi
 
-echo "==> regenerating synthetic OHLC data"
+echo "==> regenerating synthetic OHLC data (TSTX at 1h/4h/1d/1w)"
 java demo/GenerateData.java
 
-echo "==> validating the demo strategy"
-java -jar "$JAR" validate demo/strategies/mean-reversion-trend.strat
+echo "==> validating a demo strategy"
+java -jar "$JAR" validate demo/strategies/swing-multi-tf.strat
 
-echo "==> running the demo backtest"
-java -jar "$JAR" run demo/demo-backtest.toml
+echo "==> running every CSV demo"
+for cfg in demo/tstx-*.toml; do
+  echo "  - $cfg"
+  java -jar "$JAR" run "$cfg"
+done
 
-echo "==> done — see the HTML report under demo/reports/"
+echo "==> done — see the HTML reports under demo/reports/"

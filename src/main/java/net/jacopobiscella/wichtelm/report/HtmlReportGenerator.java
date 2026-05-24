@@ -1464,7 +1464,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
     /**
      * The underlying indicators implied by the Tier B primitives a trade's
      * entry / exit scenarios reference, so the chart shows the indicator the
-     * boolean is read from (e.g. macd-boolean-cross gets a MACD pane). MACD
+     * boolean is read from (e.g. a macd_*_cross primitive gets a MACD pane). MACD
      * primitives → {@code MACD(12,26,9)}; RSI primitives → {@code RSI(14)} with
      * danger zones; HA primitives need nothing (already on the HA candles).
      * Periods are the Tier B defaults from CLAUDE.md §3.7.

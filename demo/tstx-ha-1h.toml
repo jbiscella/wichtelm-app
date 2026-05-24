@@ -1,0 +1,15 @@
+# Heikin-Ashi reversals at RSI extremes on TSTX, a two-month window of hourly
+# bars (kept short so the trade list stays readable at 1h granularity).
+strategy    = "strategies/ha-reversal.strat"
+symbol      = "TSTX"
+data_source = "csv"
+[date_range]
+from = 2022-03-01
+to   = 2022-04-30
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+[output]
+directory = "reports"
+[csv]
+file = "data/{symbol}_{timeframe}.csv"

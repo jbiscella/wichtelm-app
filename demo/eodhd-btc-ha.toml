@@ -1,0 +1,15 @@
+# Local-only EODHD run — NEVER commit the generated report (licensed data; see README).
+# Heikin-Ashi reversals on real BTC-USD 1h bars — crypto trades 24/7, so the
+# chart has no market-hours gaps. NOTE: the free demo token only serves a
+# rolling ~4-month intraday window, so refresh [date_range] (see README).
+strategy = "strategies/ha-reversal.strat"
+symbol = "BTC-USD.CC"
+data_source = "eodhd"
+[date_range]
+from = 2026-03-15
+to   = 2026-05-15
+[sizing]
+position_size_pct = 50
+pyramiding = false
+[eodhd]
+api_token_env = "EODHD_API_TOKEN"

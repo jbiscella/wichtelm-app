@@ -1,0 +1,43 @@
+Feature: Daily Swing with Weekly Channel Filter
+  Primary timeframe: 1d
+  Parameter oversold default 30
+  Parameter overbought default 70
+  Parameter stop_loss_pct default 5
+  Parameter take_profit_pct default 12
+
+  # Multi-timeframe (daily primary, weekly background): buy daily RSI dips while
+  # price holds above the 8-week low, sell RSI spikes while price is capped under
+  # the 8-week high. The weekly channel (highest_high / lowest_low on 1w) and the
+  # weekly EMA trend are resolved lookahead-safely from the most recently CLOSED
+  # weekly bar. Two charts render per trade — the daily entry/exit and the weekly
+  # context.
+
+  Background:
+    Given a series weekly_high defined as highest_high(8) on 1w
+    And a series weekly_low defined as lowest_low(8) on 1w
+
+  Scenario: Enter long on an oversold dip holding the weekly channel
+    Given no open position
+    When rsi_oversold(oversold)
+    And close is above weekly_low
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 + take_profit_pct / 100)
+
+  Scenario: Exit long on an overbought spike
+    Given a long position is open
+    When rsi_overbought(overbought)
+    Then long_exit
+
+  Scenario: Enter short on an overbought spike capped by the weekly channel
+    Given no open position
+    When rsi_overbought(overbought)
+    And close is below weekly_high
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 - take_profit_pct / 100)
+
+  Scenario: Exit short on an oversold dip
+    Given a short position is open
+    When rsi_oversold(oversold)
+    Then short_exit
