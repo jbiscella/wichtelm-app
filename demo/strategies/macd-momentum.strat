@@ -1,0 +1,39 @@
+Feature: 4h MACD Momentum
+  Primary timeframe: 4h
+  Parameter vol_period default 20
+  Parameter atr_period default 100
+  Parameter atr_mult default 2.5
+
+  # 4h bars (smoother than 1h, denser than daily). All four MACD primitives
+  # drive entries/exits, confirmed by above-average volume, protected by a
+  # volatility stop frozen at the fill (INC2 atr_value). Pyramiding is enabled
+  # in the config, so a repeat signal while in a position adds to it. Because
+  # atr_value(atr_period) only warms after 100 bars, the earliest qualifying signals are
+  # suppressed and listed in the report's "Suppressed entries" diagnostics.
+
+  Background:
+    Given a series avg_vol defined as avg_volume(vol_period)
+
+  Scenario: Enter long on a MACD bullish cross with strong volume
+    Given no open position
+    When macd_bullish_cross()
+    And volume is above avg_vol
+    Then long_entry
+    And with stop_loss at entry_price - atr_mult * atr_value(atr_period)
+
+  Scenario: Exit long when MACD crosses below zero
+    Given a long position is open
+    When macd_zero_cross_down()
+    Then long_exit
+
+  Scenario: Enter short on a MACD bearish cross with strong volume
+    Given no open position
+    When macd_bearish_cross()
+    And volume is above avg_vol
+    Then short_entry
+    And with stop_loss at entry_price + atr_mult * atr_value(atr_period)
+
+  Scenario: Exit short when MACD crosses above zero
+    Given a short position is open
+    When macd_zero_cross_up()
+    Then short_exit

@@ -1,0 +1,14 @@
+# Local-only EODHD run — NEVER commit the generated report (licensed data; see README).
+# PROFIT candidate: weekly trend-follower on AAPL through its 2021-2024 uptrend
+# (post the Aug-2020 split, so raw EOD is corporate-action-free). ~4 years.
+strategy = "strategies/trend-rider.strat"
+symbol = "AAPL.US"
+data_source = "eodhd"
+[date_range]
+from = 2021-01-01
+to   = 2024-12-31
+[sizing]
+position_size_pct = 50
+pyramiding = false
+[eodhd]
+api_token_env = "EODHD_API_TOKEN"

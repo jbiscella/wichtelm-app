@@ -13,6 +13,7 @@ import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
+import org.hatrack.commons.PivotPointVariant;
 import org.hatrack.commons.PriceSource;
 import org.hatrack.commons.Timeframe;
 import org.hatrack.frauholle.model.EquityPoint;
@@ -85,6 +86,15 @@ public final class HtmlReportGenerator {
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern INDICATOR_CALL =
             Pattern.compile("^\\s*([a-z_][a-z0-9_]*)\\s*\\(([^)]*)\\)\\s*$");
+    // The 11 MA-trend-filter Tier B primitives, longest-first so the regex
+    // engine prefers the more specific `*_crosses_*` / `sma_*_ema` forms.
+    private static final Pattern MA_PRIMITIVE = Pattern.compile(
+            "(price_crosses_above_sma|price_crosses_below_sma|price_above_sma|price_below_sma|"
+            + "price_crosses_above_ema|price_crosses_below_ema|price_above_ema|price_below_ema|"
+            + "sma_crosses_above_ema|sma_crosses_below_ema|sma_above_ema)\\s*\\(([^)]*)\\)");
+    private static final java.util.Set<String> PIVOT_PRIMITIVES = java.util.Set.of(
+            "price_above_pivot", "price_below_pivot",
+            "price_crosses_above_pivot", "price_crosses_below_pivot");
     private static final BigDecimal DEFAULT_RSI_OVERBOUGHT = BigDecimal.valueOf(70);
     private static final BigDecimal DEFAULT_RSI_OVERSOLD = BigDecimal.valueOf(30);
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
@@ -1149,7 +1159,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             // pane (the boolean is read off the indicator, as TradingView / MT /
             // NinjaTrader do). Background-series indicators dedupe against these.
             List<Indicator> tierB = isPrimary
-                    ? tierBIndicators(entryScenario, exitScenario)
+                    ? tierBIndicators(data.parameters(), entryScenario, exitScenario)
                     : List.of();
             int subPaneCount = addIndicatorsForTimeframe(builder, timeframeLabel, series, data, tierB);
             // Size the chart by sub-pane count: a fixed 320px split across a main
@@ -1245,6 +1255,10 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             for (Annotation level : referenceLevels(isPrimary, openTrade, entryScenario,
                     isLong, entryPrice, exitPrice, positionSize, entryMarker, data)) {
                 builder.addAnnotation(level);
+            }
+            for (Annotation pivot : pivotAnnotations(isPrimary, data.primarySeries(), entryMarker,
+                    entryScenario, exitScenario)) {
+                builder.addAnnotation(pivot);
             }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
@@ -1415,6 +1429,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             case Indicator.ADX a -> "ADX(" + a.period() + ")";
             case Indicator.Stochastic s -> "STOCH(" + s.kPeriod() + ")";
             case Indicator.VolumePane v -> "VOL";
+            case Indicator.RollingMax r -> "HHV(" + r.period() + ")";
+            case Indicator.RollingMin r -> "LLV(" + r.period() + ")";
         };
     }
 
@@ -1464,14 +1480,16 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
     /**
      * The underlying indicators implied by the Tier B primitives a trade's
      * entry / exit scenarios reference, so the chart shows the indicator the
-     * boolean is read from (e.g. macd-boolean-cross gets a MACD pane). MACD
+     * boolean is read from (e.g. a macd_*_cross primitive gets a MACD pane). MACD
      * primitives → {@code MACD(12,26,9)}; RSI primitives → {@code RSI(14)} with
      * danger zones; HA primitives need nothing (already on the HA candles).
      * Periods are the Tier B defaults from CLAUDE.md §3.7.
      */
-    private List<Indicator> tierBIndicators(StrategyScenario... scenarios) {
+    List<Indicator> tierBIndicators(Map<String, BigDecimal> parameters,
+                                    StrategyScenario... scenarios) {
         boolean macd = false;
         boolean rsi = false;
+        List<Indicator> out = new ArrayList<>();
         for (StrategyScenario scenario : scenarios) {
             if (scenario == null) {
                 continue;
@@ -1486,17 +1504,137 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                         || t.contains("rsi_crosses_50")) {
                     rsi = true;
                 }
+                // MA-trend-filter primitives plot their underlying MA(s) on the
+                // main pane (price_*_sma → SMA, price_*_ema → EMA, sma_*_ema →
+                // both), so the boolean is read off a visible overlay.
+                addMaIndicators(t, parameters, out);
             }
         }
-        List<Indicator> out = new ArrayList<>();
         if (macd) {
-            out.add(new Indicator.MACD(12, 26, 9, PriceSource.CLOSE));
+            addUnique(out, new Indicator.MACD(12, 26, 9, PriceSource.CLOSE));
         }
         if (rsi) {
-            out.add(new Indicator.RSI(14, DEFAULT_RSI_OVERBOUGHT, DEFAULT_RSI_OVERSOLD,
+            addUnique(out, new Indicator.RSI(14, DEFAULT_RSI_OVERBOUGHT, DEFAULT_RSI_OVERSOLD,
                     PriceSource.CLOSE, Optional.of(Indicator.RsiVisualization.DANGER_ZONES_ON)));
         }
         return out;
+    }
+
+    private static void addMaIndicators(String stepText, Map<String, BigDecimal> parameters,
+                                        List<Indicator> out) {
+        Matcher m = MA_PRIMITIVE.matcher(stepText);
+        while (m.find()) {
+            String fn = m.group(1);
+            String raw = m.group(2).trim();
+            String[] args = raw.isEmpty() ? new String[0] : raw.split("\\s*,\\s*");
+            try {
+                if (fn.startsWith("price_") && fn.endsWith("_sma")) {
+                    addUnique(out, new Indicator.SMA(resolveIntArg(args, 0, parameters),
+                            PriceSource.CLOSE));
+                } else if (fn.startsWith("price_") && fn.endsWith("_ema")) {
+                    addUnique(out, new Indicator.EMA(resolveIntArg(args, 0, parameters),
+                            PriceSource.CLOSE));
+                } else { // sma_*_ema — the MA-vs-MA cross/compare primitives
+                    addUnique(out, new Indicator.SMA(resolveIntArg(args, 0, parameters),
+                            PriceSource.CLOSE));
+                    addUnique(out, new Indicator.EMA(resolveIntArg(args, 1, parameters),
+                            PriceSource.CLOSE));
+                }
+            } catch (IllegalArgumentException unresolvable) {
+                // Skip an unresolved period (mirrors toIndicator) — better a
+                // missing overlay than a failed report.
+            }
+        }
+    }
+
+    private static void addUnique(List<Indicator> out, Indicator indicator) {
+        if (!out.contains(indicator)) {
+            out.add(indicator);
+        }
+    }
+
+    /**
+     * The {@link Annotation.PivotPointLevels} set drawn on the PRIMARY pane when
+     * a trade's entry / exit scenarios reference a pivot-point primitive
+     * ({@code price_*_pivot}). The STANDARD daily levels (P / R1-R3 / S1-S3) are
+     * computed by the renderer from the prior completed day's bar — nachtkrapp's
+     * {@code PivotPointRule} recomputes them per day, whereas the annotation
+     * snapshots a single prior-period bar (the day before the entry), an
+     * accepted approximation over the short per-trade window. Suppressed on
+     * higher-TF context panes, which carry no trade-reference overlays.
+     */
+    List<Annotation> pivotAnnotations(boolean isPrimary, OHLCSeries primarySeries,
+                                      Instant entryMarker, StrategyScenario... scenarios) {
+        if (!isPrimary || primarySeries == null || primarySeries.bars().isEmpty()) {
+            return List.of();
+        }
+        boolean referenced = false;
+        outer:
+        for (StrategyScenario scenario : scenarios) {
+            if (scenario == null) {
+                continue;
+            }
+            for (StrategyStep step : scenario.conditionSteps()) {
+                for (String primitive : PIVOT_PRIMITIVES) {
+                    if (step.text().contains(primitive)) {
+                        referenced = true;
+                        break outer;
+                    }
+                }
+            }
+        }
+        if (!referenced) {
+            return List.of();
+        }
+        // STANDARD daily pivots are computed by nachtkrapp's PivotPointRule from
+        // the PRIOR COMPLETED UTC DAY's OHLC, regardless of the primary
+        // timeframe (it aggregates to daily internally). Mirror that here so the
+        // plotted P/R/S levels match the runtime: on a 1d primary this is the
+        // previous bar, but on an intraday primary it is the aggregate of the
+        // prior day's bars — never just the previous hour/bar.
+        OHLCBar priorDay = priorCompletedDailyBar(primarySeries.bars(), entryMarker);
+        if (priorDay == null) {
+            return List.of();
+        }
+        return List.of(new Annotation.PivotPointLevels(PivotPointVariant.STANDARD, priorDay));
+    }
+
+    /**
+     * The OHLC of the most recent completed UTC day strictly before
+     * {@code entryMarker}, aggregated from the primary bars (open = first bar of
+     * the day, high = max, low = min, close = last bar). Returns {@code null}
+     * when no prior day is present. Days with no bars (weekends / holidays) are
+     * skipped — the latest day that actually has bars wins, matching the
+     * runtime's "prior completed day". Assumes {@code bars} is time-ascending.
+     */
+    private static OHLCBar priorCompletedDailyBar(List<OHLCBar> bars, Instant entryMarker) {
+        LocalDate entryDay = entryMarker.atOffset(ZoneOffset.UTC).toLocalDate();
+        LocalDate targetDay = null;
+        for (OHLCBar bar : bars) {
+            LocalDate day = bar.time().atOffset(ZoneOffset.UTC).toLocalDate();
+            if (day.isBefore(entryDay) && (targetDay == null || day.isAfter(targetDay))) {
+                targetDay = day;
+            }
+        }
+        if (targetDay == null) {
+            return null;
+        }
+        OHLCBar open = null;
+        OHLCBar close = null;
+        BigDecimal high = null;
+        BigDecimal low = null;
+        for (OHLCBar bar : bars) {
+            if (!bar.time().atOffset(ZoneOffset.UTC).toLocalDate().equals(targetDay)) {
+                continue;
+            }
+            if (open == null) {
+                open = bar;
+            }
+            close = bar;
+            high = high == null ? bar.high() : high.max(bar.high());
+            low = low == null ? bar.low() : low.min(bar.low());
+        }
+        return new OHLCBar(open.time(), open.open(), high, low, close.close(), Optional.empty());
     }
 
     private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ReportData data) {
@@ -1513,7 +1651,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
 
 
 
-    private static Indicator toIndicator(String expression, Map<String, BigDecimal> parameters) {
+    static Indicator toIndicator(String expression, Map<String, BigDecimal> parameters) {
         Matcher matcher = INDICATOR_CALL.matcher(expression);
         if (!matcher.matches()) {
             return null;
@@ -1543,6 +1681,17 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                         resolveIntArg(args, 0, parameters),
                         BigDecimal.valueOf(2),
                         PriceSource.CLOSE);
+                // Window aggregates → Donchian-style per-bar stepping overlays
+                // (ha-track 0.54 RollingMax/RollingMin). Field-matched source:
+                // the *_high/*_low/*_close aggregate reads the same field.
+                case "highest_high" -> new Indicator.RollingMax(
+                        resolveIntArg(args, 0, parameters), PriceSource.HIGH);
+                case "lowest_low" -> new Indicator.RollingMin(
+                        resolveIntArg(args, 0, parameters), PriceSource.LOW);
+                case "highest_close" -> new Indicator.RollingMax(
+                        resolveIntArg(args, 0, parameters), PriceSource.CLOSE);
+                case "lowest_close" -> new Indicator.RollingMin(
+                        resolveIntArg(args, 0, parameters), PriceSource.CLOSE);
                 default -> null;
             };
         } catch (IllegalArgumentException unresolvable) {

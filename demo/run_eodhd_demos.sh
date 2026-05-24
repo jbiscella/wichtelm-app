@@ -88,7 +88,9 @@ echo "  generated ${#ok[@]} / ${#configs[@]} report(s) under $REPORT_DIR/"
 for b in "${ok[@]}";     do echo "    OK    $b-report.html"; done
 for b in "${failed[@]}"; do echo "    FAIL  $b"; done
 echo "============================================================"
-echo "Commit the *-report.html files you want to keep, then open your PR."
+echo "These reports embed licensed EODHD data — view them locally; do NOT commit"
+echo "them (reports/.gitignore excludes eodhd-*-report.html). The committed demo"
+echo "references are the synthetic-data CSV reports. See demo/README.md."
 
 # Non-zero exit if any config failed, so CI / callers can detect partial runs.
 [[ ${#failed[@]} -eq 0 ]]

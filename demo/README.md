@@ -1,264 +1,154 @@
 # wichtelm-app demo
 
-A complete, runnable end-to-end example of `wichtelm-app`: a multi-timeframe
-strategy, synthetic CSV market data, a config file, and the **HTML report the
-tool actually produced** from them.
+Runnable end-to-end examples of `wichtelm-app`: strategies in the Gherkin DSL,
+synthetic market data, config files, and the **HTML reports the tool actually
+produced** from them. `run_demo.sh` doubles as an end-to-end smoke test
+(build → parse → load → backtest → render).
 
-It doubles as an end-to-end smoke test — `run_demo.sh` exercises the whole
-pipeline (build → parse → load CSV → backtest → render report).
+## The demo suite
 
-## Contents
+**Seven** strategies. **Five** "clean" demos — one per **timeframe**, realistic
+per asset class — cover most of the surface; **two** "showcase" demos sweep up
+every remaining primitive. Two synthetic instruments (deliberately fake names
+per CLAUDE.md §17, never real tickers), each modelling its asset class
+**realistically**:
 
-| Path | What it is |
-|---|---|
-| `strategies/mean-reversion-trend.strat` | The demo strategy (5 scenarios, multi-timeframe, stop-loss) |
-| `data/DEMO_1h.csv` | Hourly OHLC bars — the primary timeframe (2880 bars, 120 days) |
-| `data/DEMO_1d.csv` | Daily OHLC bars — the higher timeframe used by the trend filter (120 bars) |
-| `data/TST2020_1h.csv` / `data/TST2020_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2020 — synthetic `TST2020` instrument, calibrated to the *shape* of the S&P 500 COVID year (see below) |
-| `data/TST2022_1h.csv` / `data/TST2022_1d.csv` | Hourly + daily OHLCV bars, full calendar year 2022 — synthetic `TST2022` instrument, calibrated to the *shape* of the S&P 500 bear market (see below) |
-| `demo-backtest.toml` | The original per-backtest config (`DEMO` symbol, 120 days) |
-| `tst2020-backtest.toml` / `tst2022-backtest.toml` | Per-backtest configs that run the same strategy against the TST2020 / TST2022 datasets |
-| `GenerateData.java` | Deterministic generator for the `DEMO` CSV files (single-file Java program) |
-| `run_demo.sh` | One-shot end-to-end run (build, generate, validate, backtest) for the `DEMO` example |
-| `reports/demo-backtest-report.html` | The committed HTML report for the `DEMO` backtest |
-| `reports/tst2020-backtest-report.html` / `reports/tst2022-backtest-report.html` | The committed HTML reports for the TST2020 / TST2022 backtests |
+- **`TSTX`** — a synthetic **equity** at `1d` / `1w`. Bars exist on **weekdays
+  only** (Mon–Fri), exactly like a real stock, so daily/weekly charts show the
+  normal small weekend gaps — realistic, and still clean.
+- **`TSTC`** — a synthetic **crypto** asset at `1h` / `4h`. Crypto trades 24/7,
+  so continuous hourly bars are the realistic shape here — and the intraday
+  charts stay gap-free.
+
+| Demo (timeframe) | Strategy | Showcases | CSV report | EODHD config |
+|---|---|---|---|---|
+| **Trend Rider** · `1w` (equity) | `trend-rider.strat` | MA trend-filter primitives (`price_crosses_above/below_ema`, `sma_above_ema`), long+short, stop/take | `reports/tstx-trend-rider-1w-report.html` | `eodhd-aapl-trend-rider.toml` *(profit)* |
+| **Swing** · `1d` (+`1w` background, equity) | `swing-multi-tf.strat` | multi-timeframe, RSI primitives (`rsi_oversold/overbought`), window aggregates (`highest_high`/`lowest_low` on 1w), stop+take | `reports/tstx-swing-1d-report.html` | `eodhd-vti-swing.toml` *(profit)* |
+| **Pivot Levels** · `1d` (equity) | `pivot-levels.strat` | pivot primitives (`price_crosses_above/below_pivot` on R1/P/S1), long+short | `reports/tstx-pivot-1d-report.html` | `eodhd-tsla-pivot.toml` *(profit)* |
+| **MACD Momentum** · `4h` (crypto) | `macd-momentum.strat` | all four MACD primitives, `avg_volume`/`volume`, **`atr_value` stop + warmup-suppression** (INC2), pyramiding | `reports/tstc-macd-4h-report.html` | — (driver has no 4h) |
+| **Heikin-Ashi Reversal** · `1h` (crypto) | `ha-reversal.strat` | HA primitives (`ha_bullish/bearish_reversal`, `ha_strong_bullish/bearish`), RSI extremes, long+short, stop/take | `reports/tstc-ha-1h-report.html` | — (free demo token serves only ~4 mo of intraday) |
+| **MA & RSI Showcase** · `1d` (equity) | `showcase-ma-rsi.strat` | the remaining MA-filter primitives (`price_above/below_sma/ema`, `price_crosses_above/below_sma`, `sma_crosses_above/below_ema`), `rsi_crosses_50`, pivot **states** (`price_above/below_pivot`), `stddev` | `reports/tstx-showcase-ma-1d-report.html` | `eodhd-aapl-showcase-ma.toml` *(showcase)* |
+| **MACD & HA Showcase** · `1d` (equity) | `showcase-macd-ha.strat` | MACD **numeric** series (`macd_line`/`signal`/`histogram`) + crosses, `ha_doji`, `ha_strong`, `highest_close`/`lowest_close`, `avg_volume`, `atr_value` stop | `reports/tstx-showcase-macd-1d-report.html` | `eodhd-vti-showcase-macd.toml` *(showcase)* |
+
+The five clean demos + two showcases together exercise **every** primitive in
+the §3.7 catalog, across weekly / daily / 4-hour / hourly charts. The two
+showcase demos are deliberately *not* profit-tuned — their job is feature
+coverage, not returns.
 
 ## Running it
 
 From the repository root:
 
 ```sh
-./demo/run_demo.sh
+./demo/run_demo.sh                 # build, regenerate data, run all 7 CSV demos
 ```
 
 Or step by step:
 
 ```sh
-mvn clean package -DskipTests          # build target/wichtelm.jar
-java demo/GenerateData.java            # (re)create the CSV data
-java -jar target/wichtelm.jar validate demo/strategies/mean-reversion-trend.strat
-java -jar target/wichtelm.jar run demo/demo-backtest.toml
+mvn clean package -DskipTests                       # build target/wichtelm.jar
+java demo/GenerateData.java                          # (re)create the TSTX/TSTC CSVs
+java -jar target/wichtelm.jar validate demo/strategies/swing-multi-tf.strat
+java -jar target/wichtelm.jar run demo/tstx-swing-1d.toml
 ```
 
-Each run writes a new timestamped HTML file under `demo/reports/`
-(reports are never overwritten). The committed
-`reports/demo-backtest-report.html` is one such run, renamed to a stable
-path so it can be linked to.
+Each run writes a new timestamped HTML file under `demo/reports/` (reports are
+never overwritten); the committed `tstx-*` / `tstc-*-report.html` files are
+stable copies.
 
-## Running a demo on real data (EODHD)
+## The synthetic data
 
-**Quickstart — a full real-data backtest in two commands.** Seven ready-to-run
-configs are committed (one per strategy), all using EODHD's free public `demo`
-token, so there's no signup, key, or download step:
+`GenerateData.java` is a deterministic, JDK-only single-file program (it lives
+under `demo/`, outside `src/` — it is never compiled into the app, only run on
+demand). It emits two instruments:
+
+- **`TSTX`** (equity): a daily price path over ~3 calendar years, emitting bars
+  on **weekdays only**, then grouping them into Monday-anchored weekly bars
+  (`TSTX_1d.csv`, `TSTX_1w.csv`).
+- **`TSTC`** (crypto): a continuous 1h base over two years, aggregated to 4h
+  (`TSTC_1h.csv`, `TSTC_4h.csv`).
+
+Each price path layers a multi-year regime cycle (bull → bear → bull), medium
+and short swings, and a small wobble — enough structure for a realistic mix of
+winning and losing trades. Volume is synthetic but always positive (the
+volume-gated demo needs it). Re-running reproduces the committed `data/*.csv`
+exactly.
+
+## Running on real data (EODHD)
+
+The daily/weekly strategies also run against live EODHD data — just
+`data_source = "eodhd"` instead of `"csv"`. There are **five** `eodhd-*.toml`
+configs, all on EODHD's free public `demo` token (no signup), in two groups:
+
+- **Profit** (3) — instrument + window selected so the strategy's *style* matches
+  the *regime* and the run is positive: trend-follow on AAPL's 2021-2024 uptrend
+  (`eodhd-aapl-trend-rider`), pivot breakouts on volatile TSLA 2023-2024
+  (`eodhd-tsla-pivot`), mean-reversion on range-bound VTI 2015-2016
+  (`eodhd-vti-swing`).
+- **Showcase** (2) — *not* profit-tuned; they just exercise the remaining
+  primitives on real daily data (`eodhd-aapl-showcase-ma`, `eodhd-vti-showcase-macd`).
 
 ```sh
 export EODHD_API_TOKEN=demo
-java -jar target/wichtelm.jar run demo/eodhd-aapl-macd-boolean.toml
+java -jar target/wichtelm.jar run demo/eodhd-aapl-trend-rider.toml
+# or, to run every EODHD config in one pass:
+./demo/run_eodhd_demos.sh
 ```
 
-That fetches real AAPL.US 2024 data live and writes a full HTML report to
-`reports/` — same pipeline as the CSV demos, just real prices. Pick any of:
-
-| Config | Strategy | Ticker · window |
-|---|---|---|
-| `eodhd-aapl-intro.toml` | mean reversion + daily trend | AAPL.US · Q1 2024 |
-| `eodhd-vti-mean-reversion.toml` | mean reversion + daily trend | VTI.US · Q2–Q3 2023 |
-| `eodhd-aapl-indicator-showcase.toml` | indicator showcase | AAPL.US · H2 2023 |
-| `eodhd-tsla-macd-breakout.toml` | MACD breakout | TSLA.US · Q4 2024 |
-| `eodhd-tsla-ha-pattern.toml` | HA pattern reversal at RSI extremes | TSLA.US · H1 2023 |
-| `eodhd-aapl-macd-boolean.toml` | MACD boolean cross | AAPL.US · 2024 |
-| `eodhd-tsla-ha-streak.toml` | pure HA pattern reversal after streak | TSLA.US · H2 2023 |
-| `eodhd-vti-ma-atr-trend.toml` | MA trend filter + ATR stop (0.52) | VTI.US · Q2–Q3 2023 |
-| `eodhd-aapl-pivot-bias.toml` | daily pivot bias (0.52) | AAPL.US · H2 2023 |
+(Picking a favourable instrument+window for the "profit" group is *selection*,
+not prediction — the report disclaimer already says past ≠ future. It's there to
+show the tool producing a clean positive run, nothing more.)
 
 The free `demo` token serves `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 `BTC-USD.CC`, `EURUSD.FOREX`.
 
-To regenerate **every** EODHD report in one pass, run
-`./demo/run_eodhd_demos.sh` (after `export EODHD_API_TOKEN=demo`). It builds
-the JAR, runs each `eodhd-*.toml`, and promotes each result to a stable
-`reports/<config>-report.html` ready to commit; set `WICHTELM_SKIP_BUILD=1`
-to reuse an existing `target/wichtelm.jar`.
+> **Do NOT commit the generated EODHD reports (or any EODHD-derived CSV).** EODHD
+> market data is licensed for your own use, not redistribution, and the `demo`
+> token is for evaluation only. A backtest report embeds the real prices (the
+> charts are the data; the trade tables list exact OHLC/entry/exit values), so
+> publishing one redistributes their data. This is why the committed reference
+> reports use **synthetic** `TSTX` data — run the EODHD demos locally and view
+> them there. `reports/.gitignore` excludes `eodhd-*-report.html` so they can't
+> be committed by accident.
 
-### How it works / using your own ticker
+> **Why only daily/weekly EODHD configs?** The `demo` token's **EOD endpoint
+> serves full history** (decades for AAPL/VTI), so the five daily/weekly demos
+> span their full multi-year windows (well over a year). But the token's
+> **intraday endpoint only returns a rolling ~4-month window** — so the 1h
+> Heikin-Ashi strategy *can't* be given a ≥1-year live demo on the free token,
+> and the 4h MACD strategy isn't supported by the driver at all. Both intraday
+> strategies are therefore demoed only on synthetic data (which does span ≥1
+> year). With a **paid key** (full intraday history) you can point an EODHD
+> config at `BTC-USD.CC` `1h` and get a multi-year intraday run.
 
-Each demo runs two ways, both straight from the `wichtelm` CLI:
+To run a different ticker/window/key, copy a config and edit `symbol` /
+`[date_range]` / `[eodhd].api_token_env`.
 
-- `data_source = "csv"` — offline, against the committed `data/*.csv` fixtures
-  (zero network, zero credentials). The reports committed under `reports/` are
-  these CSV runs.
-- `data_source = "eodhd"` — live, through the `frau-holle-eodhd` driver, which
-  fetches the bars at backtest time. The token is read from the env var named
-  by `[eodhd].api_token_env`; it never lives in the config.
+### Snapshotting EODHD data to CSV (optional, local only)
 
-To run a different ticker, window, or your own EODHD key, copy a config and
-edit `symbol` / `[date_range]` (point `api_token_env` at your key's env var).
-Minimal shape:
-
-```toml
-strategy    = "strategies/mean-reversion-trend.strat"
-symbol      = "AAPL.US"
-data_source = "eodhd"
-
-[date_range]
-from = 2024-01-01
-to   = 2024-03-31
-
-[sizing]
-position_size_pct = 50
-pyramiding        = false
-
-[eodhd]
-api_token_env = "EODHD_API_TOKEN"
-```
-
-The committed `reports/` are CSV runs only because this repo's CI has no
-outbound network — real-data reports are something you generate locally with
-the command above and can commit if you want them tracked.
-
-### Snapshotting EODHD data to a committed CSV (optional)
-
-To make a live dataset reproducible offline, capture it once with `curl`
-against EODHD's CSV endpoint and reshape it to the loader's
-`time,open,high,low,close,volume` schema — still just the command line, no app
-code:
+To make a live dataset reproducible offline, capture it once with `curl` and
+reshape it to the loader's `time,open,high,low,close,volume` schema:
 
 ```sh
-# 1h intraday, e.g. AAPL.US over Q1 2024 (Unix-second from/to)
 curl -s "https://eodhd.com/api/intraday/AAPL.US?api_token=demo&interval=1h&from=1704067200&to=1711843200&fmt=csv" \
   | tail -n +2 \
   | awk -F, 'BEGIN{print "time,open,high,low,close,volume"} {gsub(" ","T",$3); print $3"Z,"$4","$5","$6","$7","$8}' \
-  > demo/data/AAPL.US_1h.csv
+  > demo/data/MYSNAP_1h.csv
 ```
 
-(EODHD's intraday CSV columns are `Timestamp,Gmtoffset,Datetime,Open,High,Low,Close,Volume`;
-the `awk` keeps `Datetime`→`time` plus OHLCV. For the daily `eod` endpoint the
-date column is already `YYYY-MM-DD` — append `T00:00:00Z`.) Then a config with
-`data_source = "csv"` and `file = "data/{symbol}_{timeframe}.csv"` reads it
-unchanged.
+Then a `data_source = "csv"` config with `file = "data/{symbol}_{timeframe}.csv"`
+reads it unchanged. (Such a CSV still contains licensed data — keep it local,
+don't commit it.)
 
 ### Notes on real data
 
-- **Raw, not adjusted.** Intraday data from EODHD (and most providers) is not
-  adjusted for splits or dividends — standard for intraday endpoints. Choose
-  windows that don't cross a corporate action (AAPL's last split was Aug 2020
-  4:1; TSLA's was Aug 2022 3:1), or use a broad ETF (`VTI`), forex, or crypto.
-  A single-name backtest crossing a split would produce meaningless results.
-- **Network.** A live EODHD run needs `eodhd.com` reachable. In a sandboxed
-  environment with an outbound allowlist it must be on the list; otherwise the
-  fetch fails with "Host not in allowlist" (HTTP 403). The CSV path needs no
-  network.
-
-## The strategy
-
-`mean-reversion-trend.strat` is a mean-reversion strategy with a
-higher-timeframe trend filter:
-
-- **Primary timeframe:** 1h. **Trend filter:** an `ema` on the 1d series,
-  resolved lookahead-safely.
-- **Long:** when the hourly RSI crosses *below* the oversold threshold while
-  price is *above* the daily trend, open a long with a stop-loss.
-- **Short:** the mirror image — RSI crosses *above* overbought while price is
-  *below* the daily trend.
-- **Exits:** RSI reverting through the opposite threshold, plus a protective
-  price floor on longs.
-
-It uses only the DSL features the backtest runtime supports today
-(`ema`, `rsi`, market variables, `entry_price`).
-
-## What the report shows
-
-`reports/demo-backtest-report.html` is fully self-contained — price charts
-are embedded as base64 PNGs and the equity/drawdown curves as inline SVG, so
-it opens in any browser with no external assets. It contains:
-
-- the 10 aggregate metrics;
-- one box per scenario (sorted alphabetically) with a price chart per
-  timeframe, a trigger marker on every bar the scenario fired, and a
-  per-trigger sub-report table;
-- the equity curve, the drawdown curve, the full trade list, and the
-  diagnostic counters.
-
-This run produces 42 trades (22 long, 20 short). The sample strategy is
-deliberately simple and **underperforms on this dataset** — that is exactly
-the kind of verdict a backtest exists to deliver, and the report makes the
-losing pattern visible per scenario. One scenario (`Exit long on protective
-floor`) does not fire in this run; its box still renders, demonstrating how
-the report handles a scenario with zero triggers.
-
-## The data
-
-`GenerateData.java` produces a deterministic synthetic price path: a slow
-trend regime (a rise then a fall, so the trend filter admits longs early and
-shorts late) plus three beating oscillations that drive the RSI across its
-thresholds with varying swing sizes. The 1d series is aggregated from the 1h
-series, so the two timeframes are always mutually consistent.
-
-## Realistic regime datasets (TST2020, TST2022)
-
-`data/TST2020_1h.csv` and `data/TST2022_1h.csv` feed the Block 7 demo
-backtests. Each is one full calendar year of hourly bars (24/7, no session
-gaps — macroscopic regimes still follow real calendar dates). They are
-committed **synthetic fixtures** under a deliberately fake instrument name
-(`TST`, not a real ticker): realistic-looking data for offline demo runs, not
-real prices. For real market data, run the demos against EODHD (see *Running
-against real data* above).
-
-The fixtures were produced by a regime-switching GBM + GARCH model (the
-generator no longer lives in the source tree — these are now plain committed
-data files). The model is **regime-switching geometric Brownian motion** with
-**GARCH(1,1) volatility clustering** on the log returns:
-
-```
-sigma^2_t = omega * sigma_lr^2 + alpha * r_{t-1}^2 + beta * sigma^2_{t-1}
-r_t       = (mu - 0.5 * sigma^2_t) * dt + sigma_t * sqrt(dt) * Z_t,  Z_t ~ N(0,1)
-S_t       = S_{t-1} * exp(r_t)
-```
-
-Within each calendar window the annual drift `mu` and the long-run
-volatility are piecewise constant and calibrated to the shape of the real
-episode the regime represents:
-
-- **2020**: calm bull (Jan – Feb 19) → COVID crash (Feb 19 – Mar 23, ~-34%)
-  → V-recovery → autumn chop → vaccine rally.
-- **2022**: early decline → relief rally → bear leg → bear-market rally →
-  another leg lower → year-end relief.
-
-Macro statistics (drawdowns, regime volatilities, year-end levels) come in
-within a handful of percentage points of the real S&P 500 figures;
-individual bars are pure simulation. These are realistic-looking synthetic
-datasets, not real prices — they exist for offline demo backtests, not for any
-research that depends on the actual historical tape. To run a demo against real
-prices instead, point its config at `data_source = "eodhd"` (see *Running
-against real data* above).
-
-## TST backtest reports
-
-`tst2020-backtest.toml` and `tst2022-backtest.toml` run the same
-`mean-reversion-trend.strat` strategy (RSI mean reversion with a daily
-EMA trend filter) against the two TST datasets. To produce a fresh
-timestamped report:
-
-```sh
-mvn -q clean package -DskipTests
-java -jar target/wichtelm.jar run demo/tst2020-backtest.toml
-java -jar target/wichtelm.jar run demo/tst2022-backtest.toml
-```
-
-The stable committed copies (`reports/tst2020-backtest-report.html`,
-`reports/tst2022-backtest-report.html`) show how the same strategy
-behaves under very different market regimes:
-
-| Metric | TST2020 (COVID-year shape) | TST2022 (bear-market shape) |
-|---|---:|---:|
-| Total return | −4.0% | +2.6% |
-| Trades | 17 | 20 |
-| Win rate | 52.9% | 70.0% |
-| Max drawdown | 7.5% | 3.8% |
-| Sharpe ratio | −0.84 | +0.66 |
-| Profit factor | 0.58 | 1.45 |
-
-A clean illustration of a mean-reversion strategy's preferences — it
-loses modestly in 2020's strong V-recovery (mean reversion is punished
-by sustained trends) and wins modestly in 2022's choppier bear market
-where the opposing-side reversions actually pay.
+- **Raw, not adjusted.** Intraday EODHD data is not adjusted for splits or
+  dividends. Choose windows that don't cross a corporate action (AAPL's last
+  split was Aug 2020), or use a broad ETF (`VTI`), forex, or crypto.
+- **Continuous vs. gapped charts.** The synthetic data matches each asset class:
+  `TSTX` (equity) is weekday-only, `TSTC` (crypto) is 24/7. Real **equity
+  intraday** (1h) is market-hours-only, so its charts look "jumpier" than the
+  daily/weekly views; a 24/7 instrument like `BTC-USD.CC` is the realistic
+  analogue for the intraday demos.
+- **Network.** A live EODHD run needs `eodhd.com` reachable; the CSV path needs
+  no network.

@@ -1,15 +1,11 @@
-# Ignore timestamped reports produced by re-running the demos;
-# the committed *-report.html files are the stable reference copies.
-demo-backtest_*.html
-tst2020-backtest_*.html
-tst2022-backtest_*.html
-tst2020-macd-backtest_*.html
-tst2020-indicator-showcase_*.html
-tst2020-ha-pattern-backtest_*.html
-tst2020-ha-streak-backtest_*.html
-tst2020-macd-boolean-backtest_*.html
-tst2020-ma-atr-trend-backtest_*.html
-tst2020-pivot-backtest_*.html
-# Timestamped EODHD reports produced by run_eodhd_demos.sh before it promotes
-# the freshest one to the stable eodhd-<config>-report.html reference copy.
+# Ignore the timestamped reports produced by re-running the CSV demos; the
+# committed tstx-*/tstc-*-report.html files are the stable reference copies.
+tstx-*_*.html
+tstc-*_*.html
+
+# EODHD reports embed LICENSED market data (and the free `demo` token is for
+# evaluation only), so they are NEVER committed — generate and view them
+# locally. This ignores both the timestamped runs and the promoted stable copy.
+# The committed reference reports are the synthetic-data CSV demos (CLAUDE.md §17).
 eodhd-*_*.html
+eodhd-*-report.html

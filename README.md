@@ -560,17 +560,19 @@ Open the resulting HTML file in any browser.
 
 ## Demo
 
-The [`demo/`](demo/) directory is a complete, runnable example — a
-multi-timeframe strategy, synthetic CSV data, a config file, and the HTML
-report the tool produced from them. Run the whole pipeline end to end with:
+The [`demo/`](demo/) directory ships seven runnable examples — five "clean"
+strategies across four timeframes (weekly, daily, 4-hour, hourly; the daily
+timeframe carries two) plus two daily "showcase" strategies — covering the whole
+DSL feature surface on synthetic CSV data, each with the HTML report the tool
+produced from it. Run the whole pipeline end to end with:
 
 ```sh
 ./demo/run_demo.sh
 ```
 
-See [`demo/README.md`](demo/README.md) for details, and
-[`demo/reports/demo-backtest-report.html`](demo/reports/demo-backtest-report.html)
-for a sample report.
+See [`demo/README.md`](demo/README.md) for the demo matrix, and
+[`demo/reports/tstx-swing-1d-report.html`](demo/reports/tstx-swing-1d-report.html)
+for a sample (multi-timeframe) report.
 
 ---
 

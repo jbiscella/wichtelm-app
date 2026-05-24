@@ -1,0 +1,15 @@
+# Daily swing with a weekly channel filter (multi-timeframe) on the synthetic
+# EQUITY TSTX — ~2 years of weekday daily bars + weekly background.
+strategy    = "strategies/swing-multi-tf.strat"
+symbol      = "TSTX"
+data_source = "csv"
+[date_range]
+from = 2021-06-01
+to   = 2023-06-01
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+[output]
+directory = "reports"
+[csv]
+file = "data/{symbol}_{timeframe}.csv"

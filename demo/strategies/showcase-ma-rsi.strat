@@ -1,0 +1,62 @@
+Feature: Moving-Average & RSI Showcase
+  Primary timeframe: 1d
+  Parameter fast default 10
+  Parameter slow default 30
+  Parameter stop_loss_pct default 5
+
+  # Showcase demo (NOT profit-tuned): exercises the MA trend-filter primitives
+  # not shown elsewhere — price-vs-SMA/EMA states and crosses, SMA-vs-EMA
+  # crosses — plus rsi_crosses_50, the pivot STATE primitives, and stddev.
+
+  Background:
+    Given a series vol defined as stddev(20)
+
+  Scenario: Enter long when the fast SMA crosses above the slow EMA in an uptrend
+    Given no open position
+    When sma_crosses_above_ema(fast, slow)
+    And price_above_sma(fast)
+    And vol is above 1
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+
+  Scenario: Enter long when price reclaims the fast SMA above the daily pivot
+    Given no open position
+    When price_crosses_above_sma(fast)
+    And price_above_pivot(P)
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+
+  Scenario: Exit long when the fast SMA crosses below the slow EMA
+    Given a long position is open
+    When sma_crosses_below_ema(fast, slow)
+    Then long_exit
+
+  Scenario: Exit long when price breaks below the fast SMA
+    Given a long position is open
+    When price_crosses_below_sma(fast)
+    Then long_exit
+
+  Scenario: Enter short when price loses the slow EMA below the pivot
+    Given no open position
+    When price_crosses_below_ema(slow)
+    And price_below_pivot(P)
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+
+  Scenario: Enter short on an RSI 50 breakdown below both averages
+    Given no open position
+    When rsi_crosses_50()
+    And price_below_sma(slow)
+    And price_below_ema(slow)
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+
+  Scenario: Exit short when price reclaims the slow EMA
+    Given a short position is open
+    When price_crosses_above_ema(slow)
+    Then short_exit
+
+  Scenario: Exit short when price holds above the fast EMA
+    Given a short position is open
+    When price_above_ema(fast)
+    Then short_exit

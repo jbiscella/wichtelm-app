@@ -1,0 +1,14 @@
+# Local-only EODHD run — NEVER commit the generated report (licensed data; see README).
+# PROFIT candidate: daily mean-reversion swing on the broad market (VTI) over a
+# range-bound stretch (2015-2016), where mean-reversion tends to pay. ~2 years.
+strategy = "strategies/swing-multi-tf.strat"
+symbol = "VTI.US"
+data_source = "eodhd"
+[date_range]
+from = 2015-01-01
+to   = 2016-12-31
+[sizing]
+position_size_pct = 50
+pyramiding = false
+[eodhd]
+api_token_env = "EODHD_API_TOKEN"

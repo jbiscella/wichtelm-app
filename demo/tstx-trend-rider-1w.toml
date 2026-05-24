@@ -1,0 +1,15 @@
+# Weekly trend rider (INC1 MA trend-filter primitives) on the synthetic EQUITY
+# TSTX — weekly bars over ~3 years.
+strategy    = "strategies/trend-rider.strat"
+symbol      = "TSTX"
+data_source = "csv"
+[date_range]
+from = 2021-01-04
+to   = 2023-12-25
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+[output]
+directory = "reports"
+[csv]
+file = "data/{symbol}_{timeframe}.csv"

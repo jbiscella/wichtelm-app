@@ -1,0 +1,14 @@
+# Local-only EODHD run — NEVER commit the generated report (licensed data; see README).
+# SHOWCASE (not profit-tuned): MACD numeric+cross, ha_doji/ha_strong,
+# highest_close/lowest_close, avg_volume, atr_value stop — on real VTI daily. ~5 years.
+strategy = "strategies/showcase-macd-ha.strat"
+symbol = "VTI.US"
+data_source = "eodhd"
+[date_range]
+from = 2021-01-01
+to   = 2026-05-01
+[sizing]
+position_size_pct = 50
+pyramiding = false
+[eodhd]
+api_token_env = "EODHD_API_TOKEN"

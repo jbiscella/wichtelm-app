@@ -1,0 +1,15 @@
+# 4h MACD momentum with an ATR stop (INC2 atr_value) and pyramiding, on the
+# synthetic CRYPTO TSTC (24/7) — ~18 months of 4-hour bars.
+strategy    = "strategies/macd-momentum.strat"
+symbol      = "TSTC"
+data_source = "csv"
+[date_range]
+from = 2022-01-01
+to   = 2023-06-30
+[sizing]
+position_size_pct = 40
+pyramiding        = true
+[output]
+directory = "reports"
+[csv]
+file = "data/{symbol}_{timeframe}.csv"

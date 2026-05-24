@@ -1,0 +1,35 @@
+Feature: Weekly Trend Rider
+  Primary timeframe: 1w
+  Parameter ema_period default 10
+  Parameter sma_period default 4
+  Parameter stop_loss_pct default 8
+  Parameter take_profit_pct default 20
+
+  # Showcases the 0.52 MA trend-filter primitives (INC1) on a smooth weekly
+  # chart: price-vs-EMA crosses time the entries, the SMA-vs-EMA state confirms
+  # the regime. Long and short, with percentage stop_loss / take_profit.
+
+  Scenario: Enter long when price reclaims the EMA in an up regime
+    Given no open position
+    When price_crosses_above_ema(ema_period)
+    And sma_above_ema(sma_period, ema_period)
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 + take_profit_pct / 100)
+
+  Scenario: Exit long when price loses the EMA
+    Given a long position is open
+    When price_crosses_below_ema(ema_period)
+    Then long_exit
+
+  Scenario: Enter short when price breaks below the EMA
+    Given no open position
+    When price_crosses_below_ema(ema_period)
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 - take_profit_pct / 100)
+
+  Scenario: Exit short when price reclaims the EMA
+    Given a short position is open
+    When price_crosses_above_ema(ema_period)
+    Then short_exit

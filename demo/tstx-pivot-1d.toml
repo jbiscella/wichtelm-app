@@ -1,0 +1,15 @@
+# Daily pivot-level breakouts (INC3 pivot primitives) on the synthetic EQUITY
+# TSTX — ~15 months of weekday daily bars.
+strategy    = "strategies/pivot-levels.strat"
+symbol      = "TSTX"
+data_source = "csv"
+[date_range]
+from = 2022-01-01
+to   = 2023-03-31
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+[output]
+directory = "reports"
+[csv]
+file = "data/{symbol}_{timeframe}.csv"

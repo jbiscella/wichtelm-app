@@ -1,0 +1,60 @@
+Feature: MACD, Heikin-Ashi & Channel Showcase
+  Primary timeframe: 1d
+  Parameter atr_period default 14
+  Parameter vol_period default 20
+
+  # Showcase demo (NOT profit-tuned): MACD as numeric series (macd_line /
+  # macd_signal / macd_histogram) AND as cross primitives, the remaining HA
+  # primitives (ha_doji, ha_strong), the highest_close / lowest_close channel,
+  # avg_volume, and an atr_value stop.
+
+  Background:
+    Given a series macd defined as macd_line(12, 26, 9)
+    And a series signal defined as macd_signal(12, 26, 9)
+    And a series hist defined as macd_histogram(12, 26, 9)
+    And a series hi defined as highest_close(20)
+    And a series lo defined as lowest_close(20)
+    And a series avg_vol defined as avg_volume(vol_period)
+
+  Scenario: Enter long on a MACD line/signal cross with a positive histogram and volume
+    Given no open position
+    When macd crosses above signal
+    And hist is above 0
+    And volume is above avg_vol
+    Then long_entry
+    And with stop_loss at entry_price - 2 * atr_value(atr_period)
+
+  Scenario: Enter long on a strong bullish Heikin-Ashi candle inside the channel
+    Given no open position
+    When ha_strong_bullish()
+    And close is below hi
+    Then long_entry
+    And with stop_loss at entry_price - 2 * atr_value(atr_period)
+
+  Scenario: Exit long on a MACD bearish cross
+    Given a long position is open
+    When macd_bearish_cross()
+    Then long_exit
+
+  Scenario: Exit long on a Heikin-Ashi doji
+    Given a long position is open
+    When ha_doji()
+    Then long_exit
+
+  Scenario: Enter short on a MACD line/signal cross down with a negative histogram
+    Given no open position
+    When macd crosses below signal
+    And hist is below 0
+    And close is above lo
+    Then short_entry
+    And with stop_loss at entry_price + 2 * atr_value(atr_period)
+
+  Scenario: Exit short on a MACD bullish cross
+    Given a short position is open
+    When macd_bullish_cross()
+    Then short_exit
+
+  Scenario: Exit short on any strong Heikin-Ashi candle
+    Given a short position is open
+    When ha_strong()
+    Then short_exit
