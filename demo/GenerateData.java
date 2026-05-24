@@ -107,7 +107,7 @@ public final class GenerateData {
     // ─── TSTC: synthetic CRYPTO, continuous 24/7 1h + 4h ──────────────────────
 
     static final Instant CR_START = Instant.parse("2022-01-01T00:00:00Z");
-    static final int CR_HOURS = 365 * 24;  // one year, every hour
+    static final int CR_HOURS = 730 * 24;  // two years, every hour
     static final double CR_BASE = 120.0;
 
     static double crClose(int i) {          // i = hour index

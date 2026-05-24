@@ -1,8 +1,8 @@
 Feature: Heikin-Ashi Reversal at RSI Extremes
   Primary timeframe: 1h
-  Parameter streak default 3
-  Parameter oversold default 35
-  Parameter overbought default 65
+  Parameter streak default 5
+  Parameter oversold default 30
+  Parameter overbought default 70
   Parameter stop_loss_pct default 1.5
   Parameter take_profit_pct default 3
 
