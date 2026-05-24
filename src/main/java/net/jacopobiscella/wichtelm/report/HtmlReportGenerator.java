@@ -95,8 +95,6 @@ public final class HtmlReportGenerator {
     private static final java.util.Set<String> PIVOT_PRIMITIVES = java.util.Set.of(
             "price_above_pivot", "price_below_pivot",
             "price_crosses_above_pivot", "price_crosses_below_pivot");
-    private static final java.util.Set<String> CHANNEL_AGGREGATES = java.util.Set.of(
-            "highest_high", "lowest_low", "highest_close", "lowest_close");
     private static final BigDecimal DEFAULT_RSI_OVERBOUGHT = BigDecimal.valueOf(70);
     private static final BigDecimal DEFAULT_RSI_OVERSOLD = BigDecimal.valueOf(30);
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
@@ -1262,11 +1260,6 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                     entryScenario, exitScenario)) {
                 builder.addAnnotation(pivot);
             }
-            for (Annotation channel : channelLevels(timeframeLabel, series, entryMarker,
-                    data.strategy().backgroundSeries(),
-                    data.strategy().primaryTimeframe().wire(), data.parameters())) {
-                builder.addAnnotation(channel);
-            }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
             return "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
@@ -1605,75 +1598,6 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         }
         return List.of(new Annotation.PivotPointLevels(
                 PivotPointVariant.STANDARD, bars.get(entryIdx - 1)));
-    }
-
-    /**
-     * Snapshot channel bounds for window-aggregate Background series
-     * ({@code highest_high} / {@code lowest_low} / {@code highest_close} /
-     * {@code lowest_close}) on a given timeframe. These series produce no
-     * {@link Indicator} (heerwisch has no rolling-extremum overlay), so they are
-     * drawn as dashed {@link Annotation.HorizontalLevel} lines at the aggregate
-     * value evaluated as-of the entry (the most recent {@code period} bars that
-     * closed at/before the entry on this timeframe) — a single snapshot rather
-     * than a per-bar curve. {@code avg_volume} is excluded: it is not a price
-     * level.
-     */
-    List<Annotation> channelLevels(String timeframeLabel, OHLCSeries series, Instant entryMarker,
-                                   List<BackgroundSeries> backgroundSeries, String primaryTf,
-                                   Map<String, BigDecimal> parameters) {
-        if (series == null || series.bars().isEmpty()) {
-            return List.of();
-        }
-        List<Annotation> out = new ArrayList<>();
-        for (BackgroundSeries bg : backgroundSeries) {
-            String tf = bg.timeframe().map(Timeframe::wire).orElse(primaryTf);
-            if (!tf.equals(timeframeLabel)) {
-                continue;
-            }
-            Matcher m = INDICATOR_CALL.matcher(bg.expression());
-            if (!m.matches()) {
-                continue;
-            }
-            String fn = m.group(1);
-            if (!CHANNEL_AGGREGATES.contains(fn)) {
-                continue;
-            }
-            int period;
-            try {
-                String raw = m.group(2).trim();
-                String[] args = raw.isEmpty() ? new String[0] : raw.split("\\s*,\\s*");
-                period = resolveIntArg(args, 0, parameters);
-            } catch (IllegalArgumentException unresolvable) {
-                continue;
-            }
-            if (period <= 0) {
-                continue;
-            }
-            List<OHLCBar> upto = series.bars().stream()
-                    .filter(b -> !b.time().isAfter(entryMarker)).toList();
-            if (upto.isEmpty()) {
-                continue;
-            }
-            List<OHLCBar> window = upto.subList(Math.max(0, upto.size() - period), upto.size());
-            BigDecimal value = switch (fn) {
-                case "highest_high" ->
-                        window.stream().map(OHLCBar::high).max(BigDecimal::compareTo).orElseThrow();
-                case "lowest_low" ->
-                        window.stream().map(OHLCBar::low).min(BigDecimal::compareTo).orElseThrow();
-                case "highest_close" ->
-                        window.stream().map(OHLCBar::close).max(BigDecimal::compareTo).orElseThrow();
-                case "lowest_close" ->
-                        window.stream().map(OHLCBar::close).min(BigDecimal::compareTo).orElseThrow();
-                default -> null;
-            };
-            if (value == null) {
-                continue;
-            }
-            out.add(new Annotation.HorizontalLevel(value,
-                    bg.name() + " " + formatPrice(value),
-                    LevelStyle.DASHED, Optional.of(FillColor.NEUTRAL)));
-        }
-        return out;
     }
 
     private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ReportData data) {

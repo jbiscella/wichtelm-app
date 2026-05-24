@@ -1,6 +1,5 @@
 package net.jacopobiscella.wichtelm.report;
 
-import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.FirstClassCondition;
 import net.jacopobiscella.wichtelm.strategy.PositionPrecondition;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
@@ -8,7 +7,6 @@ import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.commons.PivotPointVariant;
-import org.hatrack.commons.Timeframe;
 import org.hatrack.heerwisch.api.spec.Annotation;
 import org.hatrack.heerwisch.api.spec.Indicator;
 import org.junit.jupiter.api.Test;
@@ -27,11 +25,15 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * Auto-plot wiring for the main-pane overlay primitives that previously
  * produced no chart contents: MA-trend-filter primitives (→ SMA / EMA
- * overlays), pivot-point primitives (→ a {@link Annotation.PivotPointLevels}
- * level set), and window-aggregate Background series (→ snapshot
- * {@link Annotation.HorizontalLevel} channel bounds). These AAA tests pin the
- * emitted indicator / annotation objects directly, which a raster-PNG assertion
- * on the rendered chart could never reach.
+ * overlays) and pivot-point primitives (→ a {@link Annotation.PivotPointLevels}
+ * level set). These AAA tests pin the emitted indicator / annotation objects
+ * directly, which a raster-PNG assertion on the rendered chart could never
+ * reach.
+ *
+ * <p>Window-aggregate Background series ({@code highest_high} etc.) are
+ * deliberately NOT plotted: heerwisch has no rolling-extremum indicator, and a
+ * single-snapshot {@code HorizontalLevel} misrepresents a stepping channel, so
+ * they stay unplotted until an additive ha-track indicator lands.
  */
 class OverlayWiringTest {
 
@@ -119,78 +121,5 @@ class OverlayWiringTest {
         List<Annotation> anns = generator.pivotAnnotations(false, series, series.bars().get(3).time(),
                 entry("price_above_pivot(P)"), null);
         assertTrue(anns.isEmpty(), "pivots are a primary-pane overlay only");
-    }
-
-    // ─── Window-aggregate Background series → channel HorizontalLevels ───────
-
-    private static OHLCSeries weeklySeries() {
-        Instant start = Instant.parse("2024-01-01T00:00:00Z");
-        // highs:  10 12 11 15 14   lows: 5 4 6 3 7
-        int[] hi = {10, 12, 11, 15, 14};
-        int[] lo = {5, 4, 6, 3, 7};
-        java.util.List<OHLCBar> bars = new java.util.ArrayList<>();
-        for (int i = 0; i < hi.length; i++) {
-            bars.add(new OHLCBar(start.plus(Duration.ofDays(7L * i)),
-                    BigDecimal.valueOf(8), BigDecimal.valueOf(hi[i]),
-                    BigDecimal.valueOf(lo[i]), BigDecimal.valueOf(9), Optional.empty()));
-        }
-        return new OHLCSeries(bars);
-    }
-
-    @Test
-    void windowAggregateSeriesDrawSnapshotChannelBounds() {
-        OHLCSeries weekly = weeklySeries();
-        Instant entryMarker = weekly.bars().getLast().time();
-        List<BackgroundSeries> bg = List.of(
-                new BackgroundSeries("weekly_high", "highest_high(3)",
-                        Optional.of(Timeframe.fromWire("1w")), 1),
-                new BackgroundSeries("weekly_low", "lowest_low(3)",
-                        Optional.of(Timeframe.fromWire("1w")), 2));
-
-        List<Annotation> anns = generator.channelLevels(
-                "1w", weekly, entryMarker, bg, "1d", Map.of());
-
-        Annotation.HorizontalLevel high = level(anns, "weekly_high");
-        Annotation.HorizontalLevel low = level(anns, "weekly_low");
-        // last 3 weekly bars: highs {11,15,14} → 15 ; lows {6,3,7} → 3
-        assertEquals(0, new BigDecimal("15").compareTo(high.price()), "highest_high(3)");
-        assertEquals(0, new BigDecimal("3").compareTo(low.price()), "lowest_low(3)");
-    }
-
-    @Test
-    void channelBoundsAreSnapshotAsOfTheEntryNotEndOfWindow() {
-        OHLCSeries weekly = weeklySeries();
-        // Entry at the 3rd bar (index 2): last 3 bars up to it are indices 0,1,2
-        // highs {10,12,11} → 12.
-        Instant entryMarker = weekly.bars().get(2).time();
-        List<BackgroundSeries> bg = List.of(
-                new BackgroundSeries("weekly_high", "highest_high(3)",
-                        Optional.of(Timeframe.fromWire("1w")), 1));
-
-        Annotation.HorizontalLevel high = level(
-                generator.channelLevels("1w", weekly, entryMarker, bg, "1d", Map.of()),
-                "weekly_high");
-        assertEquals(0, new BigDecimal("12").compareTo(high.price()),
-                "snapshot uses only bars at/before entry");
-    }
-
-    @Test
-    void channelLevelsIgnoreSeriesOnOtherTimeframes() {
-        OHLCSeries weekly = weeklySeries();
-        List<BackgroundSeries> bg = List.of(
-                new BackgroundSeries("daily_high", "highest_high(3)",
-                        Optional.empty(), 1)); // primary-TF series (1d), not 1w
-        List<Annotation> anns = generator.channelLevels(
-                "1w", weekly, weekly.bars().getLast().time(), bg, "1d", Map.of());
-        assertTrue(anns.isEmpty(), "a 1d series must not draw on the 1w pane");
-    }
-
-    private static Annotation.HorizontalLevel level(List<Annotation> anns, String labelPrefix) {
-        return anns.stream()
-                .filter(a -> a instanceof Annotation.HorizontalLevel)
-                .map(a -> (Annotation.HorizontalLevel) a)
-                .filter(h -> h.label().startsWith(labelPrefix))
-                .findFirst()
-                .orElseThrow(() -> new AssertionError("no '" + labelPrefix + "' level among " + anns));
     }
 }
