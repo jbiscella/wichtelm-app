@@ -1256,7 +1256,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                     isLong, entryPrice, exitPrice, positionSize, entryMarker, data)) {
                 builder.addAnnotation(level);
             }
-            for (Annotation pivot : pivotAnnotations(isPrimary, series, entryMarker,
+            for (Annotation pivot : pivotAnnotations(isPrimary, data.primarySeries(), entryMarker,
                     entryScenario, exitScenario)) {
                 builder.addAnnotation(pivot);
             }
@@ -1561,9 +1561,9 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
      * accepted approximation over the short per-trade window. Suppressed on
      * higher-TF context panes, which carry no trade-reference overlays.
      */
-    List<Annotation> pivotAnnotations(boolean isPrimary, OHLCSeries series, Instant entryMarker,
-                                      StrategyScenario... scenarios) {
-        if (!isPrimary || series == null || series.bars().isEmpty()) {
+    List<Annotation> pivotAnnotations(boolean isPrimary, OHLCSeries primarySeries,
+                                      Instant entryMarker, StrategyScenario... scenarios) {
+        if (!isPrimary || primarySeries == null || primarySeries.bars().isEmpty()) {
             return List.of();
         }
         boolean referenced = false;
@@ -1584,20 +1584,55 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         if (!referenced) {
             return List.of();
         }
-        List<OHLCBar> bars = series.bars();
-        int entryIdx = -1;
-        for (int i = 0; i < bars.size(); i++) {
-            if (!bars.get(i).time().isAfter(entryMarker)) {
-                entryIdx = i;
-            } else {
-                break;
+        // STANDARD daily pivots are computed by nachtkrapp's PivotPointRule from
+        // the PRIOR COMPLETED UTC DAY's OHLC, regardless of the primary
+        // timeframe (it aggregates to daily internally). Mirror that here so the
+        // plotted P/R/S levels match the runtime: on a 1d primary this is the
+        // previous bar, but on an intraday primary it is the aggregate of the
+        // prior day's bars — never just the previous hour/bar.
+        OHLCBar priorDay = priorCompletedDailyBar(primarySeries.bars(), entryMarker);
+        if (priorDay == null) {
+            return List.of();
+        }
+        return List.of(new Annotation.PivotPointLevels(PivotPointVariant.STANDARD, priorDay));
+    }
+
+    /**
+     * The OHLC of the most recent completed UTC day strictly before
+     * {@code entryMarker}, aggregated from the primary bars (open = first bar of
+     * the day, high = max, low = min, close = last bar). Returns {@code null}
+     * when no prior day is present. Days with no bars (weekends / holidays) are
+     * skipped — the latest day that actually has bars wins, matching the
+     * runtime's "prior completed day". Assumes {@code bars} is time-ascending.
+     */
+    private static OHLCBar priorCompletedDailyBar(List<OHLCBar> bars, Instant entryMarker) {
+        LocalDate entryDay = entryMarker.atOffset(ZoneOffset.UTC).toLocalDate();
+        LocalDate targetDay = null;
+        for (OHLCBar bar : bars) {
+            LocalDate day = bar.time().atOffset(ZoneOffset.UTC).toLocalDate();
+            if (day.isBefore(entryDay) && (targetDay == null || day.isAfter(targetDay))) {
+                targetDay = day;
             }
         }
-        if (entryIdx < 1) {
-            return List.of(); // no prior day in the window to derive the pivots from
+        if (targetDay == null) {
+            return null;
         }
-        return List.of(new Annotation.PivotPointLevels(
-                PivotPointVariant.STANDARD, bars.get(entryIdx - 1)));
+        OHLCBar open = null;
+        OHLCBar close = null;
+        BigDecimal high = null;
+        BigDecimal low = null;
+        for (OHLCBar bar : bars) {
+            if (!bar.time().atOffset(ZoneOffset.UTC).toLocalDate().equals(targetDay)) {
+                continue;
+            }
+            if (open == null) {
+                open = bar;
+            }
+            close = bar;
+            high = high == null ? bar.high() : high.max(bar.high());
+            low = low == null ? bar.low() : low.min(bar.low());
+        }
+        return new OHLCBar(open.time(), open.open(), high, low, close.close(), Optional.empty());
     }
 
     private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ReportData data) {

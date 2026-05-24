@@ -122,4 +122,39 @@ class OverlayWiringTest {
                 entry("price_above_pivot(P)"), null);
         assertTrue(anns.isEmpty(), "pivots are a primary-pane overlay only");
     }
+
+    @Test
+    void intradayPrimaryAggregatesThePriorDayNotThePriorBar() {
+        // 3 hourly bars on 2024-03-01, then 2 on 2024-03-02; entry on day 2.
+        // The pivot must come from day 1 AGGREGATED, not the previous hour bar.
+        Instant d1 = Instant.parse("2024-03-01T00:00:00Z");
+        Instant d2 = Instant.parse("2024-03-02T00:00:00Z");
+        java.util.List<OHLCBar> bars = new java.util.ArrayList<>(List.of(
+                bar(d1.plus(Duration.ofHours(0)), 10, 12, 9, 11),
+                bar(d1.plus(Duration.ofHours(1)), 11, 15, 10, 14),
+                bar(d1.plus(Duration.ofHours(2)), 14, 13, 8, 12),
+                bar(d2.plus(Duration.ofHours(0)), 12, 16, 11, 13),
+                bar(d2.plus(Duration.ofHours(1)), 13, 17, 12, 15)));
+        OHLCSeries series = new OHLCSeries(bars);
+        Instant entryMarker = d2.plus(Duration.ofHours(1));
+
+        List<Annotation> anns = generator.pivotAnnotations(true, series, entryMarker,
+                entry("price_crosses_above_pivot(R1)"), null);
+
+        OHLCBar prior = anns.stream()
+                .filter(a -> a instanceof Annotation.PivotPointLevels)
+                .map(a -> ((Annotation.PivotPointLevels) a).previousPeriodBar())
+                .findFirst().orElseThrow();
+        // day 1 aggregate: open 10 (first), high 15 (max), low 8 (min), close 12 (last)
+        assertEquals(0, new BigDecimal("10").compareTo(prior.open()), "day open");
+        assertEquals(0, new BigDecimal("15").compareTo(prior.high()), "day high");
+        assertEquals(0, new BigDecimal("8").compareTo(prior.low()), "day low");
+        assertEquals(0, new BigDecimal("12").compareTo(prior.close()), "day close");
+        assertEquals(d1, prior.time(), "day-bar time is the day's first bar");
+    }
+
+    private static OHLCBar bar(Instant t, int o, int h, int l, int c) {
+        return new OHLCBar(t, BigDecimal.valueOf(o), BigDecimal.valueOf(h),
+                BigDecimal.valueOf(l), BigDecimal.valueOf(c), Optional.empty());
+    }
 }
