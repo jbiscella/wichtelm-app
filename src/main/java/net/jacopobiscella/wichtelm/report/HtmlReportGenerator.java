@@ -13,6 +13,7 @@ import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
+import org.hatrack.commons.PivotPointVariant;
 import org.hatrack.commons.PriceSource;
 import org.hatrack.commons.Timeframe;
 import org.hatrack.frauholle.model.EquityPoint;
@@ -85,6 +86,17 @@ public final class HtmlReportGenerator {
     private static final Pattern IDENTIFIER = Pattern.compile("[A-Za-z_][A-Za-z0-9_]*");
     private static final Pattern INDICATOR_CALL =
             Pattern.compile("^\\s*([a-z_][a-z0-9_]*)\\s*\\(([^)]*)\\)\\s*$");
+    // The 11 MA-trend-filter Tier B primitives, longest-first so the regex
+    // engine prefers the more specific `*_crosses_*` / `sma_*_ema` forms.
+    private static final Pattern MA_PRIMITIVE = Pattern.compile(
+            "(price_crosses_above_sma|price_crosses_below_sma|price_above_sma|price_below_sma|"
+            + "price_crosses_above_ema|price_crosses_below_ema|price_above_ema|price_below_ema|"
+            + "sma_crosses_above_ema|sma_crosses_below_ema|sma_above_ema)\\s*\\(([^)]*)\\)");
+    private static final java.util.Set<String> PIVOT_PRIMITIVES = java.util.Set.of(
+            "price_above_pivot", "price_below_pivot",
+            "price_crosses_above_pivot", "price_crosses_below_pivot");
+    private static final java.util.Set<String> CHANNEL_AGGREGATES = java.util.Set.of(
+            "highest_high", "lowest_low", "highest_close", "lowest_close");
     private static final BigDecimal DEFAULT_RSI_OVERBOUGHT = BigDecimal.valueOf(70);
     private static final BigDecimal DEFAULT_RSI_OVERSOLD = BigDecimal.valueOf(30);
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
@@ -1149,7 +1161,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             // pane (the boolean is read off the indicator, as TradingView / MT /
             // NinjaTrader do). Background-series indicators dedupe against these.
             List<Indicator> tierB = isPrimary
-                    ? tierBIndicators(entryScenario, exitScenario)
+                    ? tierBIndicators(data.parameters(), entryScenario, exitScenario)
                     : List.of();
             int subPaneCount = addIndicatorsForTimeframe(builder, timeframeLabel, series, data, tierB);
             // Size the chart by sub-pane count: a fixed 320px split across a main
@@ -1245,6 +1257,15 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             for (Annotation level : referenceLevels(isPrimary, openTrade, entryScenario,
                     isLong, entryPrice, exitPrice, positionSize, entryMarker, data)) {
                 builder.addAnnotation(level);
+            }
+            for (Annotation pivot : pivotAnnotations(isPrimary, series, entryMarker,
+                    entryScenario, exitScenario)) {
+                builder.addAnnotation(pivot);
+            }
+            for (Annotation channel : channelLevels(timeframeLabel, series, entryMarker,
+                    data.strategy().backgroundSeries(),
+                    data.strategy().primaryTimeframe().wire(), data.parameters())) {
+                builder.addAnnotation(channel);
             }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
@@ -1469,9 +1490,11 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
      * danger zones; HA primitives need nothing (already on the HA candles).
      * Periods are the Tier B defaults from CLAUDE.md §3.7.
      */
-    private List<Indicator> tierBIndicators(StrategyScenario... scenarios) {
+    List<Indicator> tierBIndicators(Map<String, BigDecimal> parameters,
+                                    StrategyScenario... scenarios) {
         boolean macd = false;
         boolean rsi = false;
+        List<Indicator> out = new ArrayList<>();
         for (StrategyScenario scenario : scenarios) {
             if (scenario == null) {
                 continue;
@@ -1486,15 +1509,169 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                         || t.contains("rsi_crosses_50")) {
                     rsi = true;
                 }
+                // MA-trend-filter primitives plot their underlying MA(s) on the
+                // main pane (price_*_sma → SMA, price_*_ema → EMA, sma_*_ema →
+                // both), so the boolean is read off a visible overlay.
+                addMaIndicators(t, parameters, out);
             }
         }
-        List<Indicator> out = new ArrayList<>();
         if (macd) {
-            out.add(new Indicator.MACD(12, 26, 9, PriceSource.CLOSE));
+            addUnique(out, new Indicator.MACD(12, 26, 9, PriceSource.CLOSE));
         }
         if (rsi) {
-            out.add(new Indicator.RSI(14, DEFAULT_RSI_OVERBOUGHT, DEFAULT_RSI_OVERSOLD,
+            addUnique(out, new Indicator.RSI(14, DEFAULT_RSI_OVERBOUGHT, DEFAULT_RSI_OVERSOLD,
                     PriceSource.CLOSE, Optional.of(Indicator.RsiVisualization.DANGER_ZONES_ON)));
+        }
+        return out;
+    }
+
+    private static void addMaIndicators(String stepText, Map<String, BigDecimal> parameters,
+                                        List<Indicator> out) {
+        Matcher m = MA_PRIMITIVE.matcher(stepText);
+        while (m.find()) {
+            String fn = m.group(1);
+            String raw = m.group(2).trim();
+            String[] args = raw.isEmpty() ? new String[0] : raw.split("\\s*,\\s*");
+            try {
+                if (fn.startsWith("price_") && fn.endsWith("_sma")) {
+                    addUnique(out, new Indicator.SMA(resolveIntArg(args, 0, parameters),
+                            PriceSource.CLOSE));
+                } else if (fn.startsWith("price_") && fn.endsWith("_ema")) {
+                    addUnique(out, new Indicator.EMA(resolveIntArg(args, 0, parameters),
+                            PriceSource.CLOSE));
+                } else { // sma_*_ema — the MA-vs-MA cross/compare primitives
+                    addUnique(out, new Indicator.SMA(resolveIntArg(args, 0, parameters),
+                            PriceSource.CLOSE));
+                    addUnique(out, new Indicator.EMA(resolveIntArg(args, 1, parameters),
+                            PriceSource.CLOSE));
+                }
+            } catch (IllegalArgumentException unresolvable) {
+                // Skip an unresolved period (mirrors toIndicator) — better a
+                // missing overlay than a failed report.
+            }
+        }
+    }
+
+    private static void addUnique(List<Indicator> out, Indicator indicator) {
+        if (!out.contains(indicator)) {
+            out.add(indicator);
+        }
+    }
+
+    /**
+     * The {@link Annotation.PivotPointLevels} set drawn on the PRIMARY pane when
+     * a trade's entry / exit scenarios reference a pivot-point primitive
+     * ({@code price_*_pivot}). The STANDARD daily levels (P / R1-R3 / S1-S3) are
+     * computed by the renderer from the prior completed day's bar — nachtkrapp's
+     * {@code PivotPointRule} recomputes them per day, whereas the annotation
+     * snapshots a single prior-period bar (the day before the entry), an
+     * accepted approximation over the short per-trade window. Suppressed on
+     * higher-TF context panes, which carry no trade-reference overlays.
+     */
+    List<Annotation> pivotAnnotations(boolean isPrimary, OHLCSeries series, Instant entryMarker,
+                                      StrategyScenario... scenarios) {
+        if (!isPrimary || series == null || series.bars().isEmpty()) {
+            return List.of();
+        }
+        boolean referenced = false;
+        outer:
+        for (StrategyScenario scenario : scenarios) {
+            if (scenario == null) {
+                continue;
+            }
+            for (StrategyStep step : scenario.conditionSteps()) {
+                for (String primitive : PIVOT_PRIMITIVES) {
+                    if (step.text().contains(primitive)) {
+                        referenced = true;
+                        break outer;
+                    }
+                }
+            }
+        }
+        if (!referenced) {
+            return List.of();
+        }
+        List<OHLCBar> bars = series.bars();
+        int entryIdx = -1;
+        for (int i = 0; i < bars.size(); i++) {
+            if (!bars.get(i).time().isAfter(entryMarker)) {
+                entryIdx = i;
+            } else {
+                break;
+            }
+        }
+        if (entryIdx < 1) {
+            return List.of(); // no prior day in the window to derive the pivots from
+        }
+        return List.of(new Annotation.PivotPointLevels(
+                PivotPointVariant.STANDARD, bars.get(entryIdx - 1)));
+    }
+
+    /**
+     * Snapshot channel bounds for window-aggregate Background series
+     * ({@code highest_high} / {@code lowest_low} / {@code highest_close} /
+     * {@code lowest_close}) on a given timeframe. These series produce no
+     * {@link Indicator} (heerwisch has no rolling-extremum overlay), so they are
+     * drawn as dashed {@link Annotation.HorizontalLevel} lines at the aggregate
+     * value evaluated as-of the entry (the most recent {@code period} bars that
+     * closed at/before the entry on this timeframe) — a single snapshot rather
+     * than a per-bar curve. {@code avg_volume} is excluded: it is not a price
+     * level.
+     */
+    List<Annotation> channelLevels(String timeframeLabel, OHLCSeries series, Instant entryMarker,
+                                   List<BackgroundSeries> backgroundSeries, String primaryTf,
+                                   Map<String, BigDecimal> parameters) {
+        if (series == null || series.bars().isEmpty()) {
+            return List.of();
+        }
+        List<Annotation> out = new ArrayList<>();
+        for (BackgroundSeries bg : backgroundSeries) {
+            String tf = bg.timeframe().map(Timeframe::wire).orElse(primaryTf);
+            if (!tf.equals(timeframeLabel)) {
+                continue;
+            }
+            Matcher m = INDICATOR_CALL.matcher(bg.expression());
+            if (!m.matches()) {
+                continue;
+            }
+            String fn = m.group(1);
+            if (!CHANNEL_AGGREGATES.contains(fn)) {
+                continue;
+            }
+            int period;
+            try {
+                String raw = m.group(2).trim();
+                String[] args = raw.isEmpty() ? new String[0] : raw.split("\\s*,\\s*");
+                period = resolveIntArg(args, 0, parameters);
+            } catch (IllegalArgumentException unresolvable) {
+                continue;
+            }
+            if (period <= 0) {
+                continue;
+            }
+            List<OHLCBar> upto = series.bars().stream()
+                    .filter(b -> !b.time().isAfter(entryMarker)).toList();
+            if (upto.isEmpty()) {
+                continue;
+            }
+            List<OHLCBar> window = upto.subList(Math.max(0, upto.size() - period), upto.size());
+            BigDecimal value = switch (fn) {
+                case "highest_high" ->
+                        window.stream().map(OHLCBar::high).max(BigDecimal::compareTo).orElseThrow();
+                case "lowest_low" ->
+                        window.stream().map(OHLCBar::low).min(BigDecimal::compareTo).orElseThrow();
+                case "highest_close" ->
+                        window.stream().map(OHLCBar::close).max(BigDecimal::compareTo).orElseThrow();
+                case "lowest_close" ->
+                        window.stream().map(OHLCBar::close).min(BigDecimal::compareTo).orElseThrow();
+                default -> null;
+            };
+            if (value == null) {
+                continue;
+            }
+            out.add(new Annotation.HorizontalLevel(value,
+                    bg.name() + " " + formatPrice(value),
+                    LevelStyle.DASHED, Optional.of(FillColor.NEUTRAL)));
         }
         return out;
     }
