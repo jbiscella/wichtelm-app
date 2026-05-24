@@ -182,8 +182,8 @@ public final class WichtelmCli {
         return new HtmlReportGenerator().generate(data);
     }
 
-    private static String describe(WichtelmException e) {
-        return switch (e) {
+    static String describe(WichtelmException e) {
+        String head = switch (e) {
             case StrategyParseException s -> "StrategyParseException [" + s.violatedRule() + "] at "
                     + s.filePath() + ":" + s.lineNumber() + ":" + s.columnNumber()
                     + " — " + s.getMessage();
@@ -191,6 +191,30 @@ public final class WichtelmCli {
                     + c.filePath() + " (" + c.keyPath() + ") — " + c.getMessage();
             default -> e.getClass().getSimpleName() + ": " + e.getMessage();
         };
+        return head + causeChain(e);
+    }
+
+    /**
+     * Appends the wrapped-cause chain. A data-source / report failure carries the
+     * actionable detail (e.g. the EODHD 403 / 404 / 429 reason) in its cause; the
+     * top-level message alone ("failed to load ... data for symbol ...") is not
+     * enough to act on, so each cause is rendered on its own line.
+     */
+    private static String causeChain(Throwable error) {
+        StringBuilder out = new StringBuilder();
+        Throwable cause = error.getCause();
+        int depth = 0;
+        while (cause != null && cause != error && depth < 8) {
+            out.append(System.lineSeparator()).append("  caused by: ")
+                    .append(cause.getClass().getSimpleName());
+            if (cause.getMessage() != null) {
+                out.append(": ").append(cause.getMessage());
+            }
+            error = cause;
+            cause = cause.getCause();
+            depth++;
+        }
+        return out.toString();
     }
 
     private void printUsage(PrintStream stream) {
