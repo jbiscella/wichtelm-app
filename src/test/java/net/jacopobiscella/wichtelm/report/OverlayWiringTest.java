@@ -157,4 +157,30 @@ class OverlayWiringTest {
         return new OHLCBar(t, BigDecimal.valueOf(o), BigDecimal.valueOf(h),
                 BigDecimal.valueOf(l), BigDecimal.valueOf(c), Optional.empty());
     }
+
+    // ─── Window-aggregate series → RollingMax/RollingMin overlays (0.54) ─────
+
+    @Test
+    void windowAggregatesMapToFieldMatchedRollingExtremumOverlays() {
+        assertEquals(new Indicator.RollingMax(8, org.hatrack.commons.PriceSource.HIGH),
+                HtmlReportGenerator.toIndicator("highest_high(8)", Map.of()),
+                "highest_high → RollingMax(HIGH)");
+        assertEquals(new Indicator.RollingMin(8, org.hatrack.commons.PriceSource.LOW),
+                HtmlReportGenerator.toIndicator("lowest_low(8)", Map.of()),
+                "lowest_low → RollingMin(LOW)");
+        assertEquals(new Indicator.RollingMax(10, org.hatrack.commons.PriceSource.CLOSE),
+                HtmlReportGenerator.toIndicator("highest_close(10)", Map.of()),
+                "highest_close → RollingMax(CLOSE)");
+        assertEquals(new Indicator.RollingMin(10, org.hatrack.commons.PriceSource.CLOSE),
+                HtmlReportGenerator.toIndicator("lowest_close(10)", Map.of()),
+                "lowest_close → RollingMin(CLOSE)");
+    }
+
+    @Test
+    void windowAggregatePeriodResolvesFromAParameter() {
+        assertEquals(new Indicator.RollingMax(8, org.hatrack.commons.PriceSource.HIGH),
+                HtmlReportGenerator.toIndicator("highest_high(chan)",
+                        Map.of("chan", new BigDecimal("8"))),
+                "period read from the strategy, not hardcoded");
+    }
 }

@@ -1429,6 +1429,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             case Indicator.ADX a -> "ADX(" + a.period() + ")";
             case Indicator.Stochastic s -> "STOCH(" + s.kPeriod() + ")";
             case Indicator.VolumePane v -> "VOL";
+            case Indicator.RollingMax r -> "HHV(" + r.period() + ")";
+            case Indicator.RollingMin r -> "LLV(" + r.period() + ")";
         };
     }
 
@@ -1649,7 +1651,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
 
 
 
-    private static Indicator toIndicator(String expression, Map<String, BigDecimal> parameters) {
+    static Indicator toIndicator(String expression, Map<String, BigDecimal> parameters) {
         Matcher matcher = INDICATOR_CALL.matcher(expression);
         if (!matcher.matches()) {
             return null;
@@ -1679,6 +1681,17 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                         resolveIntArg(args, 0, parameters),
                         BigDecimal.valueOf(2),
                         PriceSource.CLOSE);
+                // Window aggregates → Donchian-style per-bar stepping overlays
+                // (ha-track 0.54 RollingMax/RollingMin). Field-matched source:
+                // the *_high/*_low/*_close aggregate reads the same field.
+                case "highest_high" -> new Indicator.RollingMax(
+                        resolveIntArg(args, 0, parameters), PriceSource.HIGH);
+                case "lowest_low" -> new Indicator.RollingMin(
+                        resolveIntArg(args, 0, parameters), PriceSource.LOW);
+                case "highest_close" -> new Indicator.RollingMax(
+                        resolveIntArg(args, 0, parameters), PriceSource.CLOSE);
+                case "lowest_close" -> new Indicator.RollingMin(
+                        resolveIntArg(args, 0, parameters), PriceSource.CLOSE);
                 default -> null;
             };
         } catch (IllegalArgumentException unresolvable) {
