@@ -74,6 +74,15 @@ That fetches real AAPL.US data live and writes a full HTML report to
 The free `demo` token serves `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 `BTC-USD.CC`, `EURUSD.FOREX`.
 
+> **Do NOT commit the generated EODHD reports (or any EODHD-derived CSV).** EODHD
+> market data is licensed for your own use, not redistribution, and the free
+> `demo` token is for evaluation only. A backtest report embeds the real prices
+> (the charts are the data; the trade tables list exact OHLC/entry/exit values),
+> so publishing one redistributes their data. This is why the committed reference
+> reports use **synthetic** `TST`/`DEMO` data (CLAUDE.md §17) — run the EODHD demos
+> locally and view them there. `reports/.gitignore` excludes `eodhd-*-report.html`
+> so they can't be committed by accident.
+
 > **The `demo` token only serves a ROLLING recent intraday window (~4 months).**
 > Every config's `[date_range]` is set to that recent slice on purpose — a
 > historical window returns no bars and the run fails with
