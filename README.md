@@ -560,10 +560,11 @@ Open the resulting HTML file in any browser.
 
 ## Demo
 
-The [`demo/`](demo/) directory ships five runnable examples — one per timeframe
-(weekly, daily, 4-hour, hourly), covering the whole DSL feature surface on
-synthetic CSV data, each with the HTML report the tool produced from it. Run the
-whole pipeline end to end with:
+The [`demo/`](demo/) directory ships seven runnable examples — five "clean"
+strategies across four timeframes (weekly, daily, 4-hour, hourly; the daily
+timeframe carries two) plus two daily "showcase" strategies — covering the whole
+DSL feature surface on synthetic CSV data, each with the HTML report the tool
+produced from it. Run the whole pipeline end to end with:
 
 ```sh
 ./demo/run_demo.sh

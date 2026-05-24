@@ -40,7 +40,7 @@ coverage, not returns.
 From the repository root:
 
 ```sh
-./demo/run_demo.sh                 # build, regenerate data, run all 5 CSV demos
+./demo/run_demo.sh                 # build, regenerate data, run all 7 CSV demos
 ```
 
 Or step by step:
@@ -65,7 +65,7 @@ demand). It emits two instruments:
 - **`TSTX`** (equity): a daily price path over ~3 calendar years, emitting bars
   on **weekdays only**, then grouping them into Monday-anchored weekly bars
   (`TSTX_1d.csv`, `TSTX_1w.csv`).
-- **`TSTC`** (crypto): a continuous 1h base over one year, aggregated to 4h
+- **`TSTC`** (crypto): a continuous 1h base over two years, aggregated to 4h
   (`TSTC_1h.csv`, `TSTC_4h.csv`).
 
 Each price path layers a multi-year regime cycle (bull → bear → bull), medium
@@ -112,7 +112,7 @@ The free `demo` token serves `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 > be committed by accident.
 
 > **Why only daily/weekly EODHD configs?** The `demo` token's **EOD endpoint
-> serves full history** (decades for AAPL/VTI), so the three daily/weekly demos
+> serves full history** (decades for AAPL/VTI), so the five daily/weekly demos
 > span their full multi-year windows (well over a year). But the token's
 > **intraday endpoint only returns a rolling ~4-month window** — so the 1h
 > Heikin-Ashi strategy *can't* be given a ≥1-year live demo on the free token,
