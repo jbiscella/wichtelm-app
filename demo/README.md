@@ -25,7 +25,7 @@ names per CLAUDE.md §17, never real tickers), each modelling its asset class
 | **Swing** · `1d` (+`1w` background, equity) | `swing-multi-tf.strat` | multi-timeframe, RSI primitives (`rsi_oversold/overbought`), window aggregates (`highest_high`/`lowest_low` on 1w), stop+take | `reports/tstx-swing-1d-report.html` | `eodhd-aapl-swing.toml` |
 | **Pivot Levels** · `1d` (equity) | `pivot-levels.strat` | pivot primitives (`price_crosses_above/below_pivot` on R1/P/S1), long+short | `reports/tstx-pivot-1d-report.html` | `eodhd-aapl-pivot.toml` |
 | **MACD Momentum** · `4h` (crypto) | `macd-momentum.strat` | all four MACD primitives, `avg_volume`/`volume`, **`atr_value` stop + warmup-suppression** (INC2), pyramiding | `reports/tstc-macd-4h-report.html` | — (driver has no 4h) |
-| **Heikin-Ashi Reversal** · `1h` (crypto) | `ha-reversal.strat` | HA primitives (`ha_bullish/bearish_reversal`, `ha_strong_bullish/bearish`), RSI extremes, long+short, stop/take | `reports/tstc-ha-1h-report.html` | `eodhd-btc-ha.toml` (crypto, 24/7) |
+| **Heikin-Ashi Reversal** · `1h` (crypto) | `ha-reversal.strat` | HA primitives (`ha_bullish/bearish_reversal`, `ha_strong_bullish/bearish`), RSI extremes, long+short, stop/take | `reports/tstc-ha-1h-report.html` | — (free demo token serves only ~4 mo of intraday) |
 
 Between them the demos exercise: base indicators, MACD, RSI primitives, HA
 primitives, MA trend-filter primitives, pivot primitives, window aggregates,
@@ -74,9 +74,9 @@ exactly.
 
 ## Running on real data (EODHD)
 
-The same five strategies run against live EODHD data — just `data_source =
-"eodhd"` instead of `"csv"`. Committed `eodhd-*.toml` configs use EODHD's free
-public `demo` token (no signup):
+The three **daily/weekly** strategies also run against live EODHD data — just
+`data_source = "eodhd"` instead of `"csv"`. Committed `eodhd-*.toml` configs use
+EODHD's free public `demo` token (no signup):
 
 ```sh
 export EODHD_API_TOKEN=demo
@@ -97,19 +97,15 @@ The free `demo` token serves `AAPL.US`, `TSLA.US`, `VTI.US`, `AMZN.US`,
 > them there. `reports/.gitignore` excludes `eodhd-*-report.html` so they can't
 > be committed by accident.
 
-> **Daily/weekly vs. intraday history.** The daily and weekly EODHD configs use
-> the EOD endpoint, which serves years of history. **Intraday (the 1h crypto
-> config) only gets a rolling ~4-month window from the `demo` token**, so its
-> `[date_range]` rots over time — refresh it when a run fails with
-> `... insufficient ... [V5]`. Probe the currently-served range with:
->
-> ```sh
-> curl -s 'https://eodhd.com/api/intraday/BTC-USD.CC?api_token=demo&interval=1h&fmt=json' \
->   | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d[0]["datetime"],"→",d[-1]["datetime"])'
-> ```
->
-> A paid key has full intraday history and is not subject to this limit — point
-> `api_token_env` at it.
+> **Why only daily/weekly EODHD configs?** The `demo` token's **EOD endpoint
+> serves full history** (decades for AAPL/VTI), so the three daily/weekly demos
+> span their full multi-year windows (well over a year). But the token's
+> **intraday endpoint only returns a rolling ~4-month window** — so the 1h
+> Heikin-Ashi strategy *can't* be given a ≥1-year live demo on the free token,
+> and the 4h MACD strategy isn't supported by the driver at all. Both intraday
+> strategies are therefore demoed only on synthetic data (which does span ≥1
+> year). With a **paid key** (full intraday history) you can point an EODHD
+> config at `BTC-USD.CC` `1h` and get a multi-year intraday run.
 
 To run a different ticker/window/key, copy a config and edit `symbol` /
 `[date_range]` / `[eodhd].api_token_env`.
