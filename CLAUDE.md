@@ -2,11 +2,11 @@
 
 ## 0. Goal and scope
 
-`wichtelm-app` is an end-user **backtesting application** for trading strategies on single financial instruments using historical OHLC data.
+`wichtelm-app` is an end-user **backtesting application** for trading strategies on single financial instruments using historical OHLC data, built around **Heikin-Ashi (HA)** candles as its visual and analytical backbone: every report chart renders HA candles and the DSL exposes first-class HA pattern primitives alongside the standard RSI / MACD / moving-average / pivot families (HA is the backbone, not an exclusive constraint).
 
 The user expresses a strategy as a `.strat` text file in a custom Gherkin-conformant DSL, invokes the app via the `wichtelm` CLI with a TOML config file specifying what to run and against what data, and receives a self-contained HTML report with aggregate metrics and per-condition visual breakdowns.
 
-The application is built on top of `ha-track` libraries published to Maven Central under the `net.jacopobiscella` namespace.
+The application is built on top of `ha-track` (Heikin-Ashi-track) libraries published to Maven Central under the `net.jacopobiscella` namespace.
 
 **Goal:** allow a user with technical literacy (developer, power user, data analyst comfortable with CLI) to write strategies in a natural-language-like DSL, run them against historical data, and explore performance through structured visual reports, without writing Java.
 
