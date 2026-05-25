@@ -9,8 +9,13 @@ import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.commons.PivotPointVariant;
+import org.hatrack.commons.PriceSource;
 import org.hatrack.heerwisch.api.spec.Annotation;
+import org.hatrack.heerwisch.api.spec.ChartImage;
 import org.hatrack.heerwisch.api.spec.Indicator;
+import org.hatrack.heerwisch.api.spec.IndicatorPlacement;
+import org.hatrack.heerwisch.api.spec.LegendEntry;
+import org.hatrack.heerwisch.api.spec.Pane;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -19,6 +24,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -291,5 +297,63 @@ class OverlayWiringTest {
 
         assertEquals("HA candles", header,
                 "higher-TF context pane shows no primary-pane tier-B overlays/pivots: " + header);
+    }
+
+    // ─── BEN-2: legend tags overlays referenced-by-this-trade vs context ──────
+
+    private static ParsedStrategy strategyWithVolSeries() {
+        return StrategyParser.parse(
+                "Feature: Referenced vs context\n"
+                        + "  Primary timeframe: 1d\n\n"
+                        + "  Background:\n"
+                        + "    Given a series vol defined as stddev(20)\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 1\n"
+                        + "    Then long_entry\n",
+                "ref.strat");
+    }
+
+    @Test
+    void referencedSetCoversTierBOverlaysAndTradeNamedBackgroundSeries() {
+        Set<Indicator> referenced = generator.referencedIndicators(
+                strategyWithVolSeries(), Map.of(),
+                entrySteps("price_above_sma(10)", "vol is above 1"), null, true);
+
+        assertTrue(referenced.contains(new Indicator.SMA(10, PriceSource.CLOSE)),
+                "tier-B SMA overlay is referenced: " + referenced);
+        assertTrue(referenced.contains(new Indicator.StdDev(20, PriceSource.CLOSE)),
+                "Background series named in this trade's steps is referenced: " + referenced);
+    }
+
+    @Test
+    void backgroundSeriesNotNamedByThisTradeIsNotReferenced() {
+        Set<Indicator> referenced = generator.referencedIndicators(
+                strategyWithVolSeries(), Map.of(),
+                entrySteps("price_above_sma(10)"), null, true);
+
+        assertTrue(referenced.contains(new Indicator.SMA(10, PriceSource.CLOSE)), "" + referenced);
+        assertTrue(!referenced.contains(new Indicator.StdDev(20, PriceSource.CLOSE)),
+                "a Background series this trade does not consult is context, not referenced: " + referenced);
+    }
+
+    @Test
+    void legendStripTagsReferencedAndContextEntries() {
+        Indicator sma = new Indicator.SMA(10, PriceSource.CLOSE);
+        Indicator sigma = new Indicator.StdDev(20, PriceSource.CLOSE);
+        ChartImage image = new ChartImage(new byte[]{1}, "image/png", 900, 460, List.of(
+                new LegendEntry(new IndicatorPlacement(sma, Pane.MAIN), "SMA(10)", 0x112233, Pane.MAIN),
+                new LegendEntry(new IndicatorPlacement(sigma, Pane.SUBPLOT_1), "σ(20)", 0x445566,
+                        Pane.SUBPLOT_1)));
+
+        String html = generator.legendStrip(image, Set.of(sma)); // SMA referenced, σ context
+
+        int smaAt = html.indexOf("SMA(10)");
+        int sigmaAt = html.indexOf("σ(20)");
+        assertTrue(smaAt >= 0 && sigmaAt >= 0, html);
+        assertTrue(html.lastIndexOf("leg-referenced", smaAt) > html.lastIndexOf("leg-context", smaAt),
+                "SMA(10) is tagged referenced: " + html);
+        assertTrue(html.lastIndexOf("leg-context", sigmaAt) > html.lastIndexOf("leg-referenced", sigmaAt),
+                "σ(20) is tagged context: " + html);
     }
 }

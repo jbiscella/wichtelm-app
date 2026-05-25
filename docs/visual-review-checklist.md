@@ -113,8 +113,11 @@ For the **Background · higher-TF** frame (once per distinct higher TF reference
 
 - [ ] Indicator entries (swatch + label) match the overlays/sub-panes drawn.
 - [ ] Annotation entries (pivots / horizontal levels / fib) appear after a divider.
-- [ ] *(BEN-2, once implemented)* referenced vs context indicators are visually
-      distinguished.
+- [ ] **Referenced vs context** (BEN-2): indicators this trade's entry/exit
+      scenarios evaluate read `referenced` (emphasised ink); indicators plotted
+      only for orientation read `context` (muted, with a `· ctx` marker). The
+      same indicator can read `referenced` on one trade and `context` on another
+      — the tag is per-trade by design.
 
 ## Diagnostics & data hygiene (§7.6, §17)
 
