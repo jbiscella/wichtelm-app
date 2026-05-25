@@ -1149,8 +1149,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         try {
             ChartSpecBuilder builder = ChartSpec.builder().withSeries(series);
             // Tier B primitives plot their underlying indicator on the primary
-            // pane (the boolean is read off the indicator, as TradingView / MT /
-            // NinjaTrader do). Background-series indicators dedupe against these.
+            // pane so the boolean is read off a visible overlay (CLAUDE.md §3.7 /
+            // §7.5). Background-series indicators dedupe against these.
             List<Indicator> tierB = isPrimary
                     ? tierBIndicators(data.parameters(), entryScenario, exitScenario)
                     : List.of();
