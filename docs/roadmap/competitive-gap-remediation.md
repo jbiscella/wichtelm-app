@@ -51,28 +51,33 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
   verifiable either: the dedicated pivot demo's chart legend is empty and no pivot
   screenshot is committed.
 
-### NEC-2: Decorative Bollinger Bands from the `stddev` Background series
+### NEC-2: Scalar `stddev` misrendered as a Bollinger Bands band
 
 - **Symptom**: Every showcase-MA chart frame renders `BB(20,2)` (Upper / Basis /
   Lower — present in all 47 frame legends) because the `Given a series vol defined
-  as stddev(20)` Background series is auto-mapped to a Bollinger Bands overlay
+  as stddev(20)` Background series is mapped to a Bollinger Bands overlay
   (`HtmlReportGenerator.toIndicator`, the `stddev` → `Indicator.BollingerBands`
-  case). The strategy only compares the scalar σ (`vol is above 1`) and never uses
-  a band, so the 3-line band is noise that misrepresents the tested signal.
-- **Why it's necessary**: Half-done auto-plot convention — drawing an indicator the
-  strategy does not evaluate as a band confuses the reader about what fired the
-  signal and looks unpolished next to tools that plot only what the script
-  references.
-- **Thin slice**: Resolve the `stddev` rendering policy — either drop the
-  `stddev` → `BollingerBands` mapping, or render σ as the quantity the strategy
-  actually evaluates — and pin it with a `ChartSpec` assertion that a
-  `stddev`-only Background series produces no `BollingerBands` overlay. Then
-  regenerate the showcase-MA report. (The drop-vs-re-represent choice is a binary
-  decision to confirm at implementation time.)
-- **Definition of done**: The regenerated showcase-MA frames no longer carry a
-  `BB(20,2)` band the strategy never evaluates (or carry only a representation it
-  does evaluate), enforced by a green assertion.
-- **Depends on**: NEC-3.
+  case, line 1680). The strategy only compares the scalar σ (`vol is above 1`) and
+  never uses a band, so the 3-line price band (SMA ± 2σ) misrepresents the tested
+  signal. The BB stand-in exists only because heerwisch has no σ-line indicator.
+- **Why it's necessary**: A scalar volatility value charted as a price band is a
+  conceptual misrepresentation — it confuses the reader about what fired the signal
+  and looks unpolished next to tools that plot only what the script references.
+- **Decision (resolved)**: Fix faithfully — render σ as its own sub-pane line, do
+  NOT drop the overlay. This requires an additive `Indicator.StdDev` in heerwisch
+  (see Upstream dependencies); wichtelm-app then maps `stddev` to it. The
+  drop-the-rendering alternative was rejected as tech debt.
+- **Thin slice**: (after the heerwisch release) point `toIndicator`'s `stddev` case
+  at `Indicator.StdDev(period, CLOSE)`, add a `describeIndicator` case →
+  `"σ(period)"`, pin it with a unit assertion that `toIndicator("stddev(20)", …)`
+  returns `Indicator.StdDev` (not `BollingerBands`), and regenerate the showcase-MA
+  report. Subplot routing is automatic via `defaultPane()` — no other change.
+- **Definition of done**: The regenerated showcase-MA frames show a σ sub-pane line
+  (header reads `σ(20)`, with a legend entry) and no `BB(20)`; a green assertion
+  enforces the `stddev → StdDev` mapping.
+- **Depends on**: heerwisch `Indicator.StdDev` (hard upstream — see Upstream
+  dependencies); NEC-3 for the assertion scaffolding.
+
 
 ### NEC-3: Visual-contract regression coverage gap
 
@@ -166,8 +171,10 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 
 1. **NEC-3** — build the visual-contract scaffolding first so every subsequent fix
    lands red→green and can't silently regress; this is the missing discipline.
-2. **NEC-2** — subtract the decorative `BB(20)`; smallest, lowest-risk content
-   change, and it settles what "correct contents" means before we add to them.
+2. **NEC-2** — replace the `BB(20)` stand-in with a faithful σ sub-pane line. Scope
+   is decided, but the wichtelm-app side is gated on the heerwisch `Indicator.StdDev`
+   release, so open that upstream ask early; land the consumption once it ships. Its
+   content decision (σ shown as a sub-pane) feeds NEC-4's header listing.
 3. **NEC-1** — fix the emitted-but-unrendered pivot levels, guarded by NEC-3's
    render-boundary assertion (the data-object test already passes green).
 4. **NEC-4** — make the frame-header descriptor name exactly the now-correct
@@ -259,6 +266,10 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
   - **BEN-2 → heerwisch (conditional)**: surfacing pivot levels in
     `ChartImage.legend()` needs heerwisch to legend annotation-based overlays
     (today `legend()` lists indicators only).
-  - **NEC-2 → heerwisch (conditional)**: only if the chosen resolution
-    re-represents `stddev` as its own value — heerwisch has no standalone StdDev
-    sub-pane indicator. Dropping the BB overlay needs no upstream change.
+  - **NEC-2 → heerwisch (hard blocker, resolved scope)**: requires an additive
+    `Indicator.StdDev(int period, PriceSource)` variant of the sealed `Indicator`
+    type — a subplot σ line (population σ, divisor = period, matching
+    `BarIndicatorSource.stddev`), jfreechart driver rendering, and a `LegendEntry`.
+    Baseline pin is ha-track `0.54.0-alpha`; target the next additive release. The
+    faithful-fix decision (not dropping the overlay) makes this a hard dependency,
+    not optional.
