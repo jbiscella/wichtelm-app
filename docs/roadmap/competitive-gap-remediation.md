@@ -1,33 +1,42 @@
 # Competitive Gap Remediation Roadmap
 
-Planning document. It catalogs gaps already raised in review or observable in
-the current committed demo output, classifies them into two phases, proposes an
-implementation ordering, and defines a thin slice per gap so each ships
-independently. It does **not** implement any fix. No effort estimates and no
-dates by design — ordering only.
+Living tracking document. It catalogs report-rendering gaps, classifies them into
+two phases, proposes an implementation ordering, and defines a thin slice +
+definition of done per gap. It began as planning-only; several Phase-1 items have
+since shipped **on this branch** and are marked **STATUS** inline, with each
+item's original symptom kept (past tense where resolved) for traceability. No
+effort estimates and no dates by design — ordering only.
 
-Scope of evidence: gaps below are either (a) pre-listed in the remediation
-brief, or (b) observed directly in the committed `demo/reports/*.html` and
-`demo/reports/screenshots/*.png`. No speculative gaps were added.
+Scope of evidence: gaps are either (a) pre-listed in the remediation brief,
+(b) observed directly in the committed `demo/reports/*.html` /
+`demo/reports/screenshots/*.png`, or (c) code-level reconciliation from the Q2
+follow-up (NEC-5 / NEC-6 — a TODO / stale comment vs the current code). No
+speculative gaps were added. Shipped statuses below are verifiable against this
+branch's tree (`pom.xml`, the named source files, and the regenerated demo
+artifacts); they are not external-state claims.
 
 ## Phase 1 — Necessary
 
 ### NEC-1: Pivot levels emitted but not rendered (overlay auto-plot)
 
-- **Symptom**: On the showcase-MA demo (`demo/reports/tstx-showcase-ma-1d-report.html`)
-  the strategy references `price_above_pivot(P)` / `price_below_pivot(P)`. The
-  generator provably *emits* the pivot overlay — `pivotAnnotations` returns an
-  `Annotation.PivotPointLevels` set and the green `OverlayWiringTest` pins it — yet
-  no pivot levels appear in any chart frame's legend, nor in the committed
-  screenshot (`tstx-showcase-ma-1d.png`). The committed report is *current* (HTML,
-  generator, and the wiring tests all landed in the same commit, the demo rebuild
-  #42), so this is not staleness: the emitted annotation does not survive into the
-  rendered chart. This is the data-object-vs-render gap that is the canonical
-  example motivating NEC-3.
+**STATUS: rendering RESOLVED on this branch** (the 0.55 driver draws the levels and
+the demos regenerated — see Upstream dependencies). The render-boundary guard
+(NEC-3) is still owed; the symptom below is the original, pre-fix state.
+
+- **Symptom (original)**: On the showcase-MA demo
+  (`demo/reports/tstx-showcase-ma-1d-report.html`) the strategy references
+  `price_above_pivot(P)` / `price_below_pivot(P)`. The generator *emits* the pivot
+  overlay — `pivotAnnotations` returns an `Annotation.PivotPointLevels` set and the
+  green `OverlayWiringTest` pins it — yet no pivot levels appeared in any chart
+  frame's legend, nor in the then-committed screenshot. The HTML, generator, and
+  wiring tests were all present in the same committed tree, so this was not
+  staleness: the emitted annotation did not survive into the rendered chart. This
+  is the data-object-vs-render gap that is the canonical example motivating NEC-3.
 - **Why it's necessary**: Half-done feature — a chart that omits the pivot levels
-  the strategy reads its booleans off of misrepresents what it tested against
-  (a baseline expectation versus TradingView / QuantConnect), and the failure mode
-  here (emitted-but-not-drawn) currently passes CI green.
+  the strategy reads its booleans off of misrepresents what it tested against.
+  CLAUDE.md §7.5 requires the per-trade chart to show the referenced main-pane
+  overlays (incl. STANDARD daily pivot levels). The failure mode here
+  (emitted-but-not-drawn) passed the existing green test suite.
 - **Thin slice**: Using the NEC-3 scaffolding, add a deterministic assertion at the
   *render boundary* (built `ChartSpec` → rendered image / legend) that a
   pivot-referencing showcase-MA trade carries the pivot levels in the rendered
@@ -56,31 +65,35 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 
 ### NEC-2: Scalar `stddev` misrendered as a Bollinger Bands band
 
-- **Symptom**: Every showcase-MA chart frame renders `BB(20,2)` (Upper / Basis /
-  Lower — present in all 47 frame legends) because the `Given a series vol defined
-  as stddev(20)` Background series is mapped to a Bollinger Bands overlay
+**STATUS: DONE on this branch** — `toIndicator`'s `stddev` case now builds
+`Indicator.StdDev(period, CLOSE)` (σ sub-pane); see Upstream dependencies. The
+symptom below is the original, pre-fix state.
+
+- **Symptom (original)**: Every showcase-MA chart frame rendered `BB(20,2)` (Upper /
+  Basis / Lower — present in all 47 frame legends) because the `Given a series vol
+  defined as stddev(20)` Background series was mapped to a Bollinger Bands overlay
   (`HtmlReportGenerator.toIndicator`, the `stddev` → `Indicator.BollingerBands`
-  case, line 1680). The strategy only compares the scalar σ (`vol is above 1`) and
-  never uses a band, so the 3-line price band (SMA ± 2σ) misrepresents the tested
-  signal. The BB stand-in exists only because heerwisch has no σ-line indicator.
+  case). The strategy only compares the scalar σ (`vol is above 1`) and never uses
+  a band, so the 3-line price band (SMA ± 2σ) misrepresented the tested signal. The
+  BB stand-in existed only because heerwisch had no σ-line indicator.
 - **Why it's necessary**: A scalar volatility value charted as a price band is a
-  conceptual misrepresentation — it confuses the reader about what fired the signal
-  and looks unpolished next to tools that plot only what the script references.
+  conceptual misrepresentation — it confuses the reader about what fired the signal,
+  and CLAUDE.md §7.5 ties the chart contents to what the strategy actually
+  references.
 - **Decision (resolved)**: Fix faithfully — render σ as its own sub-pane line, do
-  NOT drop the overlay. This requires an additive `Indicator.StdDev` in heerwisch
-  (see Upstream dependencies); wichtelm-app then maps `stddev` to it. The
-  drop-the-rendering alternative was rejected as tech debt.
-- **Thin slice**: (after the heerwisch release) point `toIndicator`'s `stddev` case
-  at `Indicator.StdDev(period, CLOSE)`, add a `describeIndicator` case →
-  `"σ(period)"`, pin it with a unit assertion that `toIndicator("stddev(20)", …)`
-  returns `Indicator.StdDev` (not `BollingerBands`), and regenerate the showcase-MA
-  report. Subplot routing is automatic via `defaultPane()` — no other change.
-- **Definition of done**: The regenerated showcase-MA frames show a σ sub-pane line
-  (header reads `σ(20)`, with a legend entry) and no `BB(20)`; a green assertion
-  enforces the `stddev → StdDev` mapping.
-- **Depends on**: heerwisch `Indicator.StdDev` — **validated upstream (Increment
-  #4), pending Maven Central release** (see Upstream dependencies); NEC-3 for the
-  assertion scaffolding. Consumption deferred until the release is published.
+  NOT drop the overlay. This required an additive `Indicator.StdDev` in heerwisch
+  (shipped in 0.55.0-alpha); wichtelm-app maps `stddev` to it. The drop-the-rendering
+  alternative was rejected as tech debt.
+- **Thin slice (done)**: `toIndicator`'s `stddev` case builds
+  `Indicator.StdDev(period, CLOSE)`; `describeIndicator` emits `"σ(period)"`;
+  `OverlayWiringTest` pins `toIndicator("stddev(20)", …)` → `Indicator.StdDev` (not
+  `BollingerBands`); the showcase-MA report is regenerated. Subplot routing is
+  automatic via `defaultPane()`.
+- **Definition of done**: ✅ The regenerated showcase-MA frames show a σ sub-pane
+  line (header reads `σ(20)`, with a legend entry) and no `BB(20)`; a green
+  assertion enforces the `stddev → StdDev` mapping.
+- **Depends on**: heerwisch `Indicator.StdDev` (shipped in 0.55.0-alpha, now pinned
+  — see Upstream dependencies); NEC-3 for the render-boundary assertion.
 
 
 ### NEC-3: Visual-contract regression coverage gap
@@ -131,25 +144,26 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 
 ### NEC-5: Win/loss counts reconstructed by rounding (metric correctness)
 
-- **Symptom**: `HtmlReportGenerator.winsAndLosses` (line 400) has no direct
-  win/loss counters from frau-holle's `BacktestMetrics` (v0.47.0-alpha exposes
-  `winRate` + `numTrades` only), so it reconstructs `wins = round(winRate ×
-  numTrades)` and `losses = numTrades − wins`. The rounding can yield an
-  off-by-one count that disagrees with the report's own trade list.
+**STATUS: DONE on this branch** — `winsAndLosses` reads the direct counters; see
+Upstream dependencies. The symptom below is the original, pre-fix state.
+
+- **Symptom (original)**: `HtmlReportGenerator.winsAndLosses` had no direct win/loss
+  counters from frau-holle's `BacktestMetrics` (the pre-0.55 `BacktestMetrics`
+  exposed `winRate` + `numTrades` only), so it reconstructed `wins = round(winRate ×
+  numTrades)` and `losses = numTrades − wins`. The rounding can yield an off-by-one
+  count that disagrees with the report's own trade list.
 - **Why it's necessary**: Correctness floor — silently wrong win/loss counts in a
   backtest report are worse than a visual gap; a user cannot trust a tool whose
   headline counts don't reconcile with its own trade list.
-- **Thin slice**: Once an additive frau-holle `wins()` / `losses()` (or
-  `winningTrades()` / `losingTrades()`) accessor on `BacktestMetrics` is published,
-  read the counts directly and delete the rounding round-trip plus the line-400
-  TODO. Blocked upstream until that accessor ships (see Upstream dependencies).
-- **Definition of done**: The report's `N wins · M losses` line is read from
+- **Thin slice (done)**: read `winningTrades()` / `losingTrades()` from
+  `BacktestMetrics` directly; the rounding round-trip and the TODO are deleted.
+- **Definition of done**: ✅ The report's `N wins · M losses` line is read from
   frau-holle's direct counters (no rounding), `wins + losses == numTrades` holds
-  exactly for a backtest with a known split, and the line-400 TODO is gone.
-- **Depends on**: external — an additive frau-holle `BacktestMetrics`
-  `winningTrades()` / `losingTrades()` accessor, **validated upstream (Increment #1),
-  pending Maven Central release** (see Upstream dependencies). Independent of the
-  visual track (NEC-1 / 2 / 3 / 4); consumption deferred until the release ships.
+  exactly, and the TODO is gone. (frau-holle's accessor counts `pnl > 0` as a win
+  and `pnl == 0` as a loss; wichtelm-app delegates to it.)
+- **Depends on**: frau-holle's additive `winningTrades()` / `losingTrades()`
+  accessor on `BacktestMetrics` (shipped in 0.55.0-alpha, now pinned — see Upstream
+  dependencies). Independent of the visual track (NEC-1 / 2 / 3 / 4).
 
 ### NEC-6: Stale "not plotted" javadoc for window-aggregate overlays (doc reconciliation)
 
@@ -177,68 +191,78 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 
 1. **NEC-3** — build the visual-contract scaffolding first so every subsequent fix
    lands red→green and can't silently regress; this is the missing discipline.
-2. **NEC-2** — replace the `BB(20)` stand-in with a faithful σ sub-pane line. Scope
-   is decided, but the wichtelm-app side is gated on the heerwisch `Indicator.StdDev`
-   release, so open that upstream ask early; land the consumption once it ships. Its
-   content decision (σ shown as a sub-pane) feeds NEC-4's header listing.
-3. **NEC-1** — fix the emitted-but-unrendered pivot levels, guarded by NEC-3's
-   render-boundary assertion (the data-object test already passes green).
+2. **NEC-2** *(DONE)* — replaced the `BB(20)` stand-in with a faithful σ sub-pane
+   line via the shipped `Indicator.StdDev`. Its content decision (σ as a sub-pane)
+   feeds NEC-4's header listing.
+3. **NEC-1** *(rendering DONE; NEC-3 guard owed)* — the pivot levels now render; the
+   render-boundary assertion that locks it in still depends on NEC-3.
 4. **NEC-4** — make the frame-header descriptor name exactly the now-correct
    rendered contents; must follow NEC-1 / NEC-2 since it describes their result.
-5. **NEC-5** — correctness floor; independent of the visual track but grouped in
-   Phase 1. Blocked on an upstream frau-holle accessor, so open that request early
-   and land the wichtelm-app side as soon as it ships.
+5. **NEC-5** *(DONE)* — correctness floor; read the direct frau-holle counters.
+   Independent of the visual track.
 6. **NEC-6** — doc-only reconciliation; trivial, do last (or fold into NEC-2).
 
 ## Phase 2 — Beneficial
 
-### BEN-1: Snapshot diff in CI (golden-screenshot comparison)
+### BEN-1: Golden-screenshot comparison (gated — requires explicit author opt-in)
+
+> **Gate**: `AGENTS.md` says "Do NOT suggest adding CI/CD pipeline files unless
+> explicitly asked." BEN-1's value is in a CI gate, so it is **not** proposed for
+> implementation here — it is recorded as a candidate only, and must be requested
+> explicitly by the author before any build/CI wiring is added. The local,
+> developer-run form (a golden-image comparison invoked manually, no pipeline file)
+> is the most that should be built absent that request.
 
 - **Symptom**: There is no automated comparison of rendered report output against
   approved golden images; visual regressions rely on a human re-checking
-  screenshots.
-- **Why it's beneficial**: Automates the NEC-3 manual review into CI, turning a
-  visual regression into a hard build failure rather than a review-discipline
-  expectation. Strengthens the credibility-of-output differentiator; not a v1
-  blocker.
-- **Thin slice**: Wire a single golden-image comparison for one canonical demo
-  report (e.g. showcase-MA) into the build — render, compare against a committed
-  PNG baseline within a tolerance, fail on diff — starting with one frame to prove
-  the harness.
-- **Definition of done**: CI fails when the showcase-MA rendered chart diverges
-  from its committed golden beyond tolerance, with a documented "bless" step to
-  update the baseline intentionally.
+  screenshots (the NEC-3 manual checklist).
+- **Why it's beneficial**: Turns the NEC-3 manual review into a mechanical
+  pass/fail. Strengthens the credibility-of-output differentiator; not a v1 blocker.
+- **Thin slice (candidate, opt-in)**: A single golden-image comparison for one
+  canonical demo report (e.g. showcase-MA) — render, compare against a committed PNG
+  baseline within a tolerance, fail on diff — runnable as a local check first. Any
+  promotion of that check into a CI pipeline is out of scope until explicitly asked.
+- **Definition of done**: The showcase-MA rendered chart is compared against its
+  committed golden beyond a tolerance, with a documented "bless" step to update the
+  baseline intentionally.
 - **Depends on**: NEC-3 (the visual contract it automates); should follow
-  NEC-1 / NEC-2 / NEC-4 and BEN-2 so the frozen baseline is already correct.
+  NEC-1 / NEC-2 / NEC-4 and BEN-2 so the frozen baseline is already correct; plus an
+  explicit author request before any CI wiring.
 
 ### BEN-2: Legend distinguishes "referenced by strategy" vs "context" indicators
 
-- **Symptom**: The chart legend lists every overlay identically; there is no visual
+**STATUS: pivots-in-legend DONE; referenced-vs-context tagging OPEN.** The
+annotation-legend half shipped on this branch; see Upstream dependencies.
+
+- **Symptom**: The chart legend listed every overlay identically, with no visual
   distinction between indicators the strategy actually evaluates (SMA / EMA / pivot
   it reads booleans off of) and any context-only indicator kept for orientation.
-  Pivot levels also carry no legend entry at all (the pivot demo's legend is empty).
-- **Why it's beneficial**: If NEC-2 keeps any context indicators, the reader needs
-  to know which overlays the strategy tested against versus which are decoration;
-  it also surfaces annotation-based overlays (pivots) in the legend. Reinforces the
-  "what did the strategy evaluate" clarity that differentiates the tool.
-- **Thin slice**: Add a referenced / context tag (or grouping) to legend entries
-  and include pivot levels in the legend; pin with an assertion that a
-  strategy-referenced overlay is tagged `referenced`.
+  Pivot levels also carried no legend entry at all. *(The pivot / horizontal / fib
+  annotation overlays are now legended; the referenced-vs-context distinction for
+  indicator entries is not yet implemented.)*
+- **Why it's beneficial**: The reader needs to know which overlays the strategy
+  tested against versus which are kept only for orientation. Reinforces the "what
+  did the strategy evaluate" clarity. (NEC-2 keeps the σ sub-pane and the demos do
+  carry context overlays — e.g. MA-trend filters plotted from the primitives — so
+  the distinction is meaningful.)
+- **Thin slice (remaining)**: Add a referenced / context tag (or grouping) to the
+  indicator legend entries; pin with an assertion that a strategy-referenced overlay
+  is tagged `referenced`. *(Pivot-in-legend is already done.)*
 - **Definition of done**: The regenerated report's legend visibly separates
-  referenced overlays from context overlays and includes pivot levels, enforced by
-  a green assertion on a referenced overlay's tag.
-- **Depends on**: NEC-2 resolution (whether context indicators are kept at all);
-  pairs with NEC-4 (the descriptor / legend pairing). Pivot-in-legend is served by
-  heerwisch `ChartImage.annotationLegend()` — **validated upstream (Increment #3),
-  pending Maven Central release** (see Upstream dependencies).
+  referenced overlays from context overlays (pivots already included), enforced by a
+  green assertion on a referenced overlay's tag.
+- **Depends on**: pairs with NEC-4 (the descriptor / legend pairing). The
+  annotation-legend dependency (heerwisch `ChartImage.annotationLegend()`) shipped in
+  0.55.0-alpha and is consumed (see Upstream dependencies).
 
 ## Phase 2 — Proposed ordering
 
 1. **BEN-2** — settle the legend semantics (referenced vs context; pivots in the
    legend) before any golden image is frozen, so the baseline reflects the final
    legend.
-2. **BEN-1** — automate the now-final visual contract as golden-image CI; depends
-   on NEC-3 and on a settled BEN-2 so baselines aren't immediately re-blessed.
+2. **BEN-1** — *(gated; opt-in only)* a golden-image comparison over the now-final
+   visual contract; depends on NEC-3 and on a settled BEN-2 so baselines aren't
+   immediately re-blessed. Any CI wiring requires an explicit author request.
 
 ## Cross-phase notes
 
@@ -246,21 +270,25 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
   a committed manual checklist) is the prerequisite for BEN-1 (golden-image
   automation). NEC-3 defines the visual contract; BEN-1 enforces it with snapshot
   diffing. Phase 1 must land first.
-- **NEC-2 → BEN-2**: NEC-2's resolution (drop vs keep context indicators) sets
-  BEN-2's scope. If context indicators are dropped, BEN-2 reduces to labeling
-  referenced overlays and adding pivots to the legend; if kept, BEN-2 must visually
-  separate the two classes.
+- **NEC-2 → BEN-2**: NEC-2 is resolved to **keep** the σ sub-pane (do not drop the
+  overlay), and the demos carry other context overlays too, so BEN-2's scope is the
+  full one: visually separate strategy-referenced overlays from context overlays.
+  The "pivots in the legend" half of BEN-2 already shipped.
 - **NEC-4 ↔ BEN-2**: NEC-4 (necessary: truthful header) and BEN-2 (beneficial:
   referenced-vs-context legend) are the descriptor / legend pair — NEC-4 is the
   correctness floor, BEN-2 the enhancement on top. Sequence NEC-4 before BEN-2.
-- **Shared demo-regeneration overhead**: NEC-1, NEC-2, NEC-4, and BEN-2 each
-  require regenerating the committed demo HTML (large files). Regenerating once,
-  after NEC-4, avoids churning the committed reports repeatedly.
+- **Shared demo-regeneration overhead**: each visual slice (NEC-1, NEC-2, NEC-4,
+  BEN-2) still verifies and regenerates its own output as its definition of done —
+  slice acceptance is independent. This is purely a *commit-hygiene* note: when
+  several visual slices land close together, the committed demo HTML/PNG (large
+  files) need only be regenerated once at the end of that group to avoid churning
+  the binaries on every intermediate commit. It does not gate any slice's red→green.
 - **Q2 repo-side TODOs — promoted into Phase 1**: the two items flagged from the
   Q2 follow-up are confirmed and folded in as **NEC-5** (`winsAndLosses` rounding)
   and **NEC-6** (stale window-aggregate javadoc), inserted after NEC-4. NEC-5 is
   independent of the visual track but grouped here for correctness; NEC-6 is a
-  doc-only follow-on (may fold into NEC-2). No open GitHub issues exist in the repo.
+  doc-only follow-on (may fold into NEC-2). Both are sourced from code-level
+  reconciliation (scope (c) in the header), not from demo output.
 - **Upstream (ha-track) dependencies** — **Status: RELEASED & CONSUMED.** ha-track
   `0.55.0-alpha` shipped the additive API and wichtelm-app now pins it
   (`<hatrack.version>0.55.0-alpha`). The four upstream-gated consumptions below are
