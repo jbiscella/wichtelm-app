@@ -24,6 +24,7 @@ import org.hatrack.heerwisch.api.error.ChartRenderException;
 import org.hatrack.heerwisch.api.error.DriverInternalException;
 import org.hatrack.heerwisch.api.port.ChartRenderer;
 import org.hatrack.heerwisch.api.spec.Annotation;
+import org.hatrack.heerwisch.api.spec.AnnotationLegendEntry;
 import org.hatrack.heerwisch.api.spec.ChartImage;
 import org.hatrack.heerwisch.api.spec.ChartSpec;
 import org.hatrack.heerwisch.api.spec.ChartSpecBuilder;
@@ -397,16 +398,8 @@ public final class HtmlReportGenerator {
         html.append("</div>");
     }
 
-    // TODO(ha-track): frau-holle's BacktestMetrics (v0.47.0-alpha) exposes
-    // winRate (BigDecimal) and numTrades (int) but no direct wins/losses
-    // counters, so we round-trip through winRate to reconstruct them. If a
-    // future frau-holle release adds explicit `int wins()` / `int losses()`
-    // accessors, replace the rounding with direct field reads — see
-    // Concern 5(a) from the external review.
     private static String winsAndLosses(BacktestMetrics m) {
-        int wins = (int) Math.round(m.winRate().doubleValue() * m.numTrades());
-        int losses = m.numTrades() - wins;
-        return wins + " wins · " + losses + " losses";
+        return m.winningTrades() + " wins · " + m.losingTrades() + " losses";
     }
 
     private static String signOfReturn(BigDecimal value) {
@@ -1156,8 +1149,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         try {
             ChartSpecBuilder builder = ChartSpec.builder().withSeries(series);
             // Tier B primitives plot their underlying indicator on the primary
-            // pane (the boolean is read off the indicator, as TradingView / MT /
-            // NinjaTrader do). Background-series indicators dedupe against these.
+            // pane so the boolean is read off a visible overlay (CLAUDE.md §3.7 /
+            // §7.5). Background-series indicators dedupe against these.
             List<Indicator> tierB = isPrimary
                     ? tierBIndicators(data.parameters(), entryScenario, exitScenario)
                     : List.of();
@@ -1264,7 +1257,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
             return "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
                     + esc(image.contentType()) + ";base64," + base64 + "\"/>"
-                    + legendStrip(image.legend());
+                    + legendStrip(image);
         } catch (ChartRenderException e) {
             throw new ReportGenerationException(
                     "chart rendering failed for timeframe " + timeframeLabel, e);
@@ -1377,22 +1370,42 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
     }
 
     /**
-     * Renders the chart's indicator legend (0.50 {@link ChartImage#legend()})
-     * as a small swatch + label strip under the chart image, so multi-overlay
-     * panes are readable. Each {@link LegendEntry} carries the exact line colour
-     * the renderer used ({@code rgb}); empty when the chart has no indicators.
+     * Renders the chart's legend as a small swatch + label strip under the
+     * image. Indicator entries ({@link ChartImage#legend()}) come first, then
+     * horizontal-line annotation overlays ({@link ChartImage#annotationLegend()}
+     * — pivots / horizontal levels / fib), tagged {@code leg-annotation} so the
+     * two classes are distinguishable. Each entry carries the exact line colour
+     * the renderer used ({@code rgb}); empty when the chart has neither.
      */
-    private String legendStrip(List<LegendEntry> legend) {
-        if (legend == null || legend.isEmpty()) {
+    private String legendStrip(ChartImage image) {
+        List<LegendEntry> indicators = image.legend();
+        List<AnnotationLegendEntry> annotations = image.annotationLegend();
+        boolean hasIndicators = indicators != null && !indicators.isEmpty();
+        boolean hasAnnotations = annotations != null && !annotations.isEmpty();
+        if (!hasIndicators && !hasAnnotations) {
             return "";
         }
         StringBuilder out = new StringBuilder("<div class=\"chart-legend\">");
-        for (LegendEntry entry : legend) {
-            String hex = String.format(Locale.ROOT, "#%06x", entry.rgb() & 0xFFFFFF);
-            out.append("<span class=\"leg\"><span class=\"sw\" style=\"background:")
-                    .append(hex).append("\"></span>").append(esc(entry.label())).append("</span>");
+        if (hasIndicators) {
+            for (LegendEntry entry : indicators) {
+                appendLegendItem(out, "leg", entry.rgb(), entry.label());
+            }
+        }
+        if (hasAnnotations) {
+            if (hasIndicators) {
+                out.append("<span class=\"leg-divider\" aria-hidden=\"true\"></span>");
+            }
+            for (AnnotationLegendEntry entry : annotations) {
+                appendLegendItem(out, "leg leg-annotation", entry.rgb(), entry.label());
+            }
         }
         return out.append("</div>").toString();
+    }
+
+    private void appendLegendItem(StringBuilder out, String cssClass, int rgb, String label) {
+        String hex = String.format(Locale.ROOT, "#%06x", rgb & 0xFFFFFF);
+        out.append("<span class=\"").append(cssClass).append("\"><span class=\"sw\" style=\"background:")
+                .append(hex).append("\"></span>").append(esc(label)).append("</span>");
     }
 
     private String describeChartIndicators(String timeframe, int barCount, ReportData data) {
@@ -1431,6 +1444,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             case Indicator.VolumePane v -> "VOL";
             case Indicator.RollingMax r -> "HHV(" + r.period() + ")";
             case Indicator.RollingMin r -> "LLV(" + r.period() + ")";
+            case Indicator.StdDev s -> "σ(" + s.period() + ")";
         };
     }
 
@@ -1489,6 +1503,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                                     StrategyScenario... scenarios) {
         boolean macd = false;
         boolean rsi = false;
+        BigDecimal rsiOverbought = DEFAULT_RSI_OVERBOUGHT;
+        BigDecimal rsiOversold = DEFAULT_RSI_OVERSOLD;
         List<Indicator> out = new ArrayList<>();
         for (StrategyScenario scenario : scenarios) {
             if (scenario == null) {
@@ -1503,6 +1519,18 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 if (t.contains("rsi_overbought") || t.contains("rsi_oversold")
                         || t.contains("rsi_crosses_50")) {
                     rsi = true;
+                    // Thread the actual threshold from rsi_overbought(N) /
+                    // rsi_oversold(N) into the sub-pane so the shaded danger zone
+                    // matches the trigger (N may be a literal or a parameter); the
+                    // unspecified side keeps the 70 / 30 convention.
+                    Matcher call = INDICATOR_CALL.matcher(t);
+                    if (call.matches()) {
+                        if (call.group(1).equals("rsi_overbought")) {
+                            rsiOverbought = resolveThreshold(call.group(2), parameters, rsiOverbought);
+                        } else if (call.group(1).equals("rsi_oversold")) {
+                            rsiOversold = resolveThreshold(call.group(2), parameters, rsiOversold);
+                        }
+                    }
                 }
                 // MA-trend-filter primitives plot their underlying MA(s) on the
                 // main pane (price_*_sma → SMA, price_*_ema → EMA, sma_*_ema →
@@ -1514,10 +1542,28 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             addUnique(out, new Indicator.MACD(12, 26, 9, PriceSource.CLOSE));
         }
         if (rsi) {
-            addUnique(out, new Indicator.RSI(14, DEFAULT_RSI_OVERBOUGHT, DEFAULT_RSI_OVERSOLD,
+            addUnique(out, new Indicator.RSI(14, rsiOverbought, rsiOversold,
                     PriceSource.CLOSE, Optional.of(Indicator.RsiVisualization.DANGER_ZONES_ON)));
         }
         return out;
+    }
+
+    /** Resolve an RSI threshold arg (literal or parameter name) to its value, else the fallback. */
+    private static BigDecimal resolveThreshold(String rawArg, Map<String, BigDecimal> params,
+                                               BigDecimal fallback) {
+        String a = rawArg.trim();
+        if (a.isEmpty()) {
+            return fallback;
+        }
+        BigDecimal fromParam = params.get(a);
+        if (fromParam != null) {
+            return fromParam;
+        }
+        try {
+            return new BigDecimal(a);
+        } catch (NumberFormatException notNumeric) {
+            return fallback;
+        }
     }
 
     private static void addMaIndicators(String stepText, Map<String, BigDecimal> parameters,
@@ -1677,9 +1723,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                         resolveIntArg(args, 1, parameters),
                         resolveIntArg(args, 2, parameters),
                         PriceSource.CLOSE);
-                case "stddev" -> new Indicator.BollingerBands(
+                case "stddev" -> new Indicator.StdDev(
                         resolveIntArg(args, 0, parameters),
-                        BigDecimal.valueOf(2),
                         PriceSource.CLOSE);
                 // Window aggregates → Donchian-style per-bar stepping overlays
                 // (ha-track 0.54 RollingMax/RollingMin). Field-matched source:
