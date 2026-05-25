@@ -261,35 +261,26 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
   and **NEC-6** (stale window-aggregate javadoc), inserted after NEC-4. NEC-5 is
   independent of the visual track but grouped here for correctness; NEC-6 is a
   doc-only follow-on (may fold into NEC-2). No open GitHub issues exist in the repo.
-- **Upstream (ha-track) dependencies** — some increments need an additive ha-track
-  release before they can complete (wichtelm-app consumes published artifacts).
-  **Status (validated, pending release):** all four upstream pieces below have been
-  built and visually validated in the ha-track repo (increment screenshots #1–#4),
-  but are **not yet published to Maven Central**. The current pin stays
-  `0.54.0-alpha`; the `<hatrack.version>` bump and every wichtelm-app consumption
-  remain deferred until the release lands. No wichtelm-app code has changed.
-  - **NEC-5 → frau-holle `BacktestMetrics` (validated, pending release)**: the
-    additive `winningTrades()` / `losingTrades()` accessors are built and validated
-    upstream (Increment #1 — `trades=13 winningTrades=8 losingTrades=5
-    winRate=0.615`, `wins+losses==trades`). Once published, read the counts directly
-    and delete the rounding round-trip + line-400 TODO. The rounding round-trip
-    cannot be removed until this lands.
-  - **NEC-1 → heerwisch / jfreechart (RESOLVED — no upstream change needed)**:
-    Increment #2 confirms the renderer already draws `Annotation.PivotPointLevels`
-    (STANDARD P / R1–R3 / S1–S3) with **no ha-track change**. The earlier
-    "unimplemented driver annotation" hypothesis is therefore disproven: NEC-1 is a
-    **wichtelm-app-only** fix — the emitted annotation must survive into the rendered
-    `ChartSpec` from wichtelm's spec-build path. Not blocked upstream.
-  - **BEN-2 → heerwisch (validated, pending release)**: surfacing pivot levels in the
-    legend is served by the additive `ChartImage.annotationLegend()` API (label +
-    line colour), validated upstream (Increment #3 — `Pivot Points (STANDARD)`,
-    `Entry ref` drawn as a consumer-rendered legend strip). Once published, BEN-2
-    consumes it; pending release.
-  - **NEC-2 → heerwisch (validated, pending release)**: the additive
-    `Indicator.StdDev(int period, PriceSource)` variant of the sealed `Indicator`
-    type — subplot σ line (population σ, divisor = period, matching
-    `BarIndicatorSource.stddev`), jfreechart driver rendering, and a legend entry —
-    is built and validated upstream (Increment #4 — `Indicator.StdDev(20, CLOSE)` as
-    a driver-rendered `σ(20)` sub-pane, with `legend()` showing `SMA(20)` and
-    `σ(20)`). Baseline pin `0.54.0-alpha`; the faithful-fix decision makes this a
-    hard dependency. Consumption pending release.
+- **Upstream (ha-track) dependencies** — **Status: RELEASED & CONSUMED.** ha-track
+  `0.55.0-alpha` shipped the additive API and wichtelm-app now pins it
+  (`<hatrack.version>0.55.0-alpha`). The four upstream-gated consumptions below are
+  done; the remaining gaps in each NEC item are wichtelm-app-internal (see per-item
+  notes). Demo reports regenerated.
+  - **NEC-5 → frau-holle `BacktestMetrics` — DONE**: `winsAndLosses` now reads
+    `winningTrades()` / `losingTrades()` directly; the `Math.round(winRate ×
+    numTrades)` round-trip and the line-400 TODO are gone. Counts reconcile with
+    `numTrades` and the trade list (break-even = loss, per the library invariant).
+  - **NEC-1 → heerwisch / jfreechart — DONE (no upstream change)**: the 0.55 driver
+    renders `Annotation.PivotPointLevels` (STANDARD P / R1–R3 / S1–S3). The caller
+    (`pivotAnnotations` + `builder.addAnnotation`) already added them correctly — no
+    workaround existed to remove — so the pivot lines now appear (the pivot demo's
+    legend went from empty to populated). A render-boundary assertion (NEC-3) is
+    still owed to guard against future regressions.
+  - **BEN-2 → heerwisch — partially DONE**: pivot / horizontal / fib overlays are now
+    surfaced in the legend strip via `ChartImage.annotationLegend()` (label + colour
+    swatch, grouped behind a divider, `leg-annotation` class). The *referenced-vs-
+    context* tagging of indicator entries remains open.
+  - **NEC-2 → heerwisch — DONE**: `toIndicator` maps `stddev(period)` to
+    `Indicator.StdDev(period, CLOSE)` (σ sub-pane); `describeIndicator` reads
+    `σ(period)`. The `BollingerBands` stand-in is gone — no `BB(20)` in any
+    regenerated report; the showcase-MA frame header now reads `HA candles · σ(20)`.
