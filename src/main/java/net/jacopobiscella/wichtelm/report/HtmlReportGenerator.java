@@ -1258,7 +1258,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
             Set<Indicator> referenced = referencedIndicators(data.strategy(), data.parameters(),
-                    entryScenario, exitScenario, isPrimary);
+                    timeframeLabel, entryScenario, exitScenario, isPrimary);
             return "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
                     + esc(image.contentType()) + ";base64," + base64 + "\"/>"
                     + legendStrip(image, referenced);
@@ -1422,22 +1422,29 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
     }
 
     /**
-     * The overlays a trade's entry/exit scenarios actually evaluate (BEN-2):
-     * the tier-B primitives' implied indicators (primary pane only) plus any
-     * Background series whose name appears in this trade's entry/exit condition
-     * steps. "Referenced" means consulted by the matched scenarios — every step
-     * of an AND-chain counts, since the report knows which scenarios fired, not
-     * which individual steps did (it does not re-evaluate conditions bar-by-bar).
-     * Every other plotted overlay is context.
+     * The overlays a trade's entry/exit scenarios actually evaluate (BEN-2) on
+     * the {@code timeframe} of the chart frame being rendered: the tier-B
+     * primitives' implied indicators (primary pane only) plus any Background
+     * series ON THIS TIMEFRAME whose name appears in this trade's entry/exit
+     * condition steps. "Referenced" means consulted by the matched scenarios —
+     * every step of an AND-chain counts, since the report knows which scenarios
+     * fired, not which individual steps did (it does not re-evaluate conditions
+     * bar-by-bar). Every other plotted overlay is context.
+     *
+     * <p>The set is scoped to the frame's timeframe because the legend is
+     * rendered per frame and two Background series on different timeframes can
+     * compile to the same {@link Indicator} value (e.g. {@code sma(10)} on the
+     * primary TF and {@code sma(10)} on {@code 1d}). A frame-global set matched
+     * by indicator identity would tag the unreferenced one as referenced.
      */
     Set<Indicator> referencedIndicators(ParsedStrategy strategy, Map<String, BigDecimal> parameters,
-                                        StrategyScenario entryScenario, StrategyScenario exitScenario,
-                                        boolean isPrimary) {
+                                        String timeframe, StrategyScenario entryScenario,
+                                        StrategyScenario exitScenario, boolean isPrimary) {
         Set<Indicator> referenced = new HashSet<>();
         if (isPrimary) {
             referenced.addAll(tierBIndicators(parameters, entryScenario, exitScenario));
         }
-        for (BackgroundSeries bg : strategy.backgroundSeries()) {
+        for (BackgroundSeries bg : seriesForTimeframe(timeframe, strategy)) {
             if (!seriesReferencedByTrade(bg.name(), entryScenario, exitScenario)) {
                 continue;
             }

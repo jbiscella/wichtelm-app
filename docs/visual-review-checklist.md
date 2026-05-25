@@ -1,16 +1,20 @@
 # Visual-review checklist — backtest HTML reports
 
-A manual review aid for the things automated tests **cannot** assert: the
-raster chart contents produced by the heerwisch / JFreeChart driver, and the
-overall page composition of a generated report. Run through this whenever a
-demo report is regenerated (or a report-generator change could plausibly alter
-rendering) and eyeball each item against the §7 contract in `CLAUDE.md`.
+A manual review aid for what the automated suite does **not** fully cover. The
+suite pins one representative chart pixel-wise (`GoldenChartImageTest`) and the
+overlay/header/metric contracts (below), but a single golden baseline does not
+cover the many other rendered charts — seven demos × many trades, with varied
+overlays, markers and outcome shading — nor the overall page composition. Those
+still need a human eye. Run through this whenever a demo report is regenerated
+(or a report-generator change could plausibly alter rendering) and eyeball each
+item against the §7 contract in `CLAUDE.md`.
 
 This complements — does not replace — the automated visual-contract coverage,
 which already pins:
 
-- `GoldenChartImageTest` — a representative chart rendered and diffed pixel-wise
-  against a committed baseline (catches silent rendering drift).
+- `GoldenChartImageTest` — ONE representative chart rendered and diffed pixel-wise
+  against a committed baseline (catches silent rendering drift on that chart; the
+  other charts are unguarded, hence this checklist).
 - `OverlayWiringTest` — the emitted overlay/annotation objects (tier-B SMA / EMA
   overlays, pivot level sets, window-aggregate RollingMax / RollingMin, σ sub-pane).
 - `describeChartIndicators` tests — the frame-header descriptor equals the chart's
@@ -19,14 +23,19 @@ which already pins:
 - `WinLossCountReconciliationTest` — headline win/loss counts reconcile with the
   trade list.
 
-Anything below that is **not** in that list needs a human to look at the rendered
-PNG, because the chart pixels are outside the assertion surface.
+The chart pixels of every non-baseline chart, and the page composition as a
+whole, are outside the assertion surface — that is what a human verifies here.
 
 ## How to review
 
 1. Regenerate the reports in the canonical rendering environment:
    `./demo/run_demo.sh` (CSV, offline, deterministic data).
-2. Open each `demo/reports/*-report.html` in a browser.
+2. Open the reports that run just produced — the freshly generated, timestamped
+   `demo/reports/{config}_{timestamp}.html` files (e.g. `ls -t demo/reports/*.html`),
+   **not** the committed `*-report.html` snapshots (those are the prior reference,
+   not the new output). Review only the CSV demos (`tstx-*` / `tstc-*`); never a
+   local `eodhd-*` report — its live data is non-deterministic and unfit for
+   regression review.
 3. Walk the checklist below per report. Note that chart **contents** carry
    JFreeChart's native palette/typography — the deliberate, accepted mismatch
    with the styled page chrome (§7.1). Review the chart for *correctness*, not

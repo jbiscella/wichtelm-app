@@ -317,7 +317,7 @@ class OverlayWiringTest {
     @Test
     void referencedSetCoversTierBOverlaysAndTradeNamedBackgroundSeries() {
         Set<Indicator> referenced = generator.referencedIndicators(
-                strategyWithVolSeries(), Map.of(),
+                strategyWithVolSeries(), Map.of(), "1d",
                 entrySteps("price_above_sma(10)", "vol is above 1"), null, true);
 
         assertTrue(referenced.contains(new Indicator.SMA(10, PriceSource.CLOSE)),
@@ -329,12 +329,38 @@ class OverlayWiringTest {
     @Test
     void backgroundSeriesNotNamedByThisTradeIsNotReferenced() {
         Set<Indicator> referenced = generator.referencedIndicators(
-                strategyWithVolSeries(), Map.of(),
+                strategyWithVolSeries(), Map.of(), "1d",
                 entrySteps("price_above_sma(10)"), null, true);
 
         assertTrue(referenced.contains(new Indicator.SMA(10, PriceSource.CLOSE)), "" + referenced);
         assertTrue(!referenced.contains(new Indicator.StdDev(20, PriceSource.CLOSE)),
                 "a Background series this trade does not consult is context, not referenced: " + referenced);
+    }
+
+    @Test
+    void referencedSetIsScopedPerTimeframeForIdenticalCrossTfIndicators() {
+        // Two Background series compile to the SAME Indicator (sma(10)) on
+        // different timeframes; the trade references only the primary one.
+        ParsedStrategy strategy = StrategyParser.parse(
+                "Feature: Multi-TF legend\n"
+                        + "  Primary timeframe: 1h\n\n"
+                        + "  Background:\n"
+                        + "    Given a series fast defined as sma(10)\n"
+                        + "    And a series slow defined as sma(10) on 1d\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 1\n"
+                        + "    Then long_entry\n",
+                "multitf.strat");
+        StrategyScenario entry = entrySteps("close is above fast"); // names fast (1h), not slow (1d)
+        Indicator sma10 = new Indicator.SMA(10, PriceSource.CLOSE);
+
+        Set<Indicator> primary = generator.referencedIndicators(strategy, Map.of(), "1h", entry, null, true);
+        Set<Indicator> higher = generator.referencedIndicators(strategy, Map.of(), "1d", entry, null, false);
+
+        assertTrue(primary.contains(sma10), "the referenced primary SMA(10) is referenced: " + primary);
+        assertTrue(!higher.contains(sma10),
+                "the identical 1d SMA(10) the trade does not reference stays context: " + higher);
     }
 
     @Test
