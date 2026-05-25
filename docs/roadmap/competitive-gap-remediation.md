@@ -12,31 +12,44 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 
 ## Phase 1 — Necessary
 
-### NEC-1: Overlay auto-plot incomplete (pivot levels missing; per-trade overlay completeness)
+### NEC-1: Pivot levels emitted but not rendered (overlay auto-plot)
 
 - **Symptom**: On the showcase-MA demo (`demo/reports/tstx-showcase-ma-1d-report.html`)
-  the strategy references `price_above_pivot(P)` / `price_below_pivot(P)`, yet no
-  STANDARD daily pivot levels appear on any chart frame — pivot levels never
-  produce a legend entry and none are visible in the committed screenshot
-  (`tstx-showcase-ma-1d.png`). The dedicated pivot demo's chart legend is likewise
-  empty. SMA/EMA overlays *do* render in the legend for frames whose scenarios
-  reference them (`SMA(10)` ×23, `EMA(30)` ×38, etc.), so the MA path works while
-  the pivot path appears unwired on this demo.
-- **Why it's necessary**: Half-done feature — auto-plotting the indicators a
-  strategy evaluates against (pivots included) is a baseline expectation versus
-  TradingView / QuantConnect; a chart that omits referenced pivot levels
-  misrepresents what the strategy actually tested against.
-- **Thin slice**: Using the NEC-3 scaffolding, add a deterministic assertion that
-  the `ChartSpec` built for a showcase-MA trade whose scenarios reference a
-  `price_*_pivot` primitive contains the `Annotation.PivotPointLevels` set (and
-  that each strategy-referenced SMA/EMA overlay is present on the frames that
-  reference it). Make it pass, then regenerate the showcase-MA report.
+  the strategy references `price_above_pivot(P)` / `price_below_pivot(P)`. The
+  generator provably *emits* the pivot overlay — `pivotAnnotations` returns an
+  `Annotation.PivotPointLevels` set and the green `OverlayWiringTest` pins it — yet
+  no pivot levels appear in any chart frame's legend, nor in the committed
+  screenshot (`tstx-showcase-ma-1d.png`). The committed report is *current* (HTML,
+  generator, and the wiring tests all landed in the same commit, the demo rebuild
+  #42), so this is not staleness: the emitted annotation does not survive into the
+  rendered chart. This is the data-object-vs-render gap that is the canonical
+  example motivating NEC-3.
+- **Why it's necessary**: Half-done feature — a chart that omits the pivot levels
+  the strategy reads its booleans off of misrepresents what it tested against
+  (a baseline expectation versus TradingView / QuantConnect), and the failure mode
+  here (emitted-but-not-drawn) currently passes CI green.
+- **Thin slice**: Using the NEC-3 scaffolding, add a deterministic assertion at the
+  *render boundary* (built `ChartSpec` → rendered image / legend) that a
+  pivot-referencing showcase-MA trade carries the pivot levels in the rendered
+  output, not merely in the returned annotation list. Make it pass — whether the
+  fix lands in wichtelm-app's spec build or an ha-track heerwisch render path — and
+  regenerate the showcase-MA report.
 - **Definition of done**: The regenerated showcase-MA report visibly shows the
   STANDARD daily pivot levels on the primary pane for pivot-referencing trades,
-  and every strategy-referenced MA overlay is present on its relevant frames —
-  confirmed by the committed report and a green `ChartSpec` assertion.
-- **Depends on**: NEC-3 (assertion scaffolding). NEC-2 should land first to avoid
-  regenerating the committed report twice.
+  guarded by a green *render-boundary* assertion (not just the existing
+  data-object assertion).
+- **Depends on**: NEC-3 (render-boundary assertion scaffolding). NEC-2 should land
+  first to avoid regenerating the committed report twice.
+- **Caveat (briefing vs verification)**: The original brief also assumed
+  `SMA(fast)` was missing on this demo — inferred from a single SHORT-trade
+  screenshot (trade #12, whose entry/exit scenarios reference only EMA + pivot, so
+  SMA is *correctly* absent from that one frame). Inspecting all 47 frame legends
+  shows `SMA(10)` (= `fast`) renders in 23 of them and `SMA(30)` in the lone frame
+  that references it, so SMA auto-plot works. NEC-1's scope was therefore narrowed
+  from "SMA + pivot missing" to "pivot levels emitted but not rendered." The
+  brief's companion premise that pivot R/S levels "render in other demos" was not
+  verifiable either: the dedicated pivot demo's chart legend is empty and no pivot
+  screenshot is committed.
 
 ### NEC-2: Decorative Bollinger Bands from the `stddev` Background series
 
@@ -113,8 +126,8 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
    lands red→green and can't silently regress; this is the missing discipline.
 2. **NEC-2** — subtract the decorative `BB(20)`; smallest, lowest-risk content
    change, and it settles what "correct contents" means before we add to them.
-3. **NEC-1** — add the missing pivot levels and verify per-trade overlay
-   completeness, guarded by NEC-3's assertions.
+3. **NEC-1** — fix the emitted-but-unrendered pivot levels, guarded by NEC-3's
+   render-boundary assertion (the data-object test already passes green).
 4. **NEC-4** — make the frame-header descriptor name exactly the now-correct
    rendered contents; must follow NEC-1 / NEC-2 since it describes their result.
 
