@@ -120,6 +120,48 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 - **Depends on**: NEC-1 and NEC-2 (final contents must be settled before naming
   them); NEC-3 (assertion scaffolding).
 
+### NEC-5: Win/loss counts reconstructed by rounding (metric correctness)
+
+- **Symptom**: `HtmlReportGenerator.winsAndLosses` (line 400) has no direct
+  win/loss counters from frau-holle's `BacktestMetrics` (v0.47.0-alpha exposes
+  `winRate` + `numTrades` only), so it reconstructs `wins = round(winRate ×
+  numTrades)` and `losses = numTrades − wins`. The rounding can yield an
+  off-by-one count that disagrees with the report's own trade list.
+- **Why it's necessary**: Correctness floor — silently wrong win/loss counts in a
+  backtest report are worse than a visual gap; a user cannot trust a tool whose
+  headline counts don't reconcile with its own trade list.
+- **Thin slice**: Once an additive frau-holle `wins()` / `losses()` (or
+  `winningTrades()` / `losingTrades()`) accessor on `BacktestMetrics` is published,
+  read the counts directly and delete the rounding round-trip plus the line-400
+  TODO. Blocked upstream until that accessor ships (see Upstream dependencies).
+- **Definition of done**: The report's `N wins · M losses` line is read from
+  frau-holle's direct counters (no rounding), `wins + losses == numTrades` holds
+  exactly for a backtest with a known split, and the line-400 TODO is gone.
+- **Depends on**: external — an additive frau-holle `BacktestMetrics` accessor
+  (ha-track release). Independent of the visual track (NEC-1 / 2 / 3 / 4).
+
+### NEC-6: Stale "not plotted" javadoc for window-aggregate overlays (doc reconciliation)
+
+- **Symptom**: `OverlayWiringTest` javadoc (lines 33–36) states window-aggregate
+  Background series (`highest_high` etc.) are "deliberately NOT plotted … until an
+  additive ha-track indicator lands," but ha-track 0.54's `RollingMax` /
+  `RollingMin` did land — `toIndicator` and the
+  `windowAggregatesMapToFieldMatchedRollingExtremumOverlays` test now plot them.
+  The comment contradicts the code it documents (and CLAUDE.md §7.5, which lists
+  the RollingMax / RollingMin overlays as present).
+- **Why it's necessary**: Half-done convention residue — a stale "deliberately NOT
+  done" comment misleads the next contributor into thinking a shipped feature is
+  still pending.
+- **Thin slice**: Rewrite the `OverlayWiringTest` javadoc to describe the
+  now-implemented `RollingMax` / `RollingMin` field-matched plotting (single
+  commit, doc-only, no behavior change).
+- **Definition of done**: The javadoc matches the code + tests (window aggregates
+  ARE plotted via `RollingMax` / `RollingMin` since 0.54).
+- **Depends on**: none. Kept stand-alone rather than folded into NEC-2: it touches
+  a different overlay family (window aggregates, not the `stddev` / BB band) and is
+  a doc-only one-commit change, so folding it in would muddy NEC-2's thin slice.
+  Fold into NEC-2 only if a single overlay-convention PR is preferred.
+
 ## Phase 1 — Proposed ordering
 
 1. **NEC-3** — build the visual-contract scaffolding first so every subsequent fix
@@ -130,6 +172,10 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
    render-boundary assertion (the data-object test already passes green).
 4. **NEC-4** — make the frame-header descriptor name exactly the now-correct
    rendered contents; must follow NEC-1 / NEC-2 since it describes their result.
+5. **NEC-5** — correctness floor; independent of the visual track but grouped in
+   Phase 1. Blocked on an upstream frau-holle accessor, so open that request early
+   and land the wichtelm-app side as soon as it ships.
+6. **NEC-6** — doc-only reconciliation; trivial, do last (or fold into NEC-2).
 
 ## Phase 2 — Beneficial
 
@@ -195,12 +241,24 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 - **Shared demo-regeneration overhead**: NEC-1, NEC-2, NEC-4, and BEN-2 each
   require regenerating the committed demo HTML (large files). Regenerating once,
   after NEC-4, avoids churning the committed reports repeatedly.
-- **Q2 repo-side TODOs (flagged, not auto-included pending confirmation)**:
-  (a) `HtmlReportGenerator.java:400` — `winsAndLosses` reconstructs win/loss
-  counts by rounding through `winRate`; gated on an additive frau-holle
-  `wins()` / `losses()` accessor (a metric-accuracy nicety).
-  (b) `OverlayWiringTest` javadoc (lines 33–36) still claims window aggregates are
-  "deliberately NOT plotted" while the code + tests now plot them via
-  `RollingMax` / `RollingMin` (ha-track 0.54) — a stale-comment reconciliation.
-  Neither is currently placed in Phase 1 or Phase 2; both await confirmation
-  before inclusion.
+- **Q2 repo-side TODOs — promoted into Phase 1**: the two items flagged from the
+  Q2 follow-up are confirmed and folded in as **NEC-5** (`winsAndLosses` rounding)
+  and **NEC-6** (stale window-aggregate javadoc), inserted after NEC-4. NEC-5 is
+  independent of the visual track but grouped here for correctness; NEC-6 is a
+  doc-only follow-on (may fold into NEC-2). No open GitHub issues exist in the repo.
+- **Upstream (ha-track) dependencies** — some increments need an additive ha-track
+  release before they can complete (wichtelm-app consumes published artifacts):
+  - **NEC-5 → frau-holle (hard blocker)**: requires `int wins()` / `int losses()`
+    (or `winningTrades()` / `losingTrades()`) on `BacktestMetrics`. The rounding
+    round-trip cannot be removed until this lands.
+  - **NEC-1 → heerwisch / jfreechart (likely)**: the renderer must actually draw
+    `Annotation.PivotPointLevels`. Other annotation types (EntryExitMarker,
+    TimeRangeHighlight, HorizontalLevel) already render, so pivots appear to be an
+    unimplemented annotation in the driver — confirm via NEC-1's render-boundary
+    investigation before opening the upstream change.
+  - **BEN-2 → heerwisch (conditional)**: surfacing pivot levels in
+    `ChartImage.legend()` needs heerwisch to legend annotation-based overlays
+    (today `legend()` lists indicators only).
+  - **NEC-2 → heerwisch (conditional)**: only if the chosen resolution
+    re-represents `stddev` as its own value — heerwisch has no standalone StdDev
+    sub-pane indicator. Dropping the BB overlay needs no upstream change.
