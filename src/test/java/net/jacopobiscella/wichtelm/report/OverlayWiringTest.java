@@ -183,4 +183,24 @@ class OverlayWiringTest {
                         Map.of("chan", new BigDecimal("8"))),
                 "period read from the strategy, not hardcoded");
     }
+
+    // ─── stddev series → StdDev σ sub-pane (0.55), not a Bollinger band ───────
+
+    @Test
+    void stddevMapsToAStdDevSubPaneNotBollingerBands() {
+        Indicator ind = HtmlReportGenerator.toIndicator("stddev(20)", Map.of());
+
+        assertEquals(new Indicator.StdDev(20, org.hatrack.commons.PriceSource.CLOSE), ind,
+                "stddev → StdDev(20, CLOSE) σ sub-pane");
+        assertTrue(!(ind instanceof Indicator.BollingerBands),
+                "stddev must NOT render as a Bollinger band: " + ind);
+    }
+
+    @Test
+    void stddevPeriodResolvesFromAParameter() {
+        assertEquals(new Indicator.StdDev(20, org.hatrack.commons.PriceSource.CLOSE),
+                HtmlReportGenerator.toIndicator("stddev(vol_period)",
+                        Map.of("vol_period", new BigDecimal("20"))),
+                "period read from the strategy, not hardcoded");
+    }
 }
