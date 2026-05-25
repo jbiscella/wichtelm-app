@@ -1,0 +1,44 @@
+name: CI
+
+# Runs the full test suite on every PR and on pushes to main. Both test
+# families execute together under the JUnit Platform via `mvn test`: the
+# JUnit Jupiter `*Test` classes and the Cucumber behavioral specs (the
+# Blocks 1-6 .feature files, driven by the RunCucumberTest platform suite).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (JUnit + Cucumber)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 25
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+
+      - name: Run tests (JUnit Jupiter + Cucumber)
+        run: mvn -B --no-transfer-progress test
+
+      - name: Upload surefire reports
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: surefire-reports
+          path: "**/target/surefire-reports/**"
+          if-no-files-found: warn

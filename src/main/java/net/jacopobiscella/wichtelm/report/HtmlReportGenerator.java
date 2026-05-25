@@ -1045,9 +1045,6 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                                      BigDecimal entryPrice, BigDecimal exitPrice,
                                      BigDecimal positionSize) {
         String title = isPrimary ? "Price · primary" : "Background · higher-TF";
-        String indicatorLabel = describeChartIndicators(timeframe, window.bars().size(), data);
-        String tag = isPrimary ? "trade window + ctx" : "multi-TF context";
-        boolean isLong = dirClass.equals("long");
         // Scheduled exit = the exit fill time matched a Scenario trigger.
         // Forced exit = the runtime closed at an explicit price (stop_loss,
         // take_profit, or end-of-series) so no Scenario trigger maps to it.
@@ -1056,6 +1053,11 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 ? scenarioByName.get(entryHit.scenarioName()) : null;
         StrategyScenario exitScenario = exitHit != null
                 ? scenarioByName.get(exitHit.scenarioName()) : null;
+        String indicatorLabel = describeChartIndicators(timeframe, window.bars().size(),
+                data.strategy(), data.parameters(), data.primarySeries(), isPrimary,
+                entryScenario, exitScenario, entryMarker);
+        String tag = isPrimary ? "trade window + ctx" : "multi-TF context";
+        boolean isLong = dirClass.equals("long");
         String img = renderHeerwischImage(renderer, window, timeframe, entryMarker, exitMarker,
                 isLong, exitScheduled, openTrade, isWin, data, isPrimary,
                 entryScenario, exitScenario, entryPrice, exitPrice, positionSize);
@@ -1408,24 +1410,47 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 .append(hex).append("\"></span>").append(esc(label)).append("</span>");
     }
 
-    private String describeChartIndicators(String timeframe, int barCount, ReportData data) {
+    /**
+     * The frame-header descriptor: {@code HA candles} plus the overlays and
+     * sub-panes actually drawn on this timeframe's chart. For the primary pane
+     * that is the Background-series indicators for the TF, the tier-B primitives'
+     * implied main-pane overlays (SMA / EMA) and sub-panes (RSI / MACD), and a
+     * {@code pivots} token when an entry/exit scenario references a pivot
+     * primitive — mirroring {@link #addIndicatorsForTimeframe} /
+     * {@link #tierBIndicators} / {@link #pivotAnnotations} (same minBars gate and
+     * identity dedup) so the header names exactly what the chart shows
+     * (CLAUDE.md §7.5). Higher-TF context panes carry only their Background series.
+     */
+    String describeChartIndicators(String timeframe, int barCount, ParsedStrategy strategy,
+                                   Map<String, BigDecimal> parameters, OHLCSeries primarySeries,
+                                   boolean isPrimary, StrategyScenario entryScenario,
+                                   StrategyScenario exitScenario, Instant entryMarker) {
         List<String> parts = new ArrayList<>();
         parts.add("HA candles");
-        Set<String> seen = new HashSet<>();
-        String primaryTf = data.strategy().primaryTimeframe().wire();
-        for (BackgroundSeries bg : data.strategy().backgroundSeries()) {
-            String tf = bg.timeframe().map(Timeframe::wire).orElse(primaryTf);
-            if (!tf.equals(timeframe)) {
-                continue;
+        List<Indicator> indicators = new ArrayList<>();
+        for (BackgroundSeries bg : seriesForTimeframe(timeframe, strategy)) {
+            Indicator ind = toIndicator(bg.expression(), parameters);
+            if (ind != null) {
+                indicators.add(ind);
             }
-            Indicator ind = toIndicator(bg.expression(), data.parameters());
-            if (ind == null || barCount < ind.minBars()) {
+        }
+        if (isPrimary) {
+            indicators.addAll(tierBIndicators(parameters, entryScenario, exitScenario));
+        }
+        Set<String> seenKey = new HashSet<>();
+        Set<String> seenDesc = new HashSet<>();
+        for (Indicator ind : indicators) {
+            if (barCount < ind.minBars() || !seenKey.add(ind.toString())) {
                 continue;
             }
             String desc = describeIndicator(ind);
-            if (seen.add(desc)) {
+            if (seenDesc.add(desc)) {
                 parts.add(desc);
             }
+        }
+        if (isPrimary && !pivotAnnotations(isPrimary, primarySeries, entryMarker,
+                entryScenario, exitScenario).isEmpty()) {
+            parts.add("pivots");
         }
         return String.join(" · ", parts);
     }
@@ -1459,7 +1484,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         int bars = underlying.bars().size();
         Set<String> addedKey = new HashSet<>();
         List<Indicator> indicators = new ArrayList<>();
-        for (BackgroundSeries series : seriesForTimeframe(timeframeLabel, data)) {
+        for (BackgroundSeries series : seriesForTimeframe(timeframeLabel, data.strategy())) {
             Indicator indicator = toIndicator(series.expression(), data.parameters());
             if (indicator != null) {
                 indicators.add(indicator);
@@ -1683,10 +1708,10 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         return new OHLCBar(open.time(), open.open(), high, low, close.close(), Optional.empty());
     }
 
-    private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ReportData data) {
-        String primaryTf = data.strategy().primaryTimeframe().wire();
+    private List<BackgroundSeries> seriesForTimeframe(String timeframeLabel, ParsedStrategy strategy) {
+        String primaryTf = strategy.primaryTimeframe().wire();
         List<BackgroundSeries> hits = new ArrayList<>();
-        for (BackgroundSeries series : data.strategy().backgroundSeries()) {
+        for (BackgroundSeries series : strategy.backgroundSeries()) {
             String seriesTf = series.timeframe().map(Timeframe::wire).orElse(primaryTf);
             if (seriesTf.equals(timeframeLabel)) {
                 hits.add(series);

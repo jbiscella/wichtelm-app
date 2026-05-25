@@ -1,7 +1,9 @@
 package net.jacopobiscella.wichtelm.report;
 
 import net.jacopobiscella.wichtelm.strategy.FirstClassCondition;
+import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.PositionPrecondition;
+import net.jacopobiscella.wichtelm.strategy.StrategyParser;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import org.hatrack.commons.OHLCBar;
@@ -30,10 +32,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
  * directly, which a raster-PNG assertion on the rendered chart could never
  * reach.
  *
- * <p>Window-aggregate Background series ({@code highest_high} etc.) are
- * deliberately NOT plotted: heerwisch has no rolling-extremum indicator, and a
- * single-snapshot {@code HorizontalLevel} misrepresents a stepping channel, so
- * they stay unplotted until an additive ha-track indicator lands.
+ * <p>Window-aggregate Background series ({@code highest_high}, {@code lowest_low},
+ * {@code highest_close}, {@code lowest_close}) ARE plotted, as field-matched
+ * {@code RollingMax} / {@code RollingMin} channel overlays (ha-track 0.54), pinned
+ * by {@link #windowAggregatesMapToFieldMatchedRollingExtremumOverlays}.
  */
 class OverlayWiringTest {
 
@@ -236,5 +238,58 @@ class OverlayWiringTest {
 
         assertEquals(0, new BigDecimal("70").compareTo(r.overbought()), "default overbought 70");
         assertEquals(0, new BigDecimal("30").compareTo(r.oversold()), "default oversold 30");
+    }
+
+    // ─── frame-header descriptor names the chart's actual contents (§7.5) ─────
+
+    private static StrategyScenario entrySteps(String... stepTexts) {
+        java.util.List<StrategyStep> steps = new java.util.ArrayList<>();
+        for (int i = 0; i < stepTexts.length; i++) {
+            steps.add(new StrategyStep(i == 0 ? "When" : "And", stepTexts[i], i + 1));
+        }
+        return new StrategyScenario("Enter", PositionPrecondition.NO_OPEN_POSITION, steps,
+                FirstClassCondition.LONG_ENTRY, Optional.empty(), Optional.empty(), 1);
+    }
+
+    private static ParsedStrategy primaryOnlyStrategy(String primaryTf) {
+        return StrategyParser.parse(
+                "Feature: Header descriptor\n"
+                        + "  Primary timeframe: " + primaryTf + "\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 1\n"
+                        + "    Then long_entry\n",
+                "header.strat");
+    }
+
+    @Test
+    void primaryHeaderNamesTierBOverlaysSubPanesAndPivots() {
+        OHLCSeries series = dailySeries(200);
+        StrategyScenario entryScenario = entrySteps(
+                "price_above_sma(10)", "price_above_ema(30)", "rsi_oversold(30)",
+                "price_above_pivot(R1)");
+
+        String header = generator.describeChartIndicators("1d", series.bars().size(),
+                primaryOnlyStrategy("1d"), Map.of(), series, true,
+                entryScenario, null, series.bars().get(150).time());
+
+        assertTrue(header.startsWith("HA candles"), header);
+        assertTrue(header.contains("SMA(10)"), "SMA overlay named: " + header);
+        assertTrue(header.contains("EMA(30)"), "EMA overlay named: " + header);
+        assertTrue(header.contains("RSI(14)"), "RSI sub-pane named: " + header);
+        assertTrue(header.contains("pivots"), "pivot levels named: " + header);
+    }
+
+    @Test
+    void higherTimeframePaneNamesOnlyItsBackgroundSeriesNotPrimaryTierBOverlays() {
+        OHLCSeries series = dailySeries(60);
+        StrategyScenario entryScenario = entrySteps("price_above_sma(10)", "price_above_pivot(R1)");
+
+        String header = generator.describeChartIndicators("1d", series.bars().size(),
+                primaryOnlyStrategy("1h"), Map.of(), series, false,
+                entryScenario, null, series.bars().get(40).time());
+
+        assertEquals("HA candles", header,
+                "higher-TF context pane shows no primary-pane tier-B overlays/pivots: " + header);
     }
 }
