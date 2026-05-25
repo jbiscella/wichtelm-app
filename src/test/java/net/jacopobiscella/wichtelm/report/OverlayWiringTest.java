@@ -203,4 +203,38 @@ class OverlayWiringTest {
                         Map.of("vol_period", new BigDecimal("20"))),
                 "period read from the strategy, not hardcoded");
     }
+
+    // ─── rsi_overbought(N)/rsi_oversold(N) → RSI sub-pane zone matches trigger ──
+
+    private static Indicator.RSI rsiOf(List<Indicator> inds) {
+        return inds.stream().filter(i -> i instanceof Indicator.RSI)
+                .map(i -> (Indicator.RSI) i).findFirst().orElseThrow();
+    }
+
+    @Test
+    void rsiThresholdsThreadFromLiteralsIntoTheDangerZone() {
+        Indicator.RSI r = rsiOf(generator.tierBIndicators(
+                Map.of(), entry("rsi_overbought(65)"), entry("rsi_oversold(35)")));
+
+        assertEquals(0, new BigDecimal("65").compareTo(r.overbought()), "overbought zone = trigger");
+        assertEquals(0, new BigDecimal("35").compareTo(r.oversold()), "oversold zone = trigger");
+    }
+
+    @Test
+    void rsiThresholdsResolveFromParameters() {
+        Indicator.RSI r = rsiOf(generator.tierBIndicators(
+                Map.of("overbought", new BigDecimal("65"), "oversold", new BigDecimal("35")),
+                entry("rsi_overbought(overbought)"), entry("rsi_oversold(oversold)")));
+
+        assertEquals(0, new BigDecimal("65").compareTo(r.overbought()));
+        assertEquals(0, new BigDecimal("35").compareTo(r.oversold()));
+    }
+
+    @Test
+    void rsiCrosses50KeepsTheDefaultZones() {
+        Indicator.RSI r = rsiOf(generator.tierBIndicators(Map.of(), entry("rsi_crosses_50()")));
+
+        assertEquals(0, new BigDecimal("70").compareTo(r.overbought()), "default overbought 70");
+        assertEquals(0, new BigDecimal("30").compareTo(r.oversold()), "default oversold 30");
+    }
 }

@@ -1503,6 +1503,8 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                                     StrategyScenario... scenarios) {
         boolean macd = false;
         boolean rsi = false;
+        BigDecimal rsiOverbought = DEFAULT_RSI_OVERBOUGHT;
+        BigDecimal rsiOversold = DEFAULT_RSI_OVERSOLD;
         List<Indicator> out = new ArrayList<>();
         for (StrategyScenario scenario : scenarios) {
             if (scenario == null) {
@@ -1517,6 +1519,18 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 if (t.contains("rsi_overbought") || t.contains("rsi_oversold")
                         || t.contains("rsi_crosses_50")) {
                     rsi = true;
+                    // Thread the actual threshold from rsi_overbought(N) /
+                    // rsi_oversold(N) into the sub-pane so the shaded danger zone
+                    // matches the trigger (N may be a literal or a parameter); the
+                    // unspecified side keeps the 70 / 30 convention.
+                    Matcher call = INDICATOR_CALL.matcher(t);
+                    if (call.matches()) {
+                        if (call.group(1).equals("rsi_overbought")) {
+                            rsiOverbought = resolveThreshold(call.group(2), parameters, rsiOverbought);
+                        } else if (call.group(1).equals("rsi_oversold")) {
+                            rsiOversold = resolveThreshold(call.group(2), parameters, rsiOversold);
+                        }
+                    }
                 }
                 // MA-trend-filter primitives plot their underlying MA(s) on the
                 // main pane (price_*_sma → SMA, price_*_ema → EMA, sma_*_ema →
@@ -1528,10 +1542,28 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             addUnique(out, new Indicator.MACD(12, 26, 9, PriceSource.CLOSE));
         }
         if (rsi) {
-            addUnique(out, new Indicator.RSI(14, DEFAULT_RSI_OVERBOUGHT, DEFAULT_RSI_OVERSOLD,
+            addUnique(out, new Indicator.RSI(14, rsiOverbought, rsiOversold,
                     PriceSource.CLOSE, Optional.of(Indicator.RsiVisualization.DANGER_ZONES_ON)));
         }
         return out;
+    }
+
+    /** Resolve an RSI threshold arg (literal or parameter name) to its value, else the fallback. */
+    private static BigDecimal resolveThreshold(String rawArg, Map<String, BigDecimal> params,
+                                               BigDecimal fallback) {
+        String a = rawArg.trim();
+        if (a.isEmpty()) {
+            return fallback;
+        }
+        BigDecimal fromParam = params.get(a);
+        if (fromParam != null) {
+            return fromParam;
+        }
+        try {
+            return new BigDecimal(a);
+        } catch (NumberFormatException notNumeric) {
+            return fallback;
+        }
     }
 
     private static void addMaIndicators(String stepText, Map<String, BigDecimal> parameters,
