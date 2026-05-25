@@ -31,15 +31,18 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 - **Thin slice**: Using the NEC-3 scaffolding, add a deterministic assertion at the
   *render boundary* (built `ChartSpec` → rendered image / legend) that a
   pivot-referencing showcase-MA trade carries the pivot levels in the rendered
-  output, not merely in the returned annotation list. Make it pass — whether the
-  fix lands in wichtelm-app's spec build or an ha-track heerwisch render path — and
-  regenerate the showcase-MA report.
+  output, not merely in the returned annotation list. The fix lands in
+  **wichtelm-app's spec build** (not upstream): Increment #2 confirms heerwisch
+  already renders `Annotation.PivotPointLevels` unchanged, so the gap is that the
+  emitted annotation does not reach the rendered `ChartSpec` from wichtelm's side.
+  Make it pass and regenerate the showcase-MA report.
 - **Definition of done**: The regenerated showcase-MA report visibly shows the
   STANDARD daily pivot levels on the primary pane for pivot-referencing trades,
   guarded by a green *render-boundary* assertion (not just the existing
   data-object assertion).
 - **Depends on**: NEC-3 (render-boundary assertion scaffolding). NEC-2 should land
-  first to avoid regenerating the committed report twice.
+  first to avoid regenerating the committed report twice. **No upstream blocker** —
+  Increment #2 confirms the heerwisch pivot renderer needs no change.
 - **Caveat (briefing vs verification)**: The original brief also assumed
   `SMA(fast)` was missing on this demo — inferred from a single SHORT-trade
   screenshot (trade #12, whose entry/exit scenarios reference only EMA + pivot, so
@@ -75,8 +78,9 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 - **Definition of done**: The regenerated showcase-MA frames show a σ sub-pane line
   (header reads `σ(20)`, with a legend entry) and no `BB(20)`; a green assertion
   enforces the `stddev → StdDev` mapping.
-- **Depends on**: heerwisch `Indicator.StdDev` (hard upstream — see Upstream
-  dependencies); NEC-3 for the assertion scaffolding.
+- **Depends on**: heerwisch `Indicator.StdDev` — **validated upstream (Increment
+  #4), pending Maven Central release** (see Upstream dependencies); NEC-3 for the
+  assertion scaffolding. Consumption deferred until the release is published.
 
 
 ### NEC-3: Visual-contract regression coverage gap
@@ -142,8 +146,10 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
 - **Definition of done**: The report's `N wins · M losses` line is read from
   frau-holle's direct counters (no rounding), `wins + losses == numTrades` holds
   exactly for a backtest with a known split, and the line-400 TODO is gone.
-- **Depends on**: external — an additive frau-holle `BacktestMetrics` accessor
-  (ha-track release). Independent of the visual track (NEC-1 / 2 / 3 / 4).
+- **Depends on**: external — an additive frau-holle `BacktestMetrics`
+  `winningTrades()` / `losingTrades()` accessor, **validated upstream (Increment #1),
+  pending Maven Central release** (see Upstream dependencies). Independent of the
+  visual track (NEC-1 / 2 / 3 / 4); consumption deferred until the release ships.
 
 ### NEC-6: Stale "not plotted" javadoc for window-aggregate overlays (doc reconciliation)
 
@@ -222,7 +228,9 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
   referenced overlays from context overlays and includes pivot levels, enforced by
   a green assertion on a referenced overlay's tag.
 - **Depends on**: NEC-2 resolution (whether context indicators are kept at all);
-  pairs with NEC-4 (the descriptor / legend pairing).
+  pairs with NEC-4 (the descriptor / legend pairing). Pivot-in-legend is served by
+  heerwisch `ChartImage.annotationLegend()` — **validated upstream (Increment #3),
+  pending Maven Central release** (see Upstream dependencies).
 
 ## Phase 2 — Proposed ordering
 
@@ -254,22 +262,34 @@ brief, or (b) observed directly in the committed `demo/reports/*.html` and
   independent of the visual track but grouped here for correctness; NEC-6 is a
   doc-only follow-on (may fold into NEC-2). No open GitHub issues exist in the repo.
 - **Upstream (ha-track) dependencies** — some increments need an additive ha-track
-  release before they can complete (wichtelm-app consumes published artifacts):
-  - **NEC-5 → frau-holle (hard blocker)**: requires `int wins()` / `int losses()`
-    (or `winningTrades()` / `losingTrades()`) on `BacktestMetrics`. The rounding
-    round-trip cannot be removed until this lands.
-  - **NEC-1 → heerwisch / jfreechart (likely)**: the renderer must actually draw
-    `Annotation.PivotPointLevels`. Other annotation types (EntryExitMarker,
-    TimeRangeHighlight, HorizontalLevel) already render, so pivots appear to be an
-    unimplemented annotation in the driver — confirm via NEC-1's render-boundary
-    investigation before opening the upstream change.
-  - **BEN-2 → heerwisch (conditional)**: surfacing pivot levels in
-    `ChartImage.legend()` needs heerwisch to legend annotation-based overlays
-    (today `legend()` lists indicators only).
-  - **NEC-2 → heerwisch (hard blocker, resolved scope)**: requires an additive
+  release before they can complete (wichtelm-app consumes published artifacts).
+  **Status (validated, pending release):** all four upstream pieces below have been
+  built and visually validated in the ha-track repo (increment screenshots #1–#4),
+  but are **not yet published to Maven Central**. The current pin stays
+  `0.54.0-alpha`; the `<hatrack.version>` bump and every wichtelm-app consumption
+  remain deferred until the release lands. No wichtelm-app code has changed.
+  - **NEC-5 → frau-holle `BacktestMetrics` (validated, pending release)**: the
+    additive `winningTrades()` / `losingTrades()` accessors are built and validated
+    upstream (Increment #1 — `trades=13 winningTrades=8 losingTrades=5
+    winRate=0.615`, `wins+losses==trades`). Once published, read the counts directly
+    and delete the rounding round-trip + line-400 TODO. The rounding round-trip
+    cannot be removed until this lands.
+  - **NEC-1 → heerwisch / jfreechart (RESOLVED — no upstream change needed)**:
+    Increment #2 confirms the renderer already draws `Annotation.PivotPointLevels`
+    (STANDARD P / R1–R3 / S1–S3) with **no ha-track change**. The earlier
+    "unimplemented driver annotation" hypothesis is therefore disproven: NEC-1 is a
+    **wichtelm-app-only** fix — the emitted annotation must survive into the rendered
+    `ChartSpec` from wichtelm's spec-build path. Not blocked upstream.
+  - **BEN-2 → heerwisch (validated, pending release)**: surfacing pivot levels in the
+    legend is served by the additive `ChartImage.annotationLegend()` API (label +
+    line colour), validated upstream (Increment #3 — `Pivot Points (STANDARD)`,
+    `Entry ref` drawn as a consumer-rendered legend strip). Once published, BEN-2
+    consumes it; pending release.
+  - **NEC-2 → heerwisch (validated, pending release)**: the additive
     `Indicator.StdDev(int period, PriceSource)` variant of the sealed `Indicator`
-    type — a subplot σ line (population σ, divisor = period, matching
-    `BarIndicatorSource.stddev`), jfreechart driver rendering, and a `LegendEntry`.
-    Baseline pin is ha-track `0.54.0-alpha`; target the next additive release. The
-    faithful-fix decision (not dropping the overlay) makes this a hard dependency,
-    not optional.
+    type — subplot σ line (population σ, divisor = period, matching
+    `BarIndicatorSource.stddev`), jfreechart driver rendering, and a legend entry —
+    is built and validated upstream (Increment #4 — `Indicator.StdDev(20, CLOSE)` as
+    a driver-rendered `σ(20)` sub-pane, with `legend()` showing `SMA(20)` and
+    `σ(20)`). Baseline pin `0.54.0-alpha`; the faithful-fix decision makes this a
+    hard dependency. Consumption pending release.
