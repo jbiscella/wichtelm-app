@@ -1257,9 +1257,11 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
             }
             ChartImage image = renderer.render(builder.build());
             String base64 = Base64.getEncoder().encodeToString(image.bytes());
+            Set<Indicator> referenced = referencedIndicators(data.strategy(), data.parameters(),
+                    timeframeLabel, entryScenario, exitScenario, isPrimary);
             return "<img alt=\"" + esc(timeframeLabel) + " price chart\" src=\"data:"
                     + esc(image.contentType()) + ";base64," + base64 + "\"/>"
-                    + legendStrip(image);
+                    + legendStrip(image, referenced);
         } catch (ChartRenderException e) {
             throw new ReportGenerationException(
                     "chart rendering failed for timeframe " + timeframeLabel, e);
@@ -1379,7 +1381,7 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
      * two classes are distinguishable. Each entry carries the exact line colour
      * the renderer used ({@code rgb}); empty when the chart has neither.
      */
-    private String legendStrip(ChartImage image) {
+    String legendStrip(ChartImage image, Set<Indicator> referenced) {
         List<LegendEntry> indicators = image.legend();
         List<AnnotationLegendEntry> annotations = image.annotationLegend();
         boolean hasIndicators = indicators != null && !indicators.isEmpty();
@@ -1390,7 +1392,16 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         StringBuilder out = new StringBuilder("<div class=\"chart-legend\">");
         if (hasIndicators) {
             for (LegendEntry entry : indicators) {
-                appendLegendItem(out, "leg", entry.rgb(), entry.label());
+                // Tag each overlay by whether THIS trade's entry/exit scenarios
+                // evaluate it (BEN-2): tier-B primitive overlays and Background
+                // series named in this trade's steps read `referenced`; every
+                // other plotted overlay (e.g. a Background series this trade does
+                // not consult) reads `context`. The tag is per-trade by design —
+                // the same indicator can be referenced on one trade and context
+                // on another.
+                boolean ref = referenced.contains(entry.placement().indicator());
+                appendLegendItem(out, ref ? "leg leg-referenced" : "leg leg-context",
+                        entry.rgb(), entry.label());
             }
         }
         if (hasAnnotations) {
@@ -1408,6 +1419,65 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         String hex = String.format(Locale.ROOT, "#%06x", rgb & 0xFFFFFF);
         out.append("<span class=\"").append(cssClass).append("\"><span class=\"sw\" style=\"background:")
                 .append(hex).append("\"></span>").append(esc(label)).append("</span>");
+    }
+
+    /**
+     * The overlays a trade's entry/exit scenarios actually evaluate (BEN-2) on
+     * the {@code timeframe} of the chart frame being rendered: the tier-B
+     * primitives' implied indicators (primary pane only) plus any Background
+     * series ON THIS TIMEFRAME whose name appears in this trade's entry/exit
+     * condition steps. "Referenced" means consulted by the matched scenarios —
+     * every step of an AND-chain counts, since the report knows which scenarios
+     * fired, not which individual steps did (it does not re-evaluate conditions
+     * bar-by-bar). Every other plotted overlay is context.
+     *
+     * <p>The set is scoped to the frame's timeframe because the legend is
+     * rendered per frame and two Background series on different timeframes can
+     * compile to the same {@link Indicator} value (e.g. {@code sma(10)} on the
+     * primary TF and {@code sma(10)} on {@code 1d}). A frame-global set matched
+     * by indicator identity would tag the unreferenced one as referenced.
+     */
+    Set<Indicator> referencedIndicators(ParsedStrategy strategy, Map<String, BigDecimal> parameters,
+                                        String timeframe, StrategyScenario entryScenario,
+                                        StrategyScenario exitScenario, boolean isPrimary) {
+        Set<Indicator> referenced = new HashSet<>();
+        if (isPrimary) {
+            referenced.addAll(tierBIndicators(parameters, entryScenario, exitScenario));
+        }
+        for (BackgroundSeries bg : seriesForTimeframe(timeframe, strategy)) {
+            if (!seriesReferencedByTrade(bg.name(), entryScenario, exitScenario)) {
+                continue;
+            }
+            Indicator ind = toIndicator(bg.expression(), parameters);
+            if (ind != null) {
+                referenced.add(ind);
+            }
+        }
+        return referenced;
+    }
+
+    static boolean seriesReferencedByTrade(String name, StrategyScenario... scenarios) {
+        Pattern token = Pattern.compile("\\b" + Pattern.quote(name) + "\\b");
+        for (StrategyScenario scenario : scenarios) {
+            if (scenario == null) {
+                continue;
+            }
+            for (StrategyStep step : scenario.conditionSteps()) {
+                // Strip function-call argument lists (rsi(14), price_above_sma(len), …)
+                // before matching: a Background series is referenced as a bare
+                // identifier (e.g. `close is above trend`), never as a function
+                // ARGUMENT — those are periods / thresholds / pivot tokens /
+                // parameters. This stops a like-named parameter passed to a
+                // primitive from being mistaken for a series reference, while bare
+                // and arithmetic-paren references (`close is above (trend + 5)`)
+                // still match, since they are not preceded by a function name.
+                String withoutCallArgs = step.text().replaceAll("\\b\\w+\\([^()]*\\)", " ");
+                if (token.matcher(withoutCallArgs).find()) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /**

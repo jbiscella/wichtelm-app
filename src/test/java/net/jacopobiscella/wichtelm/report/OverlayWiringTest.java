@@ -9,8 +9,14 @@ import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.commons.PivotPointVariant;
+import org.hatrack.commons.PriceSource;
 import org.hatrack.heerwisch.api.spec.Annotation;
+import org.hatrack.heerwisch.api.spec.AnnotationLegendEntry;
+import org.hatrack.heerwisch.api.spec.ChartImage;
 import org.hatrack.heerwisch.api.spec.Indicator;
+import org.hatrack.heerwisch.api.spec.IndicatorPlacement;
+import org.hatrack.heerwisch.api.spec.LegendEntry;
+import org.hatrack.heerwisch.api.spec.Pane;
 import org.junit.jupiter.api.Test;
 
 import java.math.BigDecimal;
@@ -19,6 +25,7 @@ import java.time.Instant;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -291,5 +298,209 @@ class OverlayWiringTest {
 
         assertEquals("HA candles", header,
                 "higher-TF context pane shows no primary-pane tier-B overlays/pivots: " + header);
+    }
+
+    // ─── BEN-2: legend tags overlays referenced-by-this-trade vs context ──────
+
+    private static ParsedStrategy strategyWithVolSeries() {
+        return StrategyParser.parse(
+                "Feature: Referenced vs context\n"
+                        + "  Primary timeframe: 1d\n\n"
+                        + "  Background:\n"
+                        + "    Given a series vol defined as stddev(20)\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 1\n"
+                        + "    Then long_entry\n",
+                "ref.strat");
+    }
+
+    @Test
+    void withinTimeframeReferencedIsOrAcrossSourcesForTheSameIndicator() {
+        // Background `vol = sma(10)` and a tier-B `price_above_sma(10)` on the
+        // same timeframe both compile to SMA(10) — one deduped legend entry. It
+        // must read referenced if EITHER source is referenced by this trade.
+        ParsedStrategy strategy = StrategyParser.parse(
+                "Feature: Within-TF OR\n"
+                        + "  Primary timeframe: 1d\n\n"
+                        + "  Background:\n"
+                        + "    Given a series vol defined as sma(10)\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 1\n"
+                        + "    Then long_entry\n",
+                "withintf.strat");
+        Indicator sma10 = new Indicator.SMA(10, PriceSource.CLOSE);
+
+        // Only the tier-B source references it (the `vol` series name is absent).
+        assertTrue(generator.referencedIndicators(strategy, Map.of(), "1d",
+                        entrySteps("price_above_sma(10)"), null, true).contains(sma10),
+                "referenced via the tier-B source alone");
+        // Only the Background source references it (no tier-B primitive present).
+        assertTrue(generator.referencedIndicators(strategy, Map.of(), "1d",
+                        entrySteps("vol is above 1"), null, true).contains(sma10),
+                "referenced via the Background-series source alone");
+        // Neither references it → context.
+        assertTrue(!generator.referencedIndicators(strategy, Map.of(), "1d",
+                        entrySteps("close is above 1"), null, true).contains(sma10),
+                "neither source references it → not referenced");
+    }
+
+    @Test
+    void haPatternOnlyStrategyHasNoOverlayIndicatorsToTag() {
+        // HA primitives plot nothing of their own (they live on the HA candles),
+        // so an HA-only strategy yields no overlay indicators — hence no
+        // referenced/context entries at all (only trade annotations remain).
+        assertTrue(generator.tierBIndicators(Map.of(), entry("ha_doji()")).isEmpty(),
+                "ha_doji adds no overlay");
+        assertTrue(generator.tierBIndicators(Map.of(), entry("ha_strong_bullish()")).isEmpty(),
+                "ha_strong_bullish adds no overlay");
+        ParsedStrategy haOnly = StrategyParser.parse(
+                "Feature: HA only\n"
+                        + "  Primary timeframe: 1d\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When ha_doji()\n"
+                        + "    Then long_entry\n",
+                "haonly.strat");
+        assertTrue(generator.referencedIndicators(haOnly, Map.of(), "1d",
+                        entry("ha_doji()"), null, true).isEmpty(),
+                "HA-only strategy has no overlay indicators to tag");
+    }
+
+    @Test
+    void referencedSetCoversTierBOverlaysAndTradeNamedBackgroundSeries() {
+        Set<Indicator> referenced = generator.referencedIndicators(
+                strategyWithVolSeries(), Map.of(), "1d",
+                entrySteps("price_above_sma(10)", "vol is above 1"), null, true);
+
+        assertTrue(referenced.contains(new Indicator.SMA(10, PriceSource.CLOSE)),
+                "tier-B SMA overlay is referenced: " + referenced);
+        assertTrue(referenced.contains(new Indicator.StdDev(20, PriceSource.CLOSE)),
+                "Background series named in this trade's steps is referenced: " + referenced);
+    }
+
+    @Test
+    void backgroundSeriesNotNamedByThisTradeIsNotReferenced() {
+        Set<Indicator> referenced = generator.referencedIndicators(
+                strategyWithVolSeries(), Map.of(), "1d",
+                entrySteps("price_above_sma(10)"), null, true);
+
+        assertTrue(referenced.contains(new Indicator.SMA(10, PriceSource.CLOSE)), "" + referenced);
+        assertTrue(!referenced.contains(new Indicator.StdDev(20, PriceSource.CLOSE)),
+                "a Background series this trade does not consult is context, not referenced: " + referenced);
+    }
+
+    @Test
+    void seriesUsedOnlyAsAFunctionArgumentIsNotMistakenForAReference() {
+        // "len" appears only as a primitive's period argument, not as a series
+        // reference, so a like-named Background series must stay context.
+        assertTrue(!HtmlReportGenerator.seriesReferencedByTrade(
+                "len", entrySteps("price_above_sma(len)")),
+                "a function-argument token is not a series reference");
+        // A genuine bare reference is still detected…
+        assertTrue(HtmlReportGenerator.seriesReferencedByTrade(
+                "trend", entrySteps("close is above trend")),
+                "bare series reference is detected");
+        // …including inside arithmetic parentheses (not a function call).
+        assertTrue(HtmlReportGenerator.seriesReferencedByTrade(
+                "trend", entrySteps("close is above (trend + 5)")),
+                "arithmetic-paren series reference survives the function-arg strip");
+    }
+
+    @Test
+    void referencedSetIsScopedPerTimeframeForIdenticalCrossTfIndicators() {
+        // Two Background series compile to the SAME Indicator (sma(10)) on
+        // different timeframes; the trade references only the primary one.
+        ParsedStrategy strategy = StrategyParser.parse(
+                "Feature: Multi-TF legend\n"
+                        + "  Primary timeframe: 1h\n\n"
+                        + "  Background:\n"
+                        + "    Given a series fast defined as sma(10)\n"
+                        + "    And a series slow defined as sma(10) on 1d\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 1\n"
+                        + "    Then long_entry\n",
+                "multitf.strat");
+        StrategyScenario entry = entrySteps("close is above fast"); // names fast (1h), not slow (1d)
+        Indicator sma10 = new Indicator.SMA(10, PriceSource.CLOSE);
+
+        Set<Indicator> primary = generator.referencedIndicators(strategy, Map.of(), "1h", entry, null, true);
+        Set<Indicator> higher = generator.referencedIndicators(strategy, Map.of(), "1d", entry, null, false);
+
+        assertTrue(primary.contains(sma10), "the referenced primary SMA(10) is referenced: " + primary);
+        assertTrue(!higher.contains(sma10),
+                "the identical 1d SMA(10) the trade does not reference stays context: " + higher);
+    }
+
+    @Test
+    void legendStripTagsReferencedAndContextEntries() {
+        Indicator sma = new Indicator.SMA(10, PriceSource.CLOSE);
+        Indicator sigma = new Indicator.StdDev(20, PriceSource.CLOSE);
+        ChartImage image = new ChartImage(new byte[]{1}, "image/png", 900, 460, List.of(
+                new LegendEntry(new IndicatorPlacement(sma, Pane.MAIN), "SMA(10)", 0x112233, Pane.MAIN),
+                new LegendEntry(new IndicatorPlacement(sigma, Pane.SUBPLOT_1), "σ(20)", 0x445566,
+                        Pane.SUBPLOT_1)));
+
+        String html = generator.legendStrip(image, Set.of(sma)); // SMA referenced, σ context
+
+        int smaAt = html.indexOf("SMA(10)");
+        int sigmaAt = html.indexOf("σ(20)");
+        assertTrue(smaAt >= 0 && sigmaAt >= 0, html);
+        assertTrue(html.lastIndexOf("leg-referenced", smaAt) > html.lastIndexOf("leg-context", smaAt),
+                "SMA(10) is tagged referenced: " + html);
+        assertTrue(html.lastIndexOf("leg-context", sigmaAt) > html.lastIndexOf("leg-referenced", sigmaAt),
+                "σ(20) is tagged context: " + html);
+    }
+
+    @Test
+    void bothSourcesReferencingSameIndicatorYieldOneReferencedDedupedEntry() {
+        // Background `vol = sma(10)` AND tier-B `price_above_sma(10)` both compile
+        // to SMA(10); the chart dedups them to ONE legend entry. The union set
+        // must keep that single entry `referenced` (guards against a future
+        // "dedup overwrites the tag with the last-seen source" regression).
+        ParsedStrategy strategy = StrategyParser.parse(
+                "Feature: Both sources\n"
+                        + "  Primary timeframe: 1d\n\n"
+                        + "  Background:\n"
+                        + "    Given a series vol defined as sma(10)\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 1\n"
+                        + "    Then long_entry\n",
+                "both.strat");
+        Indicator sma10 = new Indicator.SMA(10, PriceSource.CLOSE);
+        StrategyScenario entry = entrySteps("price_above_sma(10)", "vol is above 1");
+
+        Set<Indicator> referenced = generator.referencedIndicators(strategy, Map.of(), "1d",
+                entry, null, true);
+        assertTrue(referenced.contains(sma10), "union of both sources contains SMA(10): " + referenced);
+
+        ChartImage image = new ChartImage(new byte[]{1}, "image/png", 900, 460, List.of(
+                new LegendEntry(new IndicatorPlacement(sma10, Pane.MAIN), "SMA(10)", 0x1976d2, Pane.MAIN)));
+        String html = generator.legendStrip(image, referenced);
+
+        assertEquals(1, html.split("SMA\\(10\\)", -1).length - 1, "exactly one deduped chip: " + html);
+        assertTrue(html.contains("leg-referenced"), "the deduped entry is referenced: " + html);
+        assertTrue(!html.contains("leg-context"), "and not context: " + html);
+    }
+
+    @Test
+    void legendWithNoOverlayIndicatorsRendersNoReferencedOrContextChips() {
+        // HA-pattern-only trade: no indicator overlays, only trade annotations.
+        // The strip shows the annotation entries and zero referenced/context
+        // chips — not a present-but-empty "referenced" section.
+        ChartImage withAnnotationsOnly = new ChartImage(new byte[]{1}, "image/png", 900, 460,
+                List.of(), List.of(new AnnotationLegendEntry("Entry 100.00", 0x595959)));
+        String html = generator.legendStrip(withAnnotationsOnly, Set.of());
+        assertTrue(!html.contains("leg-referenced") && !html.contains("leg-context"),
+                "no overlays → no referenced/context chips: " + html);
+        assertTrue(html.contains("leg-annotation") && html.contains("Entry 100.00"),
+                "annotation entries still render: " + html);
+
+        // Nothing to show at all → the strip is omitted entirely (empty string).
+        ChartImage empty = new ChartImage(new byte[]{1}, "image/png", 900, 460, List.of(), List.of());
+        assertTrue(generator.legendStrip(empty, Set.of()).isEmpty(), "empty legend → strip omitted");
     }
 }

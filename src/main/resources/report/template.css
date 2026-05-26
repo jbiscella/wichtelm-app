@@ -140,6 +140,10 @@ details.trigger[open] .chev{transform:rotate(180deg);color:var(--ink)}
 .chart-legend .sw{display:inline-block;width:14px;height:3px;border-radius:1px}
 .chart-legend .leg-divider{align-self:stretch;width:1px;background:var(--border);margin:0 2px}
 .chart-legend .leg-annotation{font-style:italic;color:var(--ink-faint)}
+.chart-legend .leg-referenced{color:var(--ink);font-weight:500}
+/* muted, but ≥4.5:1 on the surface (WCAG AA small-text) — darker than --ink-faint */
+.chart-legend .leg-context{color:#6b6960}
+.chart-legend .leg-context::after{content:" \00b7 ctx";opacity:.75}
 .ch-foot{display:flex;justify-content:space-between;padding:0 14px 10px;font-family:var(--mono);font-size:10.5px;color:var(--ink-faint)}
 .ch-foot .mk{display:inline-flex;align-items:center;gap:6px}
 .ch-foot .mk .tri{width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent}
