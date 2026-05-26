@@ -315,6 +315,59 @@ class OverlayWiringTest {
     }
 
     @Test
+    void withinTimeframeReferencedIsOrAcrossSourcesForTheSameIndicator() {
+        // Background `vol = sma(10)` and a tier-B `price_above_sma(10)` on the
+        // same timeframe both compile to SMA(10) — one deduped legend entry. It
+        // must read referenced if EITHER source is referenced by this trade.
+        ParsedStrategy strategy = StrategyParser.parse(
+                "Feature: Within-TF OR\n"
+                        + "  Primary timeframe: 1d\n\n"
+                        + "  Background:\n"
+                        + "    Given a series vol defined as sma(10)\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 1\n"
+                        + "    Then long_entry\n",
+                "withintf.strat");
+        Indicator sma10 = new Indicator.SMA(10, PriceSource.CLOSE);
+
+        // Only the tier-B source references it (the `vol` series name is absent).
+        assertTrue(generator.referencedIndicators(strategy, Map.of(), "1d",
+                        entrySteps("price_above_sma(10)"), null, true).contains(sma10),
+                "referenced via the tier-B source alone");
+        // Only the Background source references it (no tier-B primitive present).
+        assertTrue(generator.referencedIndicators(strategy, Map.of(), "1d",
+                        entrySteps("vol is above 1"), null, true).contains(sma10),
+                "referenced via the Background-series source alone");
+        // Neither references it → context.
+        assertTrue(!generator.referencedIndicators(strategy, Map.of(), "1d",
+                        entrySteps("close is above 1"), null, true).contains(sma10),
+                "neither source references it → not referenced");
+    }
+
+    @Test
+    void haPatternOnlyStrategyHasNoOverlayIndicatorsToTag() {
+        // HA primitives plot nothing of their own (they live on the HA candles),
+        // so an HA-only strategy yields no overlay indicators — hence no
+        // referenced/context entries at all (only trade annotations remain).
+        assertTrue(generator.tierBIndicators(Map.of(), entry("ha_doji()")).isEmpty(),
+                "ha_doji adds no overlay");
+        assertTrue(generator.tierBIndicators(Map.of(), entry("ha_strong_bullish()")).isEmpty(),
+                "ha_strong_bullish adds no overlay");
+        ParsedStrategy haOnly = StrategyParser.parse(
+                "Feature: HA only\n"
+                        + "  Primary timeframe: 1d\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When ha_doji()\n"
+                        + "    Then long_entry\n",
+                "haonly.strat");
+        assertTrue(generator.referencedIndicators(haOnly, Map.of(), "1d",
+                        entry("ha_doji()"), null, true).isEmpty(),
+                "HA-only strategy has no overlay indicators to tag");
+    }
+
+    @Test
     void referencedSetCoversTierBOverlaysAndTradeNamedBackgroundSeries() {
         Set<Indicator> referenced = generator.referencedIndicators(
                 strategyWithVolSeries(), Map.of(), "1d",
