@@ -338,6 +338,23 @@ class OverlayWiringTest {
     }
 
     @Test
+    void seriesUsedOnlyAsAFunctionArgumentIsNotMistakenForAReference() {
+        // "len" appears only as a primitive's period argument, not as a series
+        // reference, so a like-named Background series must stay context.
+        assertTrue(!HtmlReportGenerator.seriesReferencedByTrade(
+                "len", entrySteps("price_above_sma(len)")),
+                "a function-argument token is not a series reference");
+        // A genuine bare reference is still detected…
+        assertTrue(HtmlReportGenerator.seriesReferencedByTrade(
+                "trend", entrySteps("close is above trend")),
+                "bare series reference is detected");
+        // …including inside arithmetic parentheses (not a function call).
+        assertTrue(HtmlReportGenerator.seriesReferencedByTrade(
+                "trend", entrySteps("close is above (trend + 5)")),
+                "arithmetic-paren series reference survives the function-arg strip");
+    }
+
+    @Test
     void referencedSetIsScopedPerTimeframeForIdenticalCrossTfIndicators() {
         // Two Background series compile to the SAME Indicator (sma(10)) on
         // different timeframes; the trade references only the primary one.

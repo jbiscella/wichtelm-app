@@ -1456,14 +1456,23 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
         return referenced;
     }
 
-    private static boolean seriesReferencedByTrade(String name, StrategyScenario... scenarios) {
+    static boolean seriesReferencedByTrade(String name, StrategyScenario... scenarios) {
         Pattern token = Pattern.compile("\\b" + Pattern.quote(name) + "\\b");
         for (StrategyScenario scenario : scenarios) {
             if (scenario == null) {
                 continue;
             }
             for (StrategyStep step : scenario.conditionSteps()) {
-                if (token.matcher(step.text()).find()) {
+                // Strip function-call argument lists (rsi(14), price_above_sma(len), …)
+                // before matching: a Background series is referenced as a bare
+                // identifier (e.g. `close is above trend`), never as a function
+                // ARGUMENT — those are periods / thresholds / pivot tokens /
+                // parameters. This stops a like-named parameter passed to a
+                // primitive from being mistaken for a series reference, while bare
+                // and arithmetic-paren references (`close is above (trend + 5)`)
+                // still match, since they are not preceded by a function name.
+                String withoutCallArgs = step.text().replaceAll("\\b\\w+\\([^()]*\\)", " ");
+                if (token.matcher(withoutCallArgs).find()) {
                     return true;
                 }
             }
