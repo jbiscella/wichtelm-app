@@ -11,6 +11,7 @@ import org.hatrack.commons.OHLCSeries;
 import org.hatrack.commons.PivotPointVariant;
 import org.hatrack.commons.PriceSource;
 import org.hatrack.heerwisch.api.spec.Annotation;
+import org.hatrack.heerwisch.api.spec.AnnotationLegendEntry;
 import org.hatrack.heerwisch.api.spec.ChartImage;
 import org.hatrack.heerwisch.api.spec.Indicator;
 import org.hatrack.heerwisch.api.spec.IndicatorPlacement;
@@ -451,5 +452,55 @@ class OverlayWiringTest {
                 "SMA(10) is tagged referenced: " + html);
         assertTrue(html.lastIndexOf("leg-context", sigmaAt) > html.lastIndexOf("leg-referenced", sigmaAt),
                 "σ(20) is tagged context: " + html);
+    }
+
+    @Test
+    void bothSourcesReferencingSameIndicatorYieldOneReferencedDedupedEntry() {
+        // Background `vol = sma(10)` AND tier-B `price_above_sma(10)` both compile
+        // to SMA(10); the chart dedups them to ONE legend entry. The union set
+        // must keep that single entry `referenced` (guards against a future
+        // "dedup overwrites the tag with the last-seen source" regression).
+        ParsedStrategy strategy = StrategyParser.parse(
+                "Feature: Both sources\n"
+                        + "  Primary timeframe: 1d\n\n"
+                        + "  Background:\n"
+                        + "    Given a series vol defined as sma(10)\n\n"
+                        + "  Scenario: Enter\n"
+                        + "    Given no open position\n"
+                        + "    When close is above 1\n"
+                        + "    Then long_entry\n",
+                "both.strat");
+        Indicator sma10 = new Indicator.SMA(10, PriceSource.CLOSE);
+        StrategyScenario entry = entrySteps("price_above_sma(10)", "vol is above 1");
+
+        Set<Indicator> referenced = generator.referencedIndicators(strategy, Map.of(), "1d",
+                entry, null, true);
+        assertTrue(referenced.contains(sma10), "union of both sources contains SMA(10): " + referenced);
+
+        ChartImage image = new ChartImage(new byte[]{1}, "image/png", 900, 460, List.of(
+                new LegendEntry(new IndicatorPlacement(sma10, Pane.MAIN), "SMA(10)", 0x1976d2, Pane.MAIN)));
+        String html = generator.legendStrip(image, referenced);
+
+        assertEquals(1, html.split("SMA\\(10\\)", -1).length - 1, "exactly one deduped chip: " + html);
+        assertTrue(html.contains("leg-referenced"), "the deduped entry is referenced: " + html);
+        assertTrue(!html.contains("leg-context"), "and not context: " + html);
+    }
+
+    @Test
+    void legendWithNoOverlayIndicatorsRendersNoReferencedOrContextChips() {
+        // HA-pattern-only trade: no indicator overlays, only trade annotations.
+        // The strip shows the annotation entries and zero referenced/context
+        // chips — not a present-but-empty "referenced" section.
+        ChartImage withAnnotationsOnly = new ChartImage(new byte[]{1}, "image/png", 900, 460,
+                List.of(), List.of(new AnnotationLegendEntry("Entry 100.00", 0x595959)));
+        String html = generator.legendStrip(withAnnotationsOnly, Set.of());
+        assertTrue(!html.contains("leg-referenced") && !html.contains("leg-context"),
+                "no overlays → no referenced/context chips: " + html);
+        assertTrue(html.contains("leg-annotation") && html.contains("Entry 100.00"),
+                "annotation entries still render: " + html);
+
+        // Nothing to show at all → the strip is omitted entirely (empty string).
+        ChartImage empty = new ChartImage(new byte[]{1}, "image/png", 900, 460, List.of(), List.of());
+        assertTrue(generator.legendStrip(empty, Set.of()).isEmpty(), "empty legend → strip omitted");
     }
 }

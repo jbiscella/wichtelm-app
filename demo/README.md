@@ -56,6 +56,15 @@ Each run writes a new timestamped HTML file under `demo/reports/` (reports are
 never overwritten); the committed `tstx-*` / `tstc-*-report.html` files are
 stable copies.
 
+**Always regenerate the committed `tstx-*` / `tstc-*-report.html` reports from
+CSV after any change that affects report rendering** (the generator, the report
+template/CSS, or the demo strategies/data), and commit them — otherwise the
+committed reference reports drift silently from the code. Regenerate in this
+canonical environment (where `GoldenChartImageTest` passes, so chart PNGs are
+stable): run each `demo/tstx-*.toml` / `demo/tstc-*.toml`, then rename each
+fresh `{config}_{timestamp}.html` to its committed `{config}-report.html`.
+EODHD-derived reports are never committed (see below).
+
 ## The synthetic data
 
 `GenerateData.java` is a deterministic, JDK-only single-file program (it lives
