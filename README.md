@@ -8,7 +8,7 @@
   <a href="https://github.com/jbiscella/wichtelm-app/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/github/actions/workflow/status/jbiscella/wichtelm-app/ci.yml?branch=main&style=flat-square&logo=githubactions&logoColor=white&label=CI"></a>
   <img alt="Java 25" src="https://img.shields.io/badge/Java-25-ED8B00?style=flat-square&logo=openjdk&logoColor=white">
   <img alt="Build: Maven" src="https://img.shields.io/badge/build-Maven-C71A36?style=flat-square&logo=apachemaven&logoColor=white">
-  <img alt="Version" src="https://img.shields.io/badge/version-0.1.0--SNAPSHOT-blue?style=flat-square">
+  <img alt="Version" src="https://img.shields.io/badge/version-0.42.0--alpha-blue?style=flat-square">
   <a href="LICENSE"><img alt="License: 0BSD" src="https://img.shields.io/badge/license-0BSD-2ea44f?style=flat-square"></a>
   <img alt="Domain: backtesting" src="https://img.shields.io/badge/domain-backtesting-7B61FF?style=flat-square">
   <img alt="Charts: Heikin-Ashi" src="https://img.shields.io/badge/charts-Heikin--Ashi-0E7C66?style=flat-square">

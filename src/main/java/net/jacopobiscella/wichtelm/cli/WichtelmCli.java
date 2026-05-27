@@ -35,7 +35,7 @@ import java.util.function.UnaryOperator;
  */
 public final class WichtelmCli {
 
-    static final String VERSION = "0.1.0-SNAPSHOT";
+    static final String VERSION = "0.42.0-alpha";
     static final int EXIT_SUCCESS = 0;
     static final int EXIT_ERROR = 1;
     static final int EXIT_USAGE = 2;
