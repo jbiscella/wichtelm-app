@@ -477,7 +477,7 @@ The output directory is resolved in this order, highest first:
 
 <p align="center">
   <img src="docs/screenshots/report-overview.png" alt="Top of a generated HTML report: header, strategy summary, and the strategy rules block" width="820"><br>
-  <sub><em>Top of a generated report — masthead with the strategy / symbol / window line and the disclaimer, followed by the strategy rules block rendered in the same Gherkin DSL the strategy was authored in.</em></sub>
+  <sub><em>Top of a generated report — masthead with the strategy / symbol / window line and the disclaimer, followed by a human-readable strategy-rules summary (a normalized Given / When / Then rendering of each scenario, not the verbatim <code>.strat</code> source).</em></sub>
 </p>
 
 Each run writes a new, self-contained HTML file — reports are **never**
