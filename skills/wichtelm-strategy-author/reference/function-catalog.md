@@ -55,14 +55,19 @@ These evaluate to a boolean, so they stand alone as a step (`When ha_doji()`,
 
 ### Heikin-Ashi
 
-| Primitive | Args | Default when 0-arg |
+| Primitive | Args | Detection settings |
 |---|---|---|
-| `ha_doji()` or `ha_doji(maxBodyRatio)` | 0 or 1 | `maxBodyRatio = 0.1` |
-| `ha_strong()` or `ha_strong(...)` | 0 or 1 | `wickTolerance = 0.05, minBodyRatio = 0.6` |
-| `ha_strong_bullish()` | 0 | same detection as `ha_strong`, bullish subtype |
-| `ha_strong_bearish()` | 0 | same detection as `ha_strong`, bearish subtype |
-| `ha_bullish_reversal(streak)` | 1 | — |
-| `ha_bearish_reversal(streak)` | 1 | — |
+| `ha_doji()` or `ha_doji(maxBodyRatio)` | 0 or 1 | tunable; default `maxBodyRatio = 0.1` |
+| `ha_strong()` | 0 | fixed `wickTolerance = 0.05, minBodyRatio = 0.6` (see note) |
+| `ha_strong_bullish()` | 0 | same fixed detection as `ha_strong`, bullish subtype |
+| `ha_strong_bearish()` | 0 | same fixed detection as `ha_strong`, bearish subtype |
+| `ha_bullish_reversal(streak)` | 1 | tunable streak |
+| `ha_bearish_reversal(streak)` | 1 | tunable streak |
+
+> Note: `ha_doji` is tunable — its optional `maxBodyRatio` argument is honored. The
+> `ha_strong*` primitives are **not** tunable: their thresholds are fixed at `0.05` / `0.6`.
+> The parser tolerates an argument to `ha_strong(...)`, but the runtime ignores it, so call it
+> as `ha_strong()` and don't rely on a passed value.
 
 ### RSI level
 

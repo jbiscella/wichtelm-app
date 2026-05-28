@@ -55,11 +55,16 @@ api_token_env = "EODHD_API_TOKEN"        # NAME of an env var; never the token i
 | C6 | `sizing.pyramiding` defaults to `false` |
 | C7 | `[parameters]` keys must match `Parameter` names in the strategy (unknown key → error; missing → uses the default) |
 | C8 | csv: `[csv].file` required and **must contain `{symbol}`** (a literal path without it is rejected); placeholders only in the file name, parent dir must exist |
-| C9 | eodhd: `[eodhd].api_token_env` required; the named env var must be set at run time |
+| C9 | eodhd: `[eodhd].api_token_env` is required (a missing/blank key is a parse error); whether the *named env var* is actually set is checked later, at run time (see below) |
 | C10 | `output.format` must be `"html"` in v1 |
 | C11 | unknown top-level keys → warning, not an error |
 
-A violation throws a `ConfigParseException` naming the offending key and rule.
+A parse-time violation throws a `ConfigParseException` naming the offending key and rule.
+One thing to keep separate: for C9, only a missing/blank `api_token_env` *key* is a parse
+error. If the key is present but the **environment variable it names is unset/empty**, that is
+not caught at parse time — it surfaces at run time as a `DataSourceUnavailableException` (the
+error still names the missing variable). So a config can parse cleanly and still fail the run
+because `EODHD_API_TOKEN` isn't exported.
 
 ### Data sources
 
@@ -69,8 +74,11 @@ A violation throws a `ConfigParseException` naming the offending key and rule.
 - **eodhd** — live EODHD HTTPS API. The token is read at run time from the env var named by
   `api_token_env`; it is never written in the config. `export EODHD_API_TOKEN=...` before running.
 
-> Note: a global preferences file (`~/.config/wichtelm/config.toml`) is described in the spec
-> but is **not read by the CLI in v1** — settings come from the per-backtest config and CLI flags.
+> Note: the spec (CLAUDE.md §5.3) defines a global preferences file at
+> `~/.config/wichtelm/config.toml` (XDG standard) holding defaults that a per-backtest config
+> overrides. Be aware that the v1 CLI does **not yet read** this file (as documented in the
+> project README) — in v1, settings come from the per-backtest config and CLI flags, so don't
+> rely on global preferences for a working run until that lands.
 
 ## CLI
 

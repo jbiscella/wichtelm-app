@@ -394,10 +394,10 @@ The skill contains:
 - **`reference/guided-builder.md`** — a menu-driven flow that builds a strategy
   **clause by clause**: it asks one question at a time, offers only valid
   choices, and assembles + validates the `.strat` as you go.
-- **`examples/`** — six ready-to-adapt strategies based on the most common
-  Heikin-Ashi + indicator combinations (HA + RSI, HA + 200-EMA + ATR stop,
-  HA + MACD, HA + moving-average crossover, multi-timeframe HA), plus the
-  canonical reference.
+- **`examples/`** — six ready-to-adapt strategies pairing Heikin-Ashi with a
+  confirming indicator (HA + RSI, HA + 200-EMA + ATR stop, HA + MACD,
+  HA + moving-average crossover, multi-timeframe HA), plus the canonical
+  reference. Illustrative starting points, not tuned strategies.
 
 To use it, upload the `skills/wichtelm-strategy-author/` folder to Claude
 (Settings → Capabilities → Skills) or zip it and add it as a skill, then ask

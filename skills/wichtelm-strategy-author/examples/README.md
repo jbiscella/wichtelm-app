@@ -1,17 +1,17 @@
 # Example strategies
 
-Six ready-to-adapt `.strat` files. The five `ha-*` examples are built from the
-**most frequently used Heikin-Ashi + indicator combinations** reported across trading
-guides (Alchemy Markets, LuxAlgo, QuantVPS, Opofinance, FMZ/Medium, XS.com). The recurring
-advice is: *never trade Heikin-Ashi alone* — its smoothing lags, so pair it with a momentum
-or trend indicator for confirmation. Each example does exactly that.
+Six ready-to-adapt `.strat` files. The five `ha-*` examples pair Heikin-Ashi with a
+confirming indicator — a well-established principle in trading-education material, since HA
+smoothing lags and is prone to false signals when used on its own. Each example combines an
+HA signal with a momentum or trend filter. These are illustrative starting points, **not**
+tuned or recommended strategies, and carry no claim about real-world performance.
 
 All six **parse cleanly** (`wichtelm validate <file>` → exit 0). Adapt one rather than
 starting from a blank page.
 
 | File | Popular combo | Primary TF | Catalog features exercised |
 |---|---|---|---|
-| `ha-rsi-reversal.strat` | HA reversal confirmed by an RSI extreme (the #1 cited pairing) | 1h | `ha_bullish_reversal` / `ha_bearish_reversal`, `rsi_oversold` / `rsi_overbought`, `ha_strong_*` exits, % stop/take, OR-logic via duplicate scenarios |
+| `ha-rsi-reversal.strat` | HA reversal confirmed by an RSI extreme | 1h | `ha_bullish_reversal` / `ha_bearish_reversal`, `rsi_oversold` / `rsi_overbought`, `ha_strong_*` exits, % stop/take, OR-logic via duplicate scenarios |
 | `ha-ema200-atr.strat` | HA + 200-EMA trend filter + ATR stop (SL 1.5×ATR / TP 2.5×ATR) | 1d | `price_above_ema` / `price_below_ema`, `price_crosses_*_ema`, `ha_strong_bullish` / `ha_strong_bearish`, `atr_value(period)` stops, warmup suppression |
 | `ha-macd.strat` | HA momentum confirmed by a MACD cross | 4h | `macd_bullish_cross` / `macd_bearish_cross`, `macd_zero_cross_up` / `macd_zero_cross_down`, `ha_strong_*`, % stop/take |
 | `ha-ma-crossover.strat` | HA + moving-average crossover (golden/death-cross style) | 1d | `sma_crosses_above_ema` / `sma_crosses_below_ema`, `price_crosses_below_sma`, `ha_strong_*`, % stop/take |

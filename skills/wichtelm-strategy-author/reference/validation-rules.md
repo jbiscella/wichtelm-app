@@ -23,7 +23,7 @@ failure and to self-check a strategy before handing it back.
 | **P8** | higher-TF strictly above primary | `Background series timeframe must be strictly higher than the primary timeframe` | Use a larger TF (e.g. `on 1d` when primary is `1h`). |
 | **P9** | scenario non-empty | `Scenario must contain at least one step` | Add steps. |
 | **P10** | terminates with a first-class condition | `Scenario must terminate with 'Then <long_entry\|long_exit\|short_entry\|short_exit>'` / `Scenario must contain exactly one Then step` | End with exactly one of the four conditions. |
-| **P11** | only stop/take may follow `Then` | `only 'And with stop_loss at' / 'And with take_profit at' may follow Then` | Don't put other steps after `Then`. |
+| **P11** | (spec rule) entries *may* append stop/take after `Then` | no distinct diagnostic — a non-stop/take step after `Then` is **reported as P10** with `only 'And with stop_loss at' / 'And with take_profit at' may follow Then` | Only `And with stop_loss at` / `And with take_profit at` may follow `Then`. |
 | **P12** | no stop/take on exits | `stop_loss/take_profit clauses are not allowed on exit Scenarios` | Move protective clauses to the entry scenario. |
 | **P13** | identifiers resolve | `undeclared identifier: <word>` / `undeclared identifier in Background series: <word>` | Declare it as a parameter/series, or use a known variable. (`entry_time` does not exist.) |
 | **P14** | function name + arity; pivot/Tier-B usage | `unknown function: <name>` / `function <name> expects <n> argument(s) but got <m>` / `<word> is a boolean pivot primitive and may only be used as a complete When/And step` | Use a catalog function with the right arg count; keep pivot/Tier-B primitives as bare steps. |

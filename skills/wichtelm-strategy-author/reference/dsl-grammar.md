@@ -25,11 +25,16 @@ Feature: <name>
   Scenario: <unique name>
     Given <precondition>
     When <condition>
-    And  <condition>
+    And <condition>
     Then <long_entry|long_exit|short_entry|short_exit>
     And with stop_loss at <expression>
     And with take_profit at <expression>
 ```
+
+> **Comments must be on their own line.** The parser skips only *whole-line* `#` comments; it
+> does not strip inline `# ...` text. `Primary timeframe: 1h   # primary` or
+> `Parameter p default 14  # period` fails to parse because the comment is read as part of the
+> value. Keep any explanation on a separate `#` line.
 
 ## Primary timeframe (required)
 
@@ -40,9 +45,11 @@ token like `1m`, `5m`, `15m`, `1h`, `4h`, `1d`, `1w` (number + unit; `m`=minute,
 ## Parameters
 
 ```gherkin
-Parameter rsi_period default 14      # integer (no decimal point)
-Parameter stop_loss_pct default 2.5  # decimal
+Parameter rsi_period default 14
+Parameter stop_loss_pct default 2.5
 ```
+
+`rsi_period` infers an integer (no decimal point); `stop_loss_pct` infers a decimal.
 
 Type is inferred from the literal. Names must be valid identifiers (letter/underscore start)
 and unique (P4). Values in the `.strat` are *defaults*; the TOML config can override any of
@@ -74,9 +81,12 @@ must be consistent with the terminal condition:
 
 ```gherkin
 Background:
-  Given a series trend defined as ema(trend_period) on 1d   # higher-TF series
-  And a series rsi_value defined as rsi(rsi_period)         # primary-TF named expression
+  Given a series trend defined as ema(trend_period) on 1d
+  And a series rsi_value defined as rsi(rsi_period)
 ```
+
+The first line is a higher-timeframe series (`on 1d`); the second is a primary-timeframe named
+expression (no `on <TF>`).
 
 - A series **without** `on <TF>` is a named expression on the primary timeframe — handy for
   reusing or renaming an indicator (e.g. `rsi_value`).

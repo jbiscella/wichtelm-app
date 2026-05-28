@@ -6,8 +6,8 @@ Feature: Heikin-Ashi Reversal Confirmed by RSI
   Parameter stop_loss_pct default 2
   Parameter take_profit_pct default 4
 
-  # The most-cited Heikin-Ashi pairing: an HA colour-change reversal is acted on
-  # only when RSI confirms an exhausted move. Two exit paths per side demonstrate
+  # A common Heikin-Ashi pairing: an HA colour-change reversal is acted on only
+  # when RSI confirms an exhausted move. Two exit paths per side demonstrate
   # OR-logic (duplicate scenarios sharing the same Then). HA alone lags, so the
   # RSI confirmation is what keeps the entries honest.
 

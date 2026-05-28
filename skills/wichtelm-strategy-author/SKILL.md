@@ -35,9 +35,9 @@ strategies, not the person building the app.
      commands and exit codes, and how to read the HTML report.
    - `reference/guided-builder.md` — a menu-driven, clause-by-clause flow for building a
      strategy interactively (see "Guided vs direct" below).
-2. **Start from a worked example.** `examples/` contains five strategies built from the
-   most common Heikin-Ashi + indicator combinations, plus the canonical reference. Adapt
-   one rather than writing from a blank page. See `examples/README.md` for which is which.
+2. **Start from a worked example.** `examples/` contains five strategies pairing Heikin-Ashi
+   with a confirming indicator, plus the canonical reference. Adapt one rather than writing
+   from a blank page. See `examples/README.md` for which is which.
 3. **Self-check against the rules before handing back a strategy.** Mentally run the
    "Non-negotiable rules" checklist below; if anything is uncertain, cite the specific
    P-rule. Tell the user they can verify with `wichtelm validate <file>.strat` (exit 0 =
@@ -59,20 +59,28 @@ Choose the mode that fits the user:
 
 ```gherkin
 Feature: <strategy name>
-  Primary timeframe: <TF>                 # mandatory, e.g. 1h, 4h, 1d, 1w
-  Parameter <name> default <number>       # optional, repeatable
+  Primary timeframe: <TF>
+  Parameter <name> default <number>
 
-  Background:                             # optional
+  Background:
     Given a series <name> defined as <expression> [on <higher-TF>]
 
   Scenario: <unique name>
     Given <position precondition>
     When <condition step>
-    And  <condition step>                 # steps are AND-ed
+    And <condition step>
     Then <long_entry | long_exit | short_entry | short_exit>
-    And with stop_loss at <expression>    # entries only, optional
-    And with take_profit at <expression>  # entries only, optional
+    And with stop_loss at <expression>
+    And with take_profit at <expression>
 ```
+
+- `Primary timeframe:` is mandatory (e.g. `1h`, `4h`, `1d`, `1w`); the `Background:` block,
+  `Parameter` lines, and the `stop_loss` / `take_profit` clauses (entries only) are optional.
+- Steps within a scenario are AND-ed.
+- **Comments must be on their own line.** The parser only skips *whole-line* `#` comments — an
+  inline `# ...` after `Primary timeframe:`, a `Parameter` default, or any clause is read as
+  part of that line and breaks parsing. Put explanatory text on a separate `#` line, not at
+  the end of a clause.
 
 ## Authoring workflow
 
@@ -86,8 +94,7 @@ Feature: <strategy name>
 5. **Write exit scenarios** — one per way out. The precondition must match the side
    (`Given a long position is open` → `Then long_exit`).
 6. **Use Heikin-Ashi + a confirming indicator**, never HA alone — HA lags, so pair it with
-   RSI / MACD / a moving average (see the examples and the research note in
-   `examples/README.md`).
+   RSI / MACD / a moving average (see the examples and the note in `examples/README.md`).
 7. **Validate against the rules** (checklist below), then suggest `wichtelm validate`.
 8. **Write the TOML config** (`reference/config-cli-report.md`) and show the run command.
 
