@@ -1,0 +1,48 @@
+Feature: Heikin-Ashi Reversal Confirmed by RSI
+  Primary timeframe: 1h
+  Parameter reversal_streak default 3
+  Parameter oversold default 30
+  Parameter overbought default 70
+  Parameter stop_loss_pct default 2
+  Parameter take_profit_pct default 4
+
+  # The most-cited Heikin-Ashi pairing: an HA colour-change reversal is acted on
+  # only when RSI confirms an exhausted move. Two exit paths per side demonstrate
+  # OR-logic (duplicate scenarios sharing the same Then). HA alone lags, so the
+  # RSI confirmation is what keeps the entries honest.
+
+  Scenario: Enter long on a bullish HA reversal from oversold
+    Given no open position
+    When ha_bullish_reversal(reversal_streak)
+    And rsi_oversold(oversold)
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 + take_profit_pct / 100)
+
+  Scenario: Exit long when RSI reaches overbought
+    Given a long position is open
+    When rsi_overbought(overbought)
+    Then long_exit
+
+  Scenario: Exit long on a strong bearish HA candle
+    Given a long position is open
+    When ha_strong_bearish()
+    Then long_exit
+
+  Scenario: Enter short on a bearish HA reversal from overbought
+    Given no open position
+    When ha_bearish_reversal(reversal_streak)
+    And rsi_overbought(overbought)
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 - take_profit_pct / 100)
+
+  Scenario: Exit short when RSI reaches oversold
+    Given a short position is open
+    When rsi_oversold(oversold)
+    Then short_exit
+
+  Scenario: Exit short on a strong bullish HA candle
+    Given a short position is open
+    When ha_strong_bullish()
+    Then short_exit

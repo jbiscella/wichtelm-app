@@ -1,0 +1,40 @@
+Feature: Multi-Timeframe Heikin-Ashi with Daily Trend Filter
+  Primary timeframe: 1h
+  Parameter daily_trend_period default 50
+  Parameter reversal_streak default 3
+  Parameter stop_loss_pct default 1.5
+  Parameter take_profit_pct default 3
+
+  # Trade hourly Heikin-Ashi reversals, but only in the direction of the daily
+  # EMA trend. The daily series is resolved lookahead-safely from the most
+  # recently CLOSED daily bar, so no future information leaks into an hourly
+  # decision. The higher timeframe (1d) must be strictly above the primary (1h).
+
+  Background:
+    Given a series daily_trend defined as ema(daily_trend_period) on 1d
+
+  Scenario: Enter long on an hourly bullish HA reversal in a daily uptrend
+    Given no open position
+    When ha_bullish_reversal(reversal_streak)
+    And close is above daily_trend
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 + take_profit_pct / 100)
+
+  Scenario: Exit long on a strong bearish HA candle
+    Given a long position is open
+    When ha_strong_bearish()
+    Then long_exit
+
+  Scenario: Enter short on an hourly bearish HA reversal in a daily downtrend
+    Given no open position
+    When ha_bearish_reversal(reversal_streak)
+    And close is below daily_trend
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 - take_profit_pct / 100)
+
+  Scenario: Exit short on a strong bullish HA candle
+    Given a short position is open
+    When ha_strong_bullish()
+    Then short_exit
