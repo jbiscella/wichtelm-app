@@ -407,10 +407,10 @@ the repo root:
 ( cd skills && zip -r ../wichtelm-strategy-author.zip wichtelm-strategy-author )
 ```
 
-Then, on a plan with code execution (Pro, Max, Team, or Enterprise): enable code execution
-in **Settings → Capabilities**, open **Customize → Skills**, click **+ → Create skill**,
-and upload the `.zip`. The exact menu labels vary by plan/version, so see the Claude Help
-Center's [How to create custom Skills](https://support.claude.com/en/articles/12512198-how-to-create-custom-skills)
+Then, on any plan (Free, Pro, Max, Team, or Enterprise): enable **Code execution and file
+creation** in **Settings → Capabilities**, open **Customize → Skills**, click **+ → Create
+skill**, and upload the `.zip`. The exact menu labels vary by plan/version, so see the Claude
+Help Center's [How to create custom Skills](https://support.claude.com/en/articles/12512198-how-to-create-custom-skills)
 for the current steps. Once it's added, ask Claude to help you build a strategy.
 
 ---
