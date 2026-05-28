@@ -36,6 +36,11 @@ No Java required. The application is built on top of the `ha-track`
 > comfortable on the command line and want to express strategies in readable
 > prose rather than code.
 
+<p align="center">
+  <img src="docs/screenshots/report-trade-detail.png" alt="Per-trade chart frame from a generated HTML report" width="820"><br>
+  <sub><em>A per-trade card from a generated report — HA candles, strategy-referenced SMA / EMA overlays on the main pane, σ sub-pane, entry / exit markers, dashed Entry / Stop / Exit reference lines, and the referenced-vs-context legend.</em></sub>
+</p>
+
 ---
 
 ## Table of contents
@@ -467,6 +472,11 @@ The output directory is resolved in this order, highest first:
 
 ## The HTML report
 
+<p align="center">
+  <img src="docs/screenshots/report-overview.png" alt="Top of a generated HTML report: header, strategy summary, and the strategy rules block" width="820"><br>
+  <sub><em>Top of a generated report — masthead with the strategy / symbol / window line and the disclaimer, followed by the strategy rules block rendered in the same Gherkin DSL the strategy was authored in.</em></sub>
+</p>
+
 Each run writes a new, self-contained HTML file — reports are **never**
 overwritten. The file name is:
 
@@ -605,7 +615,9 @@ The following are **not** implemented in v1:
 - User-defined DSL functions and macros
 - Output formats other than HTML
 - Boolean and String parameter types
-- Indicators or window aggregates inside `stop_loss` / `take_profit` clauses
+- Indicators or window aggregates inside `stop_loss` / `take_profit` clauses,
+  **except** `atr_value(period)` — the frozen-at-fill ATR accessor that
+  graduated into stop / take scope in the 0.52 increment
 - Trailing stops
 - Literal `[csv].file` paths without the `{symbol}` placeholder
 - Parallel execution of multiple backtests in one invocation
