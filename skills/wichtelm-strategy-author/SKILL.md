@@ -33,6 +33,8 @@ strategies, not the person building the app.
      to debug a `StrategyParseException`.
    - `reference/config-cli-report.md` — the TOML config schema (rules C1–C11), the CLI
      commands and exit codes, and how to read the HTML report.
+   - `reference/guided-builder.md` — a menu-driven, clause-by-clause flow for building a
+     strategy interactively (see "Guided vs direct" below).
 2. **Start from a worked example.** `examples/` contains five strategies built from the
    most common Heikin-Ashi + indicator combinations, plus the canonical reference. Adapt
    one rather than writing from a blank page. See `examples/README.md` for which is which.
@@ -40,6 +42,18 @@ strategies, not the person building the app.
    "Non-negotiable rules" checklist below; if anything is uncertain, cite the specific
    P-rule. Tell the user they can verify with `wichtelm validate <file>.strat` (exit 0 =
    clean).
+
+## Guided vs direct authoring
+
+Choose the mode that fits the user:
+
+- **Guided builder (default when the user is unsure or open-ended).** If someone says "help me
+  make a strategy", "I don't know the syntax", or otherwise seems unsure, offer to build it
+  with them and follow `reference/guided-builder.md`: ask one question per turn, present a
+  short numbered menu of catalog-valid choices, and assemble + validate the `.strat` as you go.
+- **Direct authoring (for specifics).** If the user pastes a strategy, asks a targeted
+  question, requests a specific setup, or clearly knows the DSL, just write or fix it directly
+  using the references — don't force them through menus. Always honor "just write it for me".
 
 ## The shape of a `.strat` file
 
