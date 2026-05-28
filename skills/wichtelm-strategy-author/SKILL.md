@@ -1,12 +1,6 @@
 ---
 name: wichtelm-strategy-author
-description: >-
-  Write, review, and debug trading strategies in the wichtelm-app `.strat` DSL — a
-  Gherkin-conformant backtesting language built around Heikin-Ashi candles. Use when a
-  user is authoring or fixing a .strat strategy file, writing the TOML backtest config,
-  choosing indicators / Heikin-Ashi / MACD / RSI / moving-average / pivot primitives,
-  resolving a StrategyParseException (rules P1–P22) or ConfigParseException (rules
-  C1–C11), or interpreting a wichtelm HTML backtest report.
+description: Write, review, and debug wichtelm-app .strat backtesting strategies (a Gherkin-conformant, Heikin-Ashi-based DSL), their TOML config, and reports — including P1-P22 / C1-C11 parse-error debugging.
 ---
 
 # Authoring wichtelm-app strategies
@@ -19,6 +13,11 @@ read the report.
 
 You do **not** need to know Java or the app's internals — this is for the person writing
 strategies, not the person building the app.
+
+**Use this skill when** a user is authoring or fixing a `.strat` strategy file, writing the
+TOML backtest config, choosing indicators / Heikin-Ashi / MACD / RSI / moving-average /
+pivot primitives, resolving a `StrategyParseException` (rules P1–P22) or
+`ConfigParseException` (rules C1–C11), or interpreting a wichtelm HTML backtest report.
 
 ## How to use this skill
 
@@ -93,8 +92,10 @@ Feature: <strategy name>
    Combine an entry trigger with confirmations using `And`. Attach `stop_loss` / `take_profit`.
 5. **Write exit scenarios** — one per way out. The precondition must match the side
    (`Given a long position is open` → `Then long_exit`).
-6. **Use Heikin-Ashi + a confirming indicator**, never HA alone — HA lags, so pair it with
-   RSI / MACD / a moving average (see the examples and the note in `examples/README.md`).
+6. **Consider pairing Heikin-Ashi with a confirming indicator** (RSI / MACD / a moving
+   average). HA smoothing lags, so a confirmation often reduces false signals (see the
+   examples). This is advice, not a rule: HA primitives are first-class catalog entries, so
+   if the user explicitly asks for an HA-only strategy, build exactly that.
 7. **Validate against the rules** (checklist below), then suggest `wichtelm validate`.
 8. **Write the TOML config** (`reference/config-cli-report.md`) and show the run command.
 

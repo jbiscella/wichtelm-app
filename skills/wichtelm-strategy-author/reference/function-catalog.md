@@ -8,10 +8,14 @@ Mirrors `BuiltinCatalog.java` and CLAUDE.md §3.7.
 
 ## Market variables (no parentheses)
 
-`open`, `high`, `low`, `close`, `volume`, `bar_time`, `bar_index`
+Runtime-usable: `open`, `high`, `low`, `close`, `volume`, `bar_index`.
 
 Used as bare identifiers in expressions, e.g. `When close is above trend`,
 `And volume is above avg_vol`.
+
+> ⚠️ `bar_time` is accepted by the parser but **not resolved at runtime** in v1. A condition
+> or Background series that references it passes `wichtelm validate` yet fails the backtest
+> with an unresolved-identifier error. Don't use `bar_time` in a strategy you intend to run.
 
 ## Trade-context variables
 
