@@ -1,0 +1,43 @@
+Feature: Moving-Average Crossover with Heikin-Ashi Confirmation
+  Primary timeframe: 1d
+  Parameter fast default 50
+  Parameter slow default 200
+  Parameter stop_loss_pct default 5
+  Parameter take_profit_pct default 12
+
+  # The classic golden/death-cross, confirmed by Heikin-Ashi. Catalog note: the
+  # MA-vs-MA primitive is SMA-vs-EMA (there is no SMA-vs-SMA primitive in v1), so
+  # the "50/200 cross" is expressed as a 50-period SMA crossing a 200-period EMA.
+  # A strong HA candle in the cross direction filters out whipsaws, and a break
+  # of the fast average gives an earlier secondary exit.
+
+  Scenario: Enter long on a 50/200 bullish cross confirmed by a strong HA candle
+    Given no open position
+    When sma_crosses_above_ema(fast, slow)
+    And ha_strong_bullish()
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 + take_profit_pct / 100)
+
+  Scenario: Exit long on a 50/200 bearish cross
+    Given a long position is open
+    When sma_crosses_below_ema(fast, slow)
+    Then long_exit
+
+  Scenario: Exit long when price breaks below the fast average
+    Given a long position is open
+    When price_crosses_below_sma(fast)
+    Then long_exit
+
+  Scenario: Enter short on a 50/200 bearish cross confirmed by a strong HA candle
+    Given no open position
+    When sma_crosses_below_ema(fast, slow)
+    And ha_strong_bearish()
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 - take_profit_pct / 100)
+
+  Scenario: Exit short on a 50/200 bullish cross
+    Given a short position is open
+    When sma_crosses_above_ema(fast, slow)
+    Then short_exit

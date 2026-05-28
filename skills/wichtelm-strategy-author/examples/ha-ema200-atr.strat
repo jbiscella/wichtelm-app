@@ -1,0 +1,40 @@
+Feature: Heikin-Ashi Trend with 200-EMA Filter and ATR Stop
+  Primary timeframe: 1d
+  Parameter trend_period default 200
+  Parameter atr_period default 14
+  Parameter atr_sl_mult default 1.5
+  Parameter atr_tp_mult default 2.5
+
+  # A classic trend-following setup: trade only with the 200-EMA, enter on a
+  # strong Heikin-Ashi candle, and size risk off volatility with an ATR stop
+  # frozen at the fill (stop 1.5x ATR, target 2.5x ATR). Note the accessor split:
+  # conditions use atr(...), but stop_loss / take_profit use atr_value(...), the
+  # frozen-at-fill ATR. Because atr_value warms over atr_period bars (and the
+  # trend filter over trend_period), the earliest signals may be suppressed and
+  # listed in the report's "Suppressed entries" diagnostics.
+
+  Scenario: Enter long with the 200-EMA uptrend on a strong bullish HA candle
+    Given no open position
+    When price_above_ema(trend_period)
+    And ha_strong_bullish()
+    Then long_entry
+    And with stop_loss at entry_price - atr_sl_mult * atr_value(atr_period)
+    And with take_profit at entry_price + atr_tp_mult * atr_value(atr_period)
+
+  Scenario: Exit long when price loses the 200-EMA
+    Given a long position is open
+    When price_crosses_below_ema(trend_period)
+    Then long_exit
+
+  Scenario: Enter short with the 200-EMA downtrend on a strong bearish HA candle
+    Given no open position
+    When price_below_ema(trend_period)
+    And ha_strong_bearish()
+    Then short_entry
+    And with stop_loss at entry_price + atr_sl_mult * atr_value(atr_period)
+    And with take_profit at entry_price - atr_tp_mult * atr_value(atr_period)
+
+  Scenario: Exit short when price reclaims the 200-EMA
+    Given a short position is open
+    When price_crosses_above_ema(trend_period)
+    Then short_exit

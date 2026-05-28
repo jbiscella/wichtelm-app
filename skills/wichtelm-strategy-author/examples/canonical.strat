@@ -1,0 +1,41 @@
+Feature: Mean Reversion with Trend Filter
+  Primary timeframe: 1h
+  Parameter rsi_period default 14
+  Parameter oversold default 30
+  Parameter overbought default 70
+  Parameter trend_period default 200
+  Parameter stop_loss_pct default 2
+  Parameter position_size_pct default 50
+
+  Background:
+    Given a series trend defined as ema(trend_period) on 1d
+    And a series rsi_value defined as rsi(rsi_period)
+
+  Scenario: Enter long on oversold mean reversion
+    Given no open position
+    When rsi_value crosses below oversold
+    And close is above trend
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+
+  Scenario: Exit long on overbought
+    Given a long position is open
+    When rsi_value crosses above overbought
+    Then long_exit
+
+  Scenario: Exit long on price floor
+    Given a long position is open
+    When close drops below entry_price * 0.95
+    Then long_exit
+
+  Scenario: Enter short on overbought reversal
+    Given no open position
+    When rsi_value crosses above overbought
+    And close is below trend
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+
+  Scenario: Exit short on oversold
+    Given a short position is open
+    When rsi_value crosses below oversold
+    Then short_exit

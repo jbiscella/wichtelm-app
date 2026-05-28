@@ -1,0 +1,36 @@
+Feature: Heikin-Ashi Momentum with MACD Confirmation
+  Primary timeframe: 4h
+  Parameter stop_loss_pct default 3
+  Parameter take_profit_pct default 6
+
+  # Heikin-Ashi smooths price; MACD confirms momentum. Enter when a strong HA
+  # candle aligns with a MACD signal-line cross, and exit when MACD crosses the
+  # zero line against the position. The MACD cross primitives use the standard
+  # 12/26/9 settings (declare a Background series with macd_line(fast, slow,
+  # signal) if you need non-default periods).
+
+  Scenario: Enter long on a strong bullish HA candle with a MACD bullish cross
+    Given no open position
+    When ha_strong_bullish()
+    And macd_bullish_cross()
+    Then long_entry
+    And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 + take_profit_pct / 100)
+
+  Scenario: Exit long when MACD crosses below the zero line
+    Given a long position is open
+    When macd_zero_cross_down()
+    Then long_exit
+
+  Scenario: Enter short on a strong bearish HA candle with a MACD bearish cross
+    Given no open position
+    When ha_strong_bearish()
+    And macd_bearish_cross()
+    Then short_entry
+    And with stop_loss at entry_price * (1 + stop_loss_pct / 100)
+    And with take_profit at entry_price * (1 - take_profit_pct / 100)
+
+  Scenario: Exit short when MACD crosses above the zero line
+    Given a short position is open
+    When macd_zero_cross_up()
+    Then short_exit
