@@ -260,7 +260,7 @@ strategy that runs end to end.
 |---|---|
 | Market variables | `open`, `high`, `low`, `close`, `volume`, `bar_index` |
 | Base indicators | `sma(period)`, `ema(period)`, `rsi(period)`, `atr(period)`, `stddev(period)` |
-| Trade-context variables | `entry_price`, `position_size` (exit scenarios and `And with` clauses only) |
+| Trade-context variables | `entry_price`, `position_size` (exit scenarios and `And with` clauses only); `atr_value(period)` (the frozen-at-fill ATR accessor — `And with stop_loss` / `And with take_profit` clauses only) |
 
 **Parser-accepted but *runtime pending* (will fail during a backtest):**
 
@@ -288,8 +288,10 @@ And with take_profit at entry_price * (1 + take_profit_pct / 100)
 ```
 
 The expression is snapshotted at the entry's fill time and monitored intrabar.
-It may reference **only** constants, parameters, and trade-context variables —
-not indicators, window aggregates, or background series.
+It may reference **only** constants, parameters, trade-context variables, and
+`atr_value(period)` — the frozen-at-fill ATR accessor admitted as the sole
+function exception (e.g. `entry_price - 2 * atr_value(14)`). Other indicators,
+window aggregates, and background series are not allowed.
 
 ### Canonical example
 
@@ -354,7 +356,8 @@ violated rule identifier. Highlights:
 - **P10** — every scenario must end with one of the four first-class
   conditions.
 - **P12/P16** — `stop_loss`/`take_profit` clauses are allowed only on entry
-  scenarios and may not reference indicators or background series.
+  scenarios and may not reference indicators or background series, except
+  `atr_value(period)` — the frozen-at-fill ATR accessor.
 - **P13/P14** — every identifier and function call must resolve to a known
   variable, parameter, series, or built-in.
 - **P18–P20** — the opening `Given` must be semantically consistent with the
