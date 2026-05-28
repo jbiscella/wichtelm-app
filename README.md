@@ -36,6 +36,11 @@ No Java required. The application is built on top of the `ha-track`
 > comfortable on the command line and want to express strategies in readable
 > prose rather than code.
 
+<p align="center">
+  <img src="docs/screenshots/report-trade-detail.png" alt="Per-trade chart frame from a generated HTML report" width="820"><br>
+  <sub><em>A per-trade card from a generated report — HA candles, strategy-referenced SMA / EMA overlays on the main pane, σ sub-pane, entry / exit markers, dashed Entry / Stop / Exit reference lines, and the referenced-vs-context legend.</em></sub>
+</p>
+
 ---
 
 ## Table of contents
@@ -255,7 +260,7 @@ strategy that runs end to end.
 |---|---|
 | Market variables | `open`, `high`, `low`, `close`, `volume`, `bar_index` |
 | Base indicators | `sma(period)`, `ema(period)`, `rsi(period)`, `atr(period)`, `stddev(period)` |
-| Trade-context variables | `entry_price`, `position_size` (exit scenarios and `And with` clauses only) |
+| Trade-context variables | `entry_price`, `position_size` (exit scenarios and `And with` clauses only); `atr_value(period)` (the frozen-at-fill ATR accessor — `And with stop_loss` / `And with take_profit` clauses only) |
 
 **Parser-accepted but *runtime pending* (will fail during a backtest):**
 
@@ -283,8 +288,10 @@ And with take_profit at entry_price * (1 + take_profit_pct / 100)
 ```
 
 The expression is snapshotted at the entry's fill time and monitored intrabar.
-It may reference **only** constants, parameters, and trade-context variables —
-not indicators, window aggregates, or background series.
+It may reference **only** constants, parameters, trade-context variables, and
+`atr_value(period)` — the frozen-at-fill ATR accessor admitted as the sole
+function exception (e.g. `entry_price - 2 * atr_value(14)`). Other indicators,
+window aggregates, and background series are not allowed.
 
 ### Canonical example
 
@@ -349,7 +356,8 @@ violated rule identifier. Highlights:
 - **P10** — every scenario must end with one of the four first-class
   conditions.
 - **P12/P16** — `stop_loss`/`take_profit` clauses are allowed only on entry
-  scenarios and may not reference indicators or background series.
+  scenarios and may not reference indicators or background series, except
+  `atr_value(period)` — the frozen-at-fill ATR accessor.
 - **P13/P14** — every identifier and function call must resolve to a known
   variable, parameter, series, or built-in.
 - **P18–P20** — the opening `Given` must be semantically consistent with the
@@ -466,6 +474,11 @@ The output directory is resolved in this order, highest first:
 ---
 
 ## The HTML report
+
+<p align="center">
+  <img src="docs/screenshots/report-overview.png" alt="Top of a generated HTML report: header, strategy summary, and the strategy rules block" width="820"><br>
+  <sub><em>Top of a generated report — masthead with the strategy / symbol / window line and the disclaimer, followed by a human-readable strategy-rules summary (a normalized Given / When / Then rendering of each scenario, not the verbatim <code>.strat</code> source).</em></sub>
+</p>
 
 Each run writes a new, self-contained HTML file — reports are **never**
 overwritten. The file name is:
@@ -605,7 +618,9 @@ The following are **not** implemented in v1:
 - User-defined DSL functions and macros
 - Output formats other than HTML
 - Boolean and String parameter types
-- Indicators or window aggregates inside `stop_loss` / `take_profit` clauses
+- Indicators or window aggregates inside `stop_loss` / `take_profit` clauses,
+  **except** `atr_value(period)` — the frozen-at-fill ATR accessor that
+  graduated into stop / take scope in the 0.52 increment
 - Trailing stops
 - Literal `[csv].file` paths without the `{symbol}` placeholder
 - Parallel execution of multiple backtests in one invocation
