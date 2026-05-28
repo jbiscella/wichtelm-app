@@ -399,9 +399,19 @@ The skill contains:
   HA + moving-average crossover, multi-timeframe HA), plus the canonical
   reference. Illustrative starting points, not tuned strategies.
 
-To use it, upload the `skills/wichtelm-strategy-author/` folder to Claude
-(Settings → Capabilities → Skills) or zip it and add it as a skill, then ask
-Claude to help you build a strategy.
+To use it on [claude.ai](https://claude.ai), package the skill as a **`.zip`** (the
+zip's root must contain the `wichtelm-strategy-author/` folder, with `SKILL.md`
+inside it) and upload it in Claude's settings under **Capabilities** (Skills) — this
+requires a plan with code execution enabled (Pro, Max, Team, or Enterprise). Then ask
+Claude to help you build a strategy. From the repo root:
+
+```sh
+( cd skills && zip -r ../wichtelm-strategy-author.zip wichtelm-strategy-author )
+```
+
+Custom Skills can also be added in Claude Code or uploaded via the Claude API — see
+the [Agent Skills docs](https://platform.claude.com/docs/en/agents-and-tools/agent-skills/overview).
+Skills don't sync across surfaces, so upload separately where you need it.
 
 ---
 
