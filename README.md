@@ -51,6 +51,7 @@ No Java required. The application is built on top of the `ha-track`
 - [Quick start](#quick-start)
 - [CLI reference](#cli-reference)
 - [Writing a strategy — the `.strat` DSL](#writing-a-strategy--the-strat-dsl)
+- [Authoring help — the Claude chat skill](#authoring-help--the-claude-chat-skill)
 - [The TOML config file](#the-toml-config-file)
 - [Configuration precedence](#configuration-precedence)
 - [The HTML report](#the-html-report)
@@ -187,6 +188,12 @@ A `.strat` file is written in a **Gherkin-conformant** DSL: it uses only the
 standard Gherkin keywords (`Feature`, `Background`, `Scenario`, `Given`,
 `When`, `Then`, `And`, `But`). Domain-specific clauses are expressed as plain
 text after a standard keyword — no custom keywords are introduced.
+
+> 💡 **Prefer to write strategies with an assistant?** A ready-made
+> [Claude chat skill](#authoring-help--the-claude-chat-skill) lives under
+> [`skills/wichtelm-strategy-author/`](skills/wichtelm-strategy-author/) — it
+> teaches the grammar, the full catalog, and every validation rule, and can
+> build a strategy with you clause by clause.
 
 ### File structure
 
@@ -365,6 +372,36 @@ violated rule identifier. Highlights:
 
 Run `wichtelm validate <file>` to check a strategy against all rules without
 running a backtest.
+
+---
+
+## Authoring help — the Claude chat skill
+
+Writing the DSL by hand means juggling a closed function catalog and 22
+parse-time rules. To make that easier, the repo ships a **[Claude](https://claude.ai)
+chat skill** (for claude.ai, *not* Claude Code) at
+[`skills/wichtelm-strategy-author/`](skills/wichtelm-strategy-author/). Point
+Claude at it and it will help you write, review, and debug strategies — plus
+the TOML config and reading the report.
+
+The skill contains:
+
+- **`SKILL.md`** — the authoring workflow and the rules that most often trip
+  people up.
+- **`reference/`** — the complete function/indicator catalog with exact
+  arities, the full grammar, all 22 validation rules (P1–P22) with the exact
+  parser error messages, and the TOML / CLI / report guide.
+- **`reference/guided-builder.md`** — a menu-driven flow that builds a strategy
+  **clause by clause**: it asks one question at a time, offers only valid
+  choices, and assembles + validates the `.strat` as you go.
+- **`examples/`** — six ready-to-adapt strategies based on the most common
+  Heikin-Ashi + indicator combinations (HA + RSI, HA + 200-EMA + ATR stop,
+  HA + MACD, HA + moving-average crossover, multi-timeframe HA), plus the
+  canonical reference.
+
+To use it, upload the `skills/wichtelm-strategy-author/` folder to Claude
+(Settings → Capabilities → Skills) or zip it and add it as a skill, then ask
+Claude to help you build a strategy.
 
 ---
 
