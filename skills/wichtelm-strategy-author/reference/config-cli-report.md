@@ -80,6 +80,38 @@ because `EODHD_API_TOKEN` isn't exported.
 > project README) — in v1, settings come from the per-backtest config and CLI flags, so don't
 > rely on global preferences for a working run until that lands.
 
+### EODHD data availability (and the "insufficient market data" error)
+
+If a run fails with `DataSourceUnavailableException: loaded market data is insufficient to run
+a backtest: invalid backtest spec [V6]: <n>`, it means the data source returned only `<n>` bars
+for the primary timeframe and the backtester needs **at least 2**. Common causes with
+`data_source = "eodhd"`:
+
+- **Token history limits (the usual culprit).** EODHD's free/registered plan provides only **~1
+  year** of EOD history (and ~20 API calls/day); paid plans go back 30+ years (see the
+  [EODHD pricing page](https://eodhd.com/pricing)). So a multi-year request on a free token returns
+  almost nothing — in one observed case a single recent bar, dated ~1 year before "today" — which
+  trips this error.
+- **The public `demo` token** serves full EOD history, but **only** for six tickers: `AAPL.US`,
+  `TSLA.US`, `VTI.US`, `AMZN.US`, `BTC-USD.CC`, `EURUSD.FOREX`. For those, a daily/weekly strategy
+  works out of the box (`export EODHD_API_TOKEN=demo`); any other symbol returns almost nothing.
+- **Intraday is short-lived.** EODHD intraday history is limited, and the `demo` token's intraday is
+  only a rolling ~4-month window, so a multi-year intraday range returns ~0 bars. Keep intraday
+  `[date_range]`s recent.
+- **Endpoint by timeframe.** `1d`/`1w` use the EOD endpoint (years of history); `1m`/`5m`/`1h` use
+  intraday. **`4h` is not supported** by the EODHD driver (only `1m`, `5m`, `1h`).
+
+Verify what the API actually returns before blaming the strategy — count the bars:
+
+```sh
+curl -s "https://eodhd.com/api/eod/AAPL.US?api_token=$EODHD_API_TOKEN&fmt=json&from=2020-01-01&to=2024-12-31&period=d" | grep -o '"date"' | wc -l
+```
+
+If that prints ~1, it's the token/plan (try `demo` for the six tickers above, upgrade the plan, or
+switch to `data_source = "csv"`); if it prints hundreds, the strategy's timeframe or range is the
+issue. The same `[V6]` error also fires for a too-narrow `[date_range]`, or a `{timeframe}` that
+doesn't match the CSV file's bar interval.
+
 ## CLI
 
 | Command | Effect |
