@@ -113,7 +113,7 @@ The `package` phase produces these artifacts in `target/`:
 |---|---|
 | `target/wichtelm.jar` | The executable JAR. All permissively-licensed dependencies are shaded in; the LGPL JFreeChart library is **not** — see [License](#license) |
 | `target/lib/jfreechart.jar` | The LGPL JFreeChart library, loaded at runtime via the JAR's manifest `Class-Path`. Must stay next to `wichtelm.jar` (as `lib/jfreechart.jar`) when the JAR is copied or distributed |
-| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage` (bundles both JARs); the executable is `target/dist/wichtelm/bin/wichtelm` |
+| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage` (bundles both JARs). The executable is `target/dist/wichtelm/bin/wichtelm` on macOS/Linux, and `target\dist\wichtelm\wichtelm.exe` on Windows |
 
 You can run the tool either way:
 
@@ -125,12 +125,36 @@ java -jar target/wichtelm.jar --help
 target/dist/wichtelm/bin/wichtelm --help
 ```
 
-To make `wichtelm` available everywhere, put the launcher's `bin` directory on
-your `PATH`, or define a shell alias:
+To make `wichtelm` available everywhere:
+
+**macOS / Linux** — put the launcher's `bin` directory on your `PATH`, or define a
+shell alias:
 
 ```sh
 alias wichtelm='java -jar /absolute/path/to/wichtelm-app/target/wichtelm.jar'
 ```
+
+**Windows** — there is no `alias` command, and `jpackage`'s app-image puts the
+launcher at `target\dist\wichtelm\wichtelm.exe` (no `bin\` subfolder on Windows).
+Pick one:
+
+```bat
+:: 1. add the launcher's folder to PATH (new terminals pick it up)
+setx PATH "%PATH%;C:\path\to\wichtelm-app\target\dist\wichtelm"
+
+:: 2. or drop a wichtelm.bat onto a folder already on PATH:
+@echo off
+java -jar "C:\path\to\wichtelm-app\target\wichtelm.jar" %*
+```
+
+```powershell
+# 3. or add a PowerShell profile function (the real analog of the bash alias;
+#    Set-Alias can't bake in the -jar argument). Add to your $PROFILE:
+function wichtelm { java -jar "C:\path\to\wichtelm-app\target\wichtelm.jar" @args }
+```
+
+On any platform, `java -jar target/wichtelm.jar ...` works without installing
+anything (it just needs JDK 25 on your `PATH`).
 
 The rest of this document writes `wichtelm` for brevity; substitute whichever
 form you installed.
