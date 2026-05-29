@@ -113,45 +113,54 @@ The `package` phase produces these artifacts in `target/`:
 |---|---|
 | `target/wichtelm.jar` | The executable JAR. All permissively-licensed dependencies are shaded in; the LGPL JFreeChart library is **not** — see [License](#license) |
 | `target/lib/jfreechart.jar` | The LGPL JFreeChart library, loaded at runtime via the JAR's manifest `Class-Path`. Must stay next to `wichtelm.jar` (as `lib/jfreechart.jar`) when the JAR is copied or distributed |
-| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage` (bundles both JARs). The executable is `target/dist/wichtelm/bin/wichtelm` on macOS/Linux, and `target\dist\wichtelm\wichtelm.exe` on Windows |
+| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage` (bundles both JARs). The executable is `target/dist/wichtelm/bin/wichtelm` on Linux, `target/dist/wichtelm.app/Contents/MacOS/wichtelm` on macOS, and `target\dist\wichtelm\wichtelm.exe` on Windows (see the Windows note below before relying on the `.exe`) |
 
 You can run the tool either way:
 
 ```sh
-# via the executable JAR
+# via the executable JAR (works on every platform)
 java -jar target/wichtelm.jar --help
 
-# via the native launcher
+# via the native launcher (Linux path shown; see the table for the macOS path)
 target/dist/wichtelm/bin/wichtelm --help
 ```
 
 To make `wichtelm` available everywhere:
 
-**macOS / Linux** — put the launcher's `bin` directory on your `PATH`, or define a
-shell alias:
+**macOS / Linux** — define a shell alias (simplest, works on both), e.g. in your
+shell rc file:
 
 ```sh
 alias wichtelm='java -jar /absolute/path/to/wichtelm-app/target/wichtelm.jar'
 ```
 
-**Windows** — there is no `alias` command, and `jpackage`'s app-image puts the
-launcher at `target\dist\wichtelm\wichtelm.exe` (no `bin\` subfolder on Windows).
-Pick one:
+(Or put the native launcher on your `PATH` — `target/dist/wichtelm/bin/wichtelm` on
+Linux, `target/dist/wichtelm.app/Contents/MacOS/wichtelm` on macOS.)
+
+**Windows** — there is no `alias` command, so use the portable JAR via a shim or a
+PowerShell function (both need JDK 25 on your `PATH`). A `wichtelm.bat` placed in a
+folder already on your `PATH`:
 
 ```bat
-:: 1. add the launcher's folder to PATH (new terminals pick it up)
-setx PATH "%PATH%;C:\path\to\wichtelm-app\target\dist\wichtelm"
-
-:: 2. or drop a wichtelm.bat onto a folder already on PATH:
 @echo off
 java -jar "C:\path\to\wichtelm-app\target\wichtelm.jar" %*
 ```
 
+…or a PowerShell profile function (the analog of the bash alias — `Set-Alias` can't
+bake in the `-jar` argument); add to your `$PROFILE`:
+
 ```powershell
-# 3. or add a PowerShell profile function (the real analog of the bash alias;
-#    Set-Alias can't bake in the -jar argument). Add to your $PROFILE:
 function wichtelm { java -jar "C:\path\to\wichtelm-app\target\wichtelm.jar" @args }
 ```
+
+To put a folder on `PATH`, edit it via **System Properties → Environment Variables →
+User variables → Path → New** rather than `setx PATH "%PATH%;…"`, which has a
+1024-character limit and can truncate your existing `PATH`.
+
+> Windows native launcher: the build produces `target\dist\wichtelm\wichtelm.exe`, but
+> the `jpackage` step does not pass `--win-console`, so that `.exe` runs as a GUI app
+> and won't print `--help` / `run` output to your terminal. Use the JAR-based options
+> above for CLI use on Windows.
 
 On any platform, `java -jar target/wichtelm.jar ...` works without installing
 anything (it just needs JDK 25 on your `PATH`).
