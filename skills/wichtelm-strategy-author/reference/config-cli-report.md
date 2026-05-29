@@ -87,10 +87,11 @@ a backtest: invalid backtest spec [V6]: <n>`, it means the data source returned 
 for the primary timeframe and the backtester needs **at least 2**. Common causes with
 `data_source = "eodhd"`:
 
-- **Token history limits.** A free/registered EODHD token can return very little history — in one
-  observed case it returned a *single* recent bar for a multi-year request, which trips this error.
-  The exact historical depth depends on your EODHD plan; check the current limits on the
-  [EODHD pricing page](https://eodhd.com/pricing).
+- **Token history limits (the usual culprit).** EODHD's free/registered plan provides only **~1
+  year** of EOD history (and ~20 API calls/day); paid plans go back 30+ years (see the
+  [EODHD pricing page](https://eodhd.com/pricing)). So a multi-year request on a free token returns
+  almost nothing — in one observed case a single recent bar, dated ~1 year before "today" — which
+  trips this error.
 - **The public `demo` token** serves full EOD history, but **only** for six tickers: `AAPL.US`,
   `TSLA.US`, `VTI.US`, `AMZN.US`, `BTC-USD.CC`, `EURUSD.FOREX`. For those, a daily/weekly strategy
   works out of the box (`export EODHD_API_TOKEN=demo`); any other symbol returns almost nothing.
