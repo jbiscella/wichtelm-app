@@ -1,0 +1,3 @@
+# Anthropic Python SDK — provides Messages API + prompt caching (cache_control).
+# Use a recent release.
+anthropic>=0.40
