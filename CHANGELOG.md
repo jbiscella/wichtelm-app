@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Clearer insufficient-data error** — when the data source returns fewer than
+  two bars for the primary timeframe, `BacktestRunner` now fails with an
+  actionable `DataSourceUnavailableException` naming the bar count, symbol,
+  primary timeframe and date window, plus a CSV- or EODHD-specific hint (for
+  EODHD, the free-token ~1-year EOD history limit), instead of surfacing
+  frau-holle's opaque `invalid backtest spec [V6]: 1`.
+
 ### Fixed
 
 - **Stop/take ownership (Concern 1)** — `WichtelmSignalGenerator` now binds each
