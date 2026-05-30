@@ -82,10 +82,11 @@ because `EODHD_API_TOKEN` isn't exported.
 
 ### EODHD data availability (and the "insufficient market data" error)
 
-If a run fails with `DataSourceUnavailableException: loaded market data is insufficient to run
-a backtest: invalid backtest spec [V6]: <n>`, it means the data source returned only `<n>` bars
-for the primary timeframe and the backtester needs **at least 2**. Common causes with
-`data_source = "eodhd"`:
+If a run fails with `DataSourceUnavailableException: insufficient market data: only <n> <TF>
+bar(s) loaded for <symbol> over <from> → <to>; a backtest needs at least 2 bars`, it means the
+data source returned only `<n>` bars for the primary timeframe and the backtester needs **at
+least 2**. (The message includes a CSV- or EODHD-specific hint; the underlying frau-holle check
+is `[V6]`.) Common causes with `data_source = "eodhd"`:
 
 - **Token history limits (the usual culprit).** EODHD's free/registered plan provides only **~1
   year** of EOD history (and ~20 API calls/day); paid plans go back 30+ years (see the

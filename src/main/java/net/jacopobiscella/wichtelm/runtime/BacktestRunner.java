@@ -97,6 +97,16 @@ public final class BacktestRunner {
                 NachtkrappMatchIndex.buildFor(strategy, parameters, primarySeries,
                         higherTimeframeBars));
 
+        // The most common run-time failure is that the data source returned too
+        // few bars for the primary timeframe (frau-holle's BacktestSpec rejects a
+        // series of fewer than 2 bars as [V6]). Pre-empt it with a message that
+        // names the symbol, timeframe, window and bar count and points at the
+        // likely cause, instead of surfacing the opaque "invalid backtest spec [V6]: 1".
+        if (primarySeries.size() < 2) {
+            throw new DataSourceUnavailableException(
+                    insufficientDataMessage(config, strategy, primarySeries.size()));
+        }
+
         BacktestSpec spec;
         try {
             spec = BacktestSpec.builder()
@@ -112,6 +122,29 @@ public final class BacktestRunner {
         BacktestResult result = new Backtester().run(spec);
         return new BacktestRunResult(result, primarySeries, higherTimeframeBars,
                 generator.triggerTimes(), generator.suppressedEntries());
+    }
+
+    /**
+     * Builds an actionable message for the "too few bars" failure (frau-holle's
+     * {@code [V6]}): it names the bar count, symbol, primary timeframe and window,
+     * then adds a data-source-specific hint at the likely cause.
+     */
+    private static String insufficientDataMessage(BacktestConfig config, ParsedStrategy strategy,
+                                                  int barsLoaded) {
+        String base = "insufficient market data: only " + barsLoaded + " "
+                + strategy.primaryTimeframe().wire() + " bar" + (barsLoaded == 1 ? "" : "s")
+                + " loaded for " + config.symbol() + " over " + config.dateFrom() + " → "
+                + config.dateTo() + "; a backtest needs at least 2 bars.";
+        String hint = switch (config.dataSource()) {
+            case EODHD -> " The EODHD response was too small for this symbol/timeframe/range. A"
+                    + " free/registered EODHD token returns only ~1 year of EOD history, intraday"
+                    + " history is limited, and the 'demo' token only serves a fixed set of tickers."
+                    + " Widen [date_range], use a token/plan with enough history, or switch to"
+                    + " data_source = \"csv\".";
+            case CSV -> " The CSV file had too few rows in this window. Check that it has data for"
+                    + " this symbol and timeframe and that [date_range] overlaps the rows.";
+        };
+        return base + hint;
     }
 
     /**
