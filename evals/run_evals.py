@@ -253,7 +253,10 @@ def main() -> int:
             res.judge_score, res.judge_reason = judge(client, judge_model, case.prompt, strat)
         results.append(res)
 
-        status = "PASS" if parsed_ok else "FAIL"
+        # A case passes only if it parses AND satisfies its substring assertions —
+        # the content checks gate the result, they're not just informational.
+        case_ok = res.parsed_ok and res.substrings_ok
+        status = "PASS" if case_ok else "FAIL"
         extra = ""
         if not parsed_ok:
             extra = f"  -> {res.validator_output.splitlines()[0] if res.validator_output else 'no output'}"
@@ -263,9 +266,13 @@ def main() -> int:
             extra += f"  [judge {res.judge_score}/5]"
         print(f"  {status}  {case.id}{extra}")
 
-    passed = sum(1 for r in results if r.parsed_ok)
-    print(f"\nParse pass-rate: {passed}/{len(results)} "
+    passed = sum(1 for r in results if r.parsed_ok and r.substrings_ok)
+    parse_only = sum(1 for r in results if r.parsed_ok)
+    print(f"\nPass-rate (parse + content): {passed}/{len(results)} "
           f"({100 * passed / len(results):.0f}%)" if results else "no cases")
+    if results and parse_only != passed:
+        print(f"  (of those, {parse_only}/{len(results)} parsed; "
+              f"{parse_only - passed} parsed but failed a substring assertion)")
     if cache_reads:
         print(f"Cache reads: {cache_reads} tokens (system prompt was cached across prompts)")
     if args.llm_judge:

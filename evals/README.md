@@ -53,14 +53,18 @@ whatever model your users actually run.
    ```gherkin block from the reply.
 
 3. **Grades deterministically** by writing the strategy to a temp file and running
-   `wichtelm validate` on it. Optional lightweight substring checks (`must_include` /
-   `must_exclude`) catch obvious content gaps — e.g. the `ha-only-honored` case asserts
-   the skill respects an explicit "Heikin-Ashi only" request and doesn't bolt on an RSI.
+   `wichtelm validate` on it. Lightweight substring checks (`must_include` /
+   `must_exclude`) catch content gaps — e.g. the `ha-only-honored` case asserts the skill
+   respects an explicit "Heikin-Ashi only" request and doesn't bolt on an RSI. **A case
+   passes only if it both parses and satisfies its substring assertions** — the content
+   checks gate the result, they don't just print a note.
 
 4. **(Optional) LLM judge** (`--llm-judge`) scores each result 1–5 for how well it
-   satisfies the request and uses the DSL idiomatically.
+   satisfies the request and uses the DSL idiomatically. (Advisory — the judge score does
+   not affect pass/fail.)
 
-The process exits non-zero if any prompt failed to parse, so you can gate on it manually.
+The pass-rate counts cases that parsed *and* met their substring assertions; the process
+exits non-zero if any case failed either gate, so you can gate on it manually.
 
 ## The prompt set (`prompts.jsonl`)
 
