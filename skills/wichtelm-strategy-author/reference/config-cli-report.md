@@ -26,6 +26,12 @@ pyramiding        = false       # default false; true lets a same-direction entr
 rsi_period = 21
 oversold   = 25
 
+# Optional: sweep parameter ranges/lists for `wichtelm sweep` (CLAUDE.md §18).
+# A parameter is either fixed (in [parameters]) or swept (here), never both.
+[sweep]
+overbought = { from = 65, to = 75, step = 5 }   # range -> 65, 70, 75
+take_profit = [8, 12, 16]                         # explicit list
+
 # Optional: output
 [output]
 directory = "./reports"
@@ -58,6 +64,17 @@ api_token_env = "EODHD_API_TOKEN"        # NAME of an env var; never the token i
 | C9 | eodhd: `[eodhd].api_token_env` is required (a missing/blank key is a parse error); whether the *named env var* is actually set is checked later, at run time (see below) |
 | C10 | `output.format` must be `"html"` in v1 |
 | C11 | unknown top-level keys → warning, not an error |
+
+The optional `[sweep]` section (used only by `wichtelm sweep`, see CLI below) adds four more:
+
+| Rule | Summary |
+|---|---|
+| C12 | a parameter must not appear in both `[parameters]` (fixed) and `[sweep]` (varied) |
+| C13 | every `[sweep]` key must name a `Parameter` declared in the strategy |
+| C14 | a range `{ from, to, step }` needs numeric values with `step > 0` and `from <= to` (an integer parameter's step must be whole); a value list `[ … ]` must be non-empty and numeric |
+| C15 | the grid (product of axis sizes) must not exceed `--max-combos` (default 500) — checked before any backtest runs |
+
+A C12–C15 violation throws a `SweepConfigException` (a sibling of `ConfigParseException`).
 
 A parse-time violation throws a `ConfigParseException` naming the offending key and rule.
 One thing to keep separate: for C9, only a missing/blank `api_token_env` *key* is a parse
@@ -121,7 +138,16 @@ doesn't match the CSV file's bar interval.
 | `wichtelm run <config>.toml` | run the backtest and write an HTML report |
 | `wichtelm run <config>.toml --no-report` | run but skip report generation |
 | `wichtelm run <config>.toml --output-dir <path>` | override the output directory |
+| `wichtelm sweep <config>.toml` | run every combination in the config's `[sweep]` table; print a ranked table and write a `{config}_sweep_{timestamp}.csv` |
+| `wichtelm sweep … --objective <metric>` | rank by `sharpe` (default), `total_return`, `sortino`, `calmar`, or `profit_factor` |
+| `wichtelm sweep … --top <N>` / `--max-combos <N>` | rows tabulated in the console (default 10) / grid cap (default 500) |
+| `wichtelm sweep … --no-report` / `--output-dir <path>` | console table only (no CSV) / override the output directory |
 | `wichtelm --version` / `wichtelm --help` | version / usage |
+
+`sweep` is the optimization entry point (CLAUDE.md §18): it loads the market data once and
+re-runs the backtest per combination. The default objective is `sharpe` because ranking on raw
+return alone tends to crown an overfit lucky run. To turn a winning row into a full per-trade HTML
+report, copy its printed `[parameters]` block into a plain config and `wichtelm run` it.
 
 Output directory precedence: `--output-dir` > `[output].directory` > current directory.
 
