@@ -23,6 +23,7 @@ import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * Focused regression tests for {@link SweepParameterResolver} axis
@@ -95,6 +96,39 @@ class SweepMaterializationTest {
         SweepConfigException e = assertThrows(SweepConfigException.class,
                 () -> SweepParameterResolver.resolveAxes(strategy(dir), config, 500));
         assertEquals("C15", e.violatedRule());
+        // The fast-path C15 message names the exact axis size and the cap.
+        assertTrue(e.getMessage().contains("1000000") && e.getMessage().contains("500"),
+                () -> "C15 message should name size and cap: " + e.getMessage());
+    }
+
+    @Test
+    void integerValueListWithFractionalEntryIsRejectedByC14(@TempDir Path dir) throws IOException {
+        Path strat = dir.resolve("strategy.strat");
+        Files.writeString(strat, STRATEGY);
+        String toml = "strategy = \"" + strat + "\"\n"
+                + "symbol = \"AAPL\"\ndata_source = \"eodhd\"\n\n"
+                + "[date_range]\nfrom = 2024-01-01\nto = 2024-12-31\n\n"
+                + "[sizing]\nposition_size_pct = 50\n\n"
+                + "[eodhd]\napi_token_env = \"EODHD_API_TOKEN\"\n"
+                + "\n[sweep]\nrsi_period = [12, 1.5, 16]\n";
+        BacktestConfig config = ConfigParser.parse(toml, dir.resolve("config.toml").toString());
+        SweepConfigException e = assertThrows(SweepConfigException.class,
+                () -> SweepParameterResolver.resolveAxes(strategy(dir), config));
+        assertEquals("C14", e.violatedRule());
+    }
+
+    @Test
+    void hugeIntegerRangeStepsExactlyBeyondDecimal64Precision(@TempDir Path dir) throws IOException {
+        BacktestConfig config = config(dir,
+                "trend_period = { from = 99999999999999990, to = 100000000000000000, step = 1 }\n", "");
+        Map<String, List<BigDecimal>> axes = SweepParameterResolver.resolveAxes(strategy(dir), config);
+        List<BigDecimal> values = axes.get("trend_period");
+        assertEquals(11, values.size(),
+                () -> "exact integer stepping should yield 11 values, got " + values);
+        assertEquals(0, new BigDecimal("100000000000000000").compareTo(values.get(values.size() - 1)),
+                () -> "last value must be exactly 'to', got " + values);
+        assertEquals(0, new BigDecimal("99999999999999991").compareTo(values.get(1)),
+                () -> "second value must advance by exactly one, got " + values);
     }
 
     @Test

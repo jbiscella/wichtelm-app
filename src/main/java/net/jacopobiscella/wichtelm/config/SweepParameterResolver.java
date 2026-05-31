@@ -6,7 +6,9 @@ import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParameter;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.math.MathContext;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -91,15 +93,30 @@ public final class SweepParameterResolver {
                                                 ParameterType type, BacktestConfig config,
                                                 int maxCombos) {
         return switch (axis) {
-            case SweepDefinition.ValueList list -> list.values();
+            case SweepDefinition.ValueList list -> materializeList(name, list, type, config);
             case SweepDefinition.Range range -> expandRange(name, range, type, config, maxCombos);
         };
+    }
+
+    private static List<BigDecimal> materializeList(String name, SweepDefinition.ValueList list,
+                                                    ParameterType type, BacktestConfig config) {
+        List<BigDecimal> values = list.values();
+        if (type == ParameterType.INTEGER) {
+            // An integer axis carries whole values; a list entry like 1.5 must be
+            // rejected here (it skips the range whole-number check) rather than
+            // reaching the backtest as a malformed per-combination value.
+            for (int i = 0; i < values.size(); i++) {
+                requireWhole(name, "value[" + i + "]", values.get(i), config);
+            }
+        }
+        return values;
     }
 
     private static List<BigDecimal> expandRange(String name, SweepDefinition.Range range,
                                                 ParameterType type, BacktestConfig config,
                                                 int maxCombos) {
-        if (type == ParameterType.INTEGER) {
+        boolean integer = type == ParameterType.INTEGER;
+        if (integer) {
             // An integer axis must materialize whole values, so from / to / step
             // all have to be whole — checking only the step would let a range like
             // {from=1.5, to=3.5, step=1} push fractional values into the backtest.
@@ -107,36 +124,42 @@ public final class SweepParameterResolver {
             requireWhole(name, "to", range.to(), config);
             requireWhole(name, "step", range.step(), config);
         }
-        List<BigDecimal> values = new ArrayList<>();
-        // Honor the inclusive 'to' bound within a tiny fraction of the step so a
-        // decimal endpoint that lands fractionally past 'to' due to DECIMAL64
-        // rounding is kept — but never emit a value beyond the declared 'to'. The
-        // tolerance is scaled to the step (not the endpoint magnitude) so it can
-        // never rival a whole step even for very large endpoints.
-        BigDecimal inclusiveBound = range.to().add(endpointTolerance(range.step()), DECIMAL);
-        for (BigDecimal value = range.from();
-             value.compareTo(inclusiveBound) <= 0;
-             value = value.add(range.step(), DECIMAL)) {
-            values.add(type == ParameterType.INTEGER ? value.stripTrailingZeros() : value);
-            if (values.size() > maxCombos) {
-                throw new SweepConfigException(config.configPath().toString(),
-                        "sweep." + name, "C15",
-                        "sweep axis '" + name + "' materializes more than the cap of " + maxCombos
-                                + " combinations; narrow the range or raise --max-combos");
-            }
+
+        // The number of increments from 'from' to 'to' inclusive; the axis holds
+        // (steps + 1) values. Counted arithmetically — exact integer division for
+        // an integer axis, a DECIMAL64 ratio nudged by a tiny epsilon (so a
+        // rounding wobble at the endpoint is kept, but a genuine overshoot like
+        // from=0,to=1,step=0.6 -> 0,0.6 is not) for a decimal axis.
+        BigInteger steps = integer
+                ? range.to().toBigIntegerExact().subtract(range.from().toBigIntegerExact())
+                        .divide(range.step().toBigIntegerExact())
+                : range.to().subtract(range.from()).divide(range.step(), DECIMAL)
+                        .add(new BigDecimal("1E-9")).setScale(0, RoundingMode.FLOOR).toBigInteger();
+        BigInteger size = steps.add(BigInteger.ONE);
+
+        // Reject before materializing: an axis larger than the whole-grid cap
+        // guarantees the grid exceeds it (C15). Named with its exact size and the
+        // cap so the fast path is as actionable as SweepGrid.expand's C15 message.
+        if (size.compareTo(BigInteger.valueOf(maxCombos)) > 0) {
+            throw new SweepConfigException(config.configPath().toString(),
+                    "sweep." + name, "C15",
+                    "sweep axis '" + name + "' expands to " + size + " values, exceeding the cap of "
+                            + maxCombos + "; narrow its from/to/step or raise --max-combos");
+        }
+
+        List<BigDecimal> values = new ArrayList<>(size.intValueExact());
+        BigDecimal from = range.from();
+        BigDecimal step = range.step();
+        for (BigInteger k = BigInteger.ZERO; k.compareTo(steps) <= 0; k = k.add(BigInteger.ONE)) {
+            // value = from + k*step, recomputed each step (no accumulation drift).
+            // Integer arithmetic is exact — DECIMAL64 would round the increment
+            // away once values pass its 16-digit precision.
+            BigDecimal value = integer
+                    ? from.add(step.multiply(new BigDecimal(k)))
+                    : from.add(step.multiply(new BigDecimal(k), DECIMAL), DECIMAL);
+            values.add(integer ? value.stripTrailingZeros() : value);
         }
         return values;
-    }
-
-    /**
-     * A near-equality tolerance for the inclusive endpoint: a tiny fraction of the
-     * step, large enough to absorb a DECIMAL64 rounding wobble at {@code to} yet
-     * always far below a whole step, so a value genuinely beyond the declared
-     * {@code to} is never emitted — even for large endpoints, where a
-     * magnitude-relative epsilon could grow to rival the step.
-     */
-    private static BigDecimal endpointTolerance(BigDecimal step) {
-        return step.multiply(new BigDecimal("1E-9"), DECIMAL);
     }
 
     private static void requireWhole(String name, String field, BigDecimal value,
