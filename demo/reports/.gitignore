@@ -12,4 +12,7 @@ eodhd-*-report.html
 
 # Timestamped CSVs produced by `wichtelm sweep` (CLAUDE.md §18). These are
 # regenerable run artifacts, not reference copies, so they are not committed.
+# The one promoted, stable leaderboard (tstx-swing-1d-sweep-leaderboard.csv,
+# hyphenated so it does not match this pattern) IS committed as the sweep demo's
+# reference output, mirroring the committed *-report.html demos.
 *_sweep_*.csv
