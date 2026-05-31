@@ -190,6 +190,7 @@ public class ExecutionFlowSteps {
                 false,
                 Map.of(),
                 Optional.empty(),
+                Optional.empty(),
                 Optional.of(tempDir.resolve("{symbol}_{timeframe}.csv")),
                 Optional.empty(),
                 List.of());
@@ -227,6 +228,7 @@ public class ExecutionFlowSteps {
                 BigDecimal.valueOf(50),
                 false,
                 Map.of(),
+                Optional.empty(),
                 Optional.empty(),
                 Optional.empty(),
                 Optional.of(apiTokenEnvName),
