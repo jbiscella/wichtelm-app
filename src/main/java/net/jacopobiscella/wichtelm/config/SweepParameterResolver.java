@@ -8,7 +8,6 @@ import net.jacopobiscella.wichtelm.strategy.StrategyParameter;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.math.MathContext;
-import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -126,15 +125,13 @@ public final class SweepParameterResolver {
         }
 
         // The number of increments from 'from' to 'to' inclusive; the axis holds
-        // (steps + 1) values. Counted arithmetically — exact integer division for
-        // an integer axis, a DECIMAL64 ratio nudged by a tiny epsilon (so a
-        // rounding wobble at the endpoint is kept, but a genuine overshoot like
-        // from=0,to=1,step=0.6 -> 0,0.6 is not) for a decimal axis.
-        BigInteger steps = integer
-                ? range.to().toBigIntegerExact().subtract(range.from().toBigIntegerExact())
-                        .divide(range.step().toBigIntegerExact())
-                : range.to().subtract(range.from()).divide(range.step(), DECIMAL)
-                        .add(new BigDecimal("1E-9")).setScale(0, RoundingMode.FLOOR).toBigInteger();
+        // (steps + 1) values. Counted as floor((to - from) / step) — the integer
+        // part of the exact decimal quotient, with no epsilon — so a value
+        // genuinely beyond 'to' is never counted (from=0,to=1,step=0.6 -> 0,0.6;
+        // step=0.3333333334 -> 0, 0.3333333334, 0.6666666668) while an exact
+        // endpoint is kept. divideToIntegralValue is exact for both axis types.
+        BigInteger steps = range.to().subtract(range.from())
+                .divideToIntegralValue(range.step()).toBigInteger();
         BigInteger size = steps.add(BigInteger.ONE);
 
         // Reject before materializing: an axis larger than the whole-grid cap

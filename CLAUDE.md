@@ -813,7 +813,7 @@ order of the expanded grid.
 |---|---|
 | C12 | A parameter MUST NOT appear in both `[parameters]` (fixed) and `[sweep]` (varied). Enforced at parse time by `ConfigParser` |
 | C13 | Every `[sweep]` key MUST name a parameter declared in the strategy. Enforced by `SweepParameterResolver` (it needs the parsed strategy, like C7) |
-| C14 | A range table MUST have finite numeric `from` / `to` / `step` (TOML `nan` / `inf` are rejected) with `step > 0` and `from <= to`; a value list MUST be a non-empty array of finite numbers. These structural checks are enforced at parse time by `ConfigParser`. The type-aware whole-number check — for an INTEGER parameter, `from` / `to` / `step` MUST all be whole — needs the strategy's declared parameter type and is therefore enforced by `SweepParameterResolver` (like C13), still as a C14 violation |
+| C14 | A range table MUST have finite numeric `from` / `to` / `step` (TOML `nan` / `inf` are rejected) with `step > 0` and `from <= to`; a value list MUST be a non-empty array of finite numbers. These structural checks are enforced at parse time by `ConfigParser`. The type-aware whole-number check — for an INTEGER parameter, a range's `from` / `to` / `step` **and** every value-list entry MUST all be whole — needs the strategy's declared parameter type and is therefore enforced by `SweepParameterResolver` (like C13), still as a C14 violation |
 | C15 | The grid (Cartesian product of axis sizes) MUST NOT exceed `--max-combos` (default 500). Checked before any backtest runs; the error names each axis size and the product |
 
 Violations of C12-C15 raise `SweepConfigException extends WichtelmException`

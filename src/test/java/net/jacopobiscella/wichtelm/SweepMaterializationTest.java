@@ -144,6 +144,20 @@ class SweepMaterializationTest {
     }
 
     @Test
+    void decimalRangeWithRepeatingStepNeverOvershootsTo(@TempDir Path dir) throws IOException {
+        // 0.3333333334 * 3 = 1.0000000002 > 1, so only k=0,1,2 are within [0, 1].
+        BacktestConfig config = config(dir,
+                "stop_loss_pct = { from = 0, to = 1, step = 0.3333333334 }\n", "");
+        Map<String, List<BigDecimal>> axes = SweepParameterResolver.resolveAxes(strategy(dir), config);
+        List<BigDecimal> values = axes.get("stop_loss_pct");
+        assertEquals(3, values.size(), () -> "expected three in-range values, got " + values);
+        BigDecimal to = BigDecimal.ONE;
+        for (BigDecimal v : values) {
+            assertTrue(v.compareTo(to) <= 0, () -> "emitted a value past 'to': " + v + " in " + values);
+        }
+    }
+
+    @Test
     void nonFiniteSweepValueIsRejectedByC14(@TempDir Path dir) throws IOException {
         Path strat = dir.resolve("strategy.strat");
         Files.writeString(strat, STRATEGY);

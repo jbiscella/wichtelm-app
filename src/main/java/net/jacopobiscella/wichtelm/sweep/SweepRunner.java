@@ -3,6 +3,7 @@ package net.jacopobiscella.wichtelm.sweep;
 import net.jacopobiscella.wichtelm.config.BacktestConfig;
 import net.jacopobiscella.wichtelm.config.ParameterResolver;
 import net.jacopobiscella.wichtelm.config.SweepParameterResolver;
+import net.jacopobiscella.wichtelm.error.DataSourceUnavailableException;
 import net.jacopobiscella.wichtelm.error.WichtelmException;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunner;
@@ -76,6 +77,13 @@ public final class SweepRunner {
         try {
             BacktestRunResult result = backtestRunner.runWith(strategy, config, parameters, data);
             return SweepResult.success(combination, result.result().metrics());
+        } catch (DataSourceUnavailableException fatal) {
+            // A data-source failure (e.g. insufficient bars) depends only on the
+            // once-loaded data, not on the swept values, so it applies to every
+            // combination. Let it abort the sweep and reach the WichtelmCli error
+            // path documented for data-source failures, rather than masquerading
+            // as a per-combination failed row on an otherwise "successful" sweep.
+            throw fatal;
         } catch (WichtelmException | BacktestException e) {
             return SweepResult.failed(combination, e.getClass().getSimpleName() + ": " + e.getMessage());
         } catch (RuntimeException e) {
@@ -89,12 +97,19 @@ public final class SweepRunner {
     }
 
     /**
-     * Best-first ordering: traded rows before tradeless rows; within a group, a
-     * higher objective value first; an undefined or absent objective last.
+     * Best-first ordering: traded rows first, then successful tradeless runs, then
+     * failed runs; within a group, a higher objective value first; an undefined or
+     * absent objective last. Ranking {@code ran()} above failed before comparing
+     * objectives keeps a failed combination off {@code rows.getFirst()} when both
+     * it and a successful tradeless run have an empty objective (e.g.
+     * {@code --objective profit_factor} with zero trades), so the winner block is
+     * not suppressed by a failed row.
      */
     static Comparator<SweepResult> ranking(SweepObjective objective) {
         Comparator<SweepResult> byTraded =
                 Comparator.comparing(SweepResult::hasTrades).reversed();
+        Comparator<SweepResult> byRan =
+                Comparator.comparing(SweepResult::ran).reversed();
         Comparator<SweepResult> byObjective = (a, b) -> {
             BigDecimal va = a.objectiveValue(objective).orElse(null);
             BigDecimal vb = b.objectiveValue(objective).orElse(null);
@@ -109,6 +124,6 @@ public final class SweepRunner {
             }
             return vb.compareTo(va); // descending
         };
-        return byTraded.thenComparing(byObjective);
+        return byTraded.thenComparing(byRan).thenComparing(byObjective);
     }
 }

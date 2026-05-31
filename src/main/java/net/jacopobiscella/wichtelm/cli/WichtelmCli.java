@@ -219,9 +219,12 @@ public final class WichtelmCli {
             String toml = Files.readString(configFile);
             BacktestConfig config = ConfigParser.parse(toml, configFile.toString());
             config.warnings().forEach(warning -> err.println("warning: " + warning));
-            if (config.sweep().isEmpty()) {
-                err.println("config has no [sweep] section; nothing to sweep. Use "
-                        + "'wichtelm run' for a single backtest, or add a [sweep] table.");
+            // Treat a present-but-empty [sweep] table (every axis commented out)
+            // the same as an absent one: otherwise the grid would expand to a
+            // single empty combination and report a bogus "successful" sweep.
+            if (config.sweep().isEmpty() || config.sweep().get().isEmpty()) {
+                err.println("config has no [sweep] axes; nothing to sweep. Use "
+                        + "'wichtelm run' for a single backtest, or add axes to the [sweep] table.");
                 return EXIT_USAGE;
             }
             ParsedStrategy strategy = StrategyParser.parse(config.strategyPath());
