@@ -66,7 +66,7 @@ public final class SweepGrid {
         StringBuilder sizes = new StringBuilder();
         for (String name : names) {
             if (!sizes.isEmpty()) {
-                sizes.append(" × ");
+                sizes.append(" x ");
             }
             sizes.append(name).append('(').append(spec.axes().get(name).size()).append(')');
         }

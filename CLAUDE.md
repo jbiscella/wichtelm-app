@@ -10,7 +10,7 @@ The application is built on top of `ha-track` (Heikin-Ashi-track) libraries publ
 
 **Goal:** allow a user with technical literacy (developer, power user, data analyst comfortable with CLI) to write strategies in a natural-language-like DSL, run them against historical data, and explore performance through structured visual reports, without writing Java.
 
-**Out of scope for v1:** visual editor, web UI, real-time/live trading, multi-symbol portfolio strategies, slippage/commission models, dynamic position sizing, walk-forward optimization, parameter sweep, user-defined DSL functions/macros, output formats beyond HTML.
+**Out of scope for v1:** visual editor, web UI, real-time/live trading, multi-symbol portfolio strategies, slippage/commission models, dynamic position sizing, walk-forward optimization, user-defined DSL functions/macros, output formats beyond HTML. (Parameter sweep graduated into scope as a post-v1 additive increment — see §18.)
 
 ## 1. Runtime profile
 
@@ -722,8 +722,8 @@ The following are explicitly NOT implemented in v1:
 - Multi-symbol portfolio strategies
 - Slippage and commission models
 - Dynamic position sizing (ATR-proportional, volatility-proportional, etc.)
-- Walk-forward optimization
-- Parameter sweep tooling
+- Walk-forward optimization (single in-sample windows only; no rolling out-of-sample re-fit)
+- ~~Parameter sweep tooling~~ — GRADUATED to a documented increment in §18 as the `wichtelm sweep` command: a `[sweep]` config table declares per-parameter ranges/lists, the grid runs every combination over once-loaded data, and results rank by a selectable objective (default Sharpe). Console table + CSV output; no HTML leaderboard
 - User-defined DSL functions and macros
 - Expression-typed first arguments for window aggregates (e.g. `highest(<expression>, period)` where the first arg is computed bar-by-bar). v1 covers the common cases via hard-coded variants (`highest_high`, `lowest_low`, `highest_close`, `lowest_close`). Generic expression-typed args may be introduced if Tier B's boolean primitives or future features require them.
 - Output formats beyond HTML (PDF, JSON, CSV trade export)
@@ -767,3 +767,107 @@ Each demo runs two ways, both through the `wichtelm` CLI with no bespoke tooling
 **Raw-data limitation.** Intraday data from EODHD (and most providers) is *raw* — not adjusted for splits or dividends, the industry-standard pattern for intraday endpoints. Demo windows are chosen to avoid corporate-action discontinuities (AAPL's last split was Aug 2020 4:1); use a broad ETF (`VTI`), forex, crypto, or a split-free window. A single-name backtest crossing a split would produce meaningless results.
 
 See `demo/README.md` for the full runbook (the demo matrix, running the CSV demos, running the EODHD demos locally, and snapshotting EODHD data to CSV).
+
+## 18. Parameter sweep (post-v1 additive increment)
+
+> **As** a strategy author, **I want** to declare ranges for my strategy
+> parameters and have the app run every combination, **so that** I can see which
+> parameter values produce the best risk-adjusted performance without editing
+> the config and re-running by hand.
+
+Parameter sweep was out of scope for v1 (§15) and graduated into a documented
+increment once v1 was complete. It is **additive**: a config with no `[sweep]`
+table behaves exactly as before, and the `run` / `validate` commands are
+unchanged. The DSL, the report (§7), and the runtime semantics (§6) are
+untouched — sweep is a new CLI command that orchestrates repeated backtests.
+
+### 18.1 `[sweep]` config grammar
+
+A per-backtest config (§5.1) MAY add an optional `[sweep]` table. Each key is a
+declared strategy `Parameter` name mapped to either a numeric **range** inline
+table or an explicit **value list**:
+
+```toml
+[parameters]
+trend_period = 200                              # held constant across the sweep
+
+[sweep]
+rsi_period = { from = 8, to = 16, step = 2 }    # 8, 10, 12, 14, 16
+oversold   = { from = 25, to = 35, step = 5 }   # 25, 30, 35
+overbought = [65, 70, 75]                        # explicit list
+```
+
+Range materialization is **type-aware** from the parameter's declared type
+(§3.8): an INTEGER parameter steps by whole numbers; a DECIMAL parameter steps
+in `MathContext.DECIMAL64` with the inclusive `to` bound honored within a
+half-step epsilon. Axis order follows TOML declaration order, which fixes the
+deterministic order of the expanded grid.
+
+### 18.2 Sweep validation rules
+
+| Rule | Description |
+|---|---|
+| C12 | A parameter MUST NOT appear in both `[parameters]` (fixed) and `[sweep]` (varied). Enforced at parse time by `ConfigParser` |
+| C13 | Every `[sweep]` key MUST name a parameter declared in the strategy. Enforced by `SweepParameterResolver` (it needs the parsed strategy, like C7) |
+| C14 | A range table MUST have numeric `from` / `to` / `step` with `step > 0` and `from <= to`; an integer parameter's step MUST be a whole number; a value list MUST be a non-empty numeric array. Enforced at parse time |
+| C15 | The grid (Cartesian product of axis sizes) MUST NOT exceed `--max-combos` (default 500). Checked before any backtest runs; the error names each axis size and the product |
+
+Violations of C12-C15 raise `SweepConfigException extends WichtelmException`
+(filePath, keyPath, violatedRule, message), rendered through the same CLI error
+path as `ConfigParseException`.
+
+### 18.3 `sweep` command
+
+```
+wichtelm sweep <config-file> [--objective <metric>] [--top <N>]
+                             [--max-combos <N>] [--no-report] [--output-dir <path>]
+```
+
+- `--objective` ranks combinations by one frau-holle metric, all "higher is
+  better": `sharpe` (**default**), `total_return`, `sortino`, `calmar`,
+  `profit_factor`. Sharpe is the default because a risk-adjusted measure is the
+  professional standard for picking a configuration; ranking on raw return alone
+  tends to crown the combination that overfit a single lucky run. An unknown
+  metric is a usage error (exit 2).
+- `--top <N>` controls how many leading rows the console table tabulates
+  (default 10); the CSV always contains every combination.
+- `--max-combos <N>` caps the grid (default 500, rule C15).
+- `--no-report` suppresses the CSV (console table only).
+- Exit codes match the rest of the CLI: 0 success, 1 application error, 2 usage.
+
+Execution loads market data **once** (`BacktestRunner.loadMarketData`) and
+re-runs the per-parameter phase (`BacktestRunner.runWith`) for every
+combination, because data depends only on `(symbol, timeframes, date range,
+data source)` — none of which a sweep varies. Single-threaded per §1. A
+combination whose backtest throws is recorded as a failed row, not fatal.
+
+### 18.4 Ranking and output
+
+Rows that produced at least one closed trade always rank above tradeless rows;
+within a group, a higher objective value first; an undefined objective (e.g.
+profit factor with zero trades) sorts last. Output is:
+
+- A ranked **console table**: `rank`, one column per swept parameter, the
+  objective value, total return, Sharpe, and trade count for the top rows, plus
+  a paste-ready `[parameters]` block for the winner.
+- A **CSV** `{config_basename}_sweep_{timestamp}.csv` in the resolved output
+  directory (never overwritten, matching §7.1), one row per combination with all
+  key metrics, the objective value, and a run status / failure reason.
+
+There is **no HTML leaderboard** in this increment. To get a full per-trade HTML
+report (§7) for a winning combination, paste its `[parameters]` block into a
+plain config and run `wichtelm run` — no new chart code is introduced.
+
+Walk-forward optimization (rolling out-of-sample re-fit) remains out of scope
+(§15): a sweep ranks combinations on a single in-sample window, so a top result
+may be in-sample overfit. Treating the leaderboard as a hypothesis to validate
+out-of-sample, not a guarantee, is left to the author.
+
+### 18.5 Behavioral spec
+
+`src/test/resources/features/sweep-config-validation.feature` (C12-C14),
+`sweep-grid.feature` (grid expansion, type-aware stepping, the C15 cap), and
+`sweep-execution.feature` (N combinations → N ranked rows, ranking per
+objective, tradeless-sorts-last, market-data-loaded-exactly-once). The `sweep`
+command, its CSV output and `--objective` validation are specified in
+`cli-behavior.feature` (§14).

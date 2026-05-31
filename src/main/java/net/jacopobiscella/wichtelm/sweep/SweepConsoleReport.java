@@ -24,10 +24,12 @@ public final class SweepConsoleReport {
         if (rows.isEmpty()) {
             return "Sweep produced no combinations.";
         }
+        // The ranked-by column is labeled generically "objective" so it never
+        // duplicates a context column header (e.g. when --objective is sharpe).
         List<String> headers = new ArrayList<>();
         headers.add("rank");
         headers.addAll(axisNames);
-        headers.add(objective.wire());
+        headers.add("objective");
         headers.add("total_return");
         headers.add("sharpe");
         headers.add("trades");
@@ -41,7 +43,7 @@ public final class SweepConsoleReport {
             for (String name : axisNames) {
                 cells.add(num(row.combination().get(name)));
             }
-            cells.add(row.objectiveValue(objective).map(SweepConsoleReport::num).orElse("—"));
+            cells.add(row.objectiveValue(objective).map(SweepConsoleReport::num).orElse("-"));
             if (row.metrics().isPresent()) {
                 BacktestMetrics m = row.metrics().get();
                 cells.add(num(m.totalReturn()));
@@ -49,8 +51,8 @@ public final class SweepConsoleReport {
                 cells.add(Integer.toString(m.numTrades()));
             } else {
                 cells.add("FAILED");
-                cells.add("—");
-                cells.add("—");
+                cells.add("-");
+                cells.add("-");
             }
             table.add(cells);
         }
@@ -86,7 +88,7 @@ public final class SweepConsoleReport {
 
         SweepResult winner = rows.getFirst();
         if (winner.ran()) {
-            sb.append("\nBest combination — paste into [parameters] for a full report:\n");
+            sb.append("\nBest combination - paste into [parameters] for a full report:\n");
             sb.append("[parameters]\n");
             for (String name : axisNames) {
                 sb.append(name).append(" = ").append(num(winner.combination().get(name))).append('\n');
@@ -109,7 +111,7 @@ public final class SweepConsoleReport {
 
     private static String num(BigDecimal value) {
         if (value == null) {
-            return "—";
+            return "-";
         }
         return value.setScale(Math.min(value.scale(), 4), RoundingMode.HALF_UP)
                 .stripTrailingZeros().toPlainString();

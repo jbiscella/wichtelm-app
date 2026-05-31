@@ -9,3 +9,7 @@ tstc-*_*.html
 # The committed reference reports are the synthetic-data CSV demos (CLAUDE.md §17).
 eodhd-*_*.html
 eodhd-*-report.html
+
+# Timestamped CSVs produced by `wichtelm sweep` (CLAUDE.md §18). These are
+# regenerable run artifacts, not reference copies, so they are not committed.
+*_sweep_*.csv
