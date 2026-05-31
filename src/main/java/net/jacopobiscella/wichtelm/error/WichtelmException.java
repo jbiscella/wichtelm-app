@@ -6,8 +6,8 @@ package net.jacopobiscella.wichtelm.error;
  * in one of the permitted subtypes.
  */
 public abstract sealed class WichtelmException extends RuntimeException
-        permits StrategyParseException, ConfigParseException, DslEvaluationException,
-                DataSourceUnavailableException, ReportGenerationException {
+        permits StrategyParseException, ConfigParseException, SweepConfigException,
+                DslEvaluationException, DataSourceUnavailableException, ReportGenerationException {
 
     protected WichtelmException(String message) {
         super(message);

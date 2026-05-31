@@ -1,0 +1,31 @@
+# Parameter sweep over the daily swing strategy on the synthetic EQUITY TSTX
+# (CLAUDE.md section 18). Reuses the same strategy and CSV fixtures as
+# tstx-swing-1d.toml; the only addition is the [sweep] table. Run offline with:
+#
+#   wichtelm sweep tstx-swing-1d-sweep.toml --objective sharpe --top 5
+#
+# It loads the market data once, runs every combination of the swept
+# parameters, prints a ranked table (best Sharpe first) and writes a
+# {basename}_sweep_{timestamp}.csv of combination -> metrics into reports/.
+# Re-run with --objective total_return to rank by raw profit instead.
+strategy    = "strategies/swing-multi-tf.strat"
+symbol      = "TSTX"
+data_source = "csv"
+[date_range]
+from = 2021-06-01
+to   = 2023-06-01
+[sizing]
+position_size_pct = 50
+pyramiding        = false
+[output]
+directory = "reports"
+[csv]
+file = "data/{symbol}_{timeframe}.csv"
+
+# Sweep four of the strategy's parameters. The grid is the Cartesian product:
+# oversold(3) × overbought(3) × stop_loss_pct(3) × take_profit_pct(3) = 81 runs.
+[sweep]
+oversold        = { from = 25, to = 35, step = 5 }   # 25, 30, 35
+overbought      = { from = 65, to = 75, step = 5 }   # 65, 70, 75
+stop_loss_pct   = [3, 5, 8]
+take_profit_pct = [8, 12, 16]

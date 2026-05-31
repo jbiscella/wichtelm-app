@@ -31,7 +31,7 @@ import java.util.function.UnaryOperator;
  * the data source, load the primary and higher-timeframe series, build the
  * SignalGenerator and BacktestSpec, and run the frau-holle backtester.
  */
-public final class BacktestRunner {
+public class BacktestRunner {
 
     /** Position sizing is percentage-based, so the initial capital is a fixed normalized base. */
     private static final BigDecimal NORMALIZED_INITIAL_CAPITAL = new BigDecimal("100000");
@@ -58,6 +58,20 @@ public final class BacktestRunner {
      */
     public BacktestRunResult run(ParsedStrategy strategy, BacktestConfig config,
                                  Map<String, BigDecimal> parameters) throws BacktestException {
+        return runWith(strategy, config, parameters, loadMarketData(strategy, config));
+    }
+
+    /**
+     * Loads the market data a backtest needs (CLAUDE.md section 6.1 steps 4-5):
+     * the primary-timeframe series and any higher-timeframe Background series,
+     * each verified to span the primary range. This phase depends only on the
+     * symbol, timeframes and date range — not on parameter values — so a sweep
+     * loads it once and reuses it across every parameter combination
+     * (CLAUDE.md section 18).
+     *
+     * @throws DataSourceUnavailableException when market data cannot be loaded
+     */
+    public LoadedMarketData loadMarketData(ParsedStrategy strategy, BacktestConfig config) {
         MarketDataSource dataSource = dataSourceFor(config);
         Instant from = config.dateFrom().atStartOfDay(ZoneOffset.UTC).toInstant();
         Instant until = config.dateTo().plusDays(1).atStartOfDay(ZoneOffset.UTC).toInstant();
@@ -86,13 +100,32 @@ public final class BacktestRunner {
             verifySpansPrimaryRange(tf, bars, primarySeries);
             higherTimeframeBars.put(tf.wire(), bars);
         }
+        return new LoadedMarketData(primarySeries, higherTimeframeBars);
+    }
+
+    /**
+     * Runs a backtest against already-loaded market data for a single parameter
+     * set (CLAUDE.md section 6.1 steps 6-9): build the SignalGenerator and the
+     * parameter-dependent Tier B prepass, then run the frau-holle backtester.
+     * This phase varies per parameter combination in a sweep; the data passed in
+     * does not.
+     *
+     * @throws BacktestException     rethrown from the frau-holle engine (CLAUDE.md section 8)
+     * @throws DataSourceUnavailableException when the loaded data is too small to run
+     */
+    public BacktestRunResult runWith(ParsedStrategy strategy, BacktestConfig config,
+                                     Map<String, BigDecimal> parameters,
+                                     LoadedMarketData data) throws BacktestException {
+        List<OHLCBar> primarySeries = data.primarySeries();
+        Map<String, List<OHLCBar>> higherTimeframeBars = data.higherTimeframeBars();
 
         WichtelmSignalGenerator generator = new WichtelmSignalGenerator(strategy, parameters,
                 config.positionSizePct(), config.pyramiding(), higherTimeframeBars);
         // Tier B pattern prepass: build the nachtkrapp match index ONCE over
         // the closed primary series so per-bar boolean primitives are an
         // O(1) Set membership check. The empty index returned for strategies
-        // that declare no Tier B calls is a cheap no-op.
+        // that declare no Tier B calls is a cheap no-op. This is rebuilt per
+        // parameter set because the resolved rule arguments are parameter-driven.
         generator.setNachtkrappMatchIndex(
                 NachtkrappMatchIndex.buildFor(strategy, parameters, primarySeries,
                         higherTimeframeBars));

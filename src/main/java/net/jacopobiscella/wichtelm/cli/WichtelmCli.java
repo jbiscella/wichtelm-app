@@ -5,6 +5,7 @@ import net.jacopobiscella.wichtelm.config.ConfigParser;
 import net.jacopobiscella.wichtelm.config.ParameterResolver;
 import net.jacopobiscella.wichtelm.error.ConfigParseException;
 import net.jacopobiscella.wichtelm.error.StrategyParseException;
+import net.jacopobiscella.wichtelm.error.SweepConfigException;
 import net.jacopobiscella.wichtelm.error.WichtelmException;
 import net.jacopobiscella.wichtelm.report.HtmlReportGenerator;
 import net.jacopobiscella.wichtelm.report.ReportData;
@@ -12,6 +13,11 @@ import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunner;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParser;
+import net.jacopobiscella.wichtelm.sweep.SweepConsoleReport;
+import net.jacopobiscella.wichtelm.sweep.SweepCsvWriter;
+import net.jacopobiscella.wichtelm.sweep.SweepObjective;
+import net.jacopobiscella.wichtelm.sweep.SweepResult;
+import net.jacopobiscella.wichtelm.sweep.SweepRunner;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.frauholle.error.BacktestException;
 
@@ -25,7 +31,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.function.UnaryOperator;
 
 /**
@@ -75,6 +83,7 @@ public final class WichtelmCli {
                 yield EXIT_SUCCESS;
             }
             case "run" -> runBacktest(Arrays.copyOfRange(args, 1, args.length));
+            case "sweep" -> runSweep(Arrays.copyOfRange(args, 1, args.length));
             case "validate" -> validateStrategy(Arrays.copyOfRange(args, 1, args.length));
             default -> {
                 err.println("unknown command: " + args[0]);
@@ -139,6 +148,139 @@ public final class WichtelmCli {
         }
     }
 
+    private int runSweep(String[] args) {
+        String configPath = null;
+        boolean noReport = false;
+        Path outputOverride = null;
+        SweepObjective objective = SweepObjective.defaultObjective();
+        int top = 10;
+        int maxCombos = 500;
+        for (int i = 0; i < args.length; i++) {
+            switch (args[i]) {
+                case "--no-report" -> noReport = true;
+                case "--output-dir" -> {
+                    if (++i >= args.length) {
+                        err.println("--output-dir requires a path argument");
+                        return EXIT_USAGE;
+                    }
+                    outputOverride = Path.of(args[i]);
+                }
+                case "--objective" -> {
+                    if (++i >= args.length) {
+                        err.println("--objective requires a metric name");
+                        return EXIT_USAGE;
+                    }
+                    Optional<SweepObjective> parsed = SweepObjective.fromWire(args[i]);
+                    if (parsed.isEmpty()) {
+                        err.println("unknown --objective '" + args[i] + "'; expected one of: "
+                                + SweepObjective.wireList());
+                        return EXIT_USAGE;
+                    }
+                    objective = parsed.get();
+                }
+                case "--top" -> {
+                    if (++i >= args.length) {
+                        err.println("--top requires a positive integer");
+                        return EXIT_USAGE;
+                    }
+                    Integer parsed = positiveInt(args[i], "--top");
+                    if (parsed == null) {
+                        return EXIT_USAGE;
+                    }
+                    top = parsed;
+                }
+                case "--max-combos" -> {
+                    if (++i >= args.length) {
+                        err.println("--max-combos requires a positive integer");
+                        return EXIT_USAGE;
+                    }
+                    Integer parsed = positiveInt(args[i], "--max-combos");
+                    if (parsed == null) {
+                        return EXIT_USAGE;
+                    }
+                    maxCombos = parsed;
+                }
+                default -> {
+                    if (configPath != null) {
+                        err.println("unexpected argument: " + args[i]);
+                        return EXIT_USAGE;
+                    }
+                    configPath = args[i];
+                }
+            }
+        }
+        if (configPath == null) {
+            err.println("wichtelm sweep requires a config file");
+            return EXIT_USAGE;
+        }
+
+        Path configFile = Path.of(configPath);
+        try {
+            String toml = Files.readString(configFile);
+            BacktestConfig config = ConfigParser.parse(toml, configFile.toString());
+            config.warnings().forEach(warning -> err.println("warning: " + warning));
+            // Treat a present-but-empty [sweep] table (every axis commented out)
+            // the same as an absent one: otherwise the grid would expand to a
+            // single empty combination and report a bogus "successful" sweep.
+            if (config.sweep().isEmpty() || config.sweep().get().isEmpty()) {
+                err.println("config has no [sweep] axes; nothing to sweep. Use "
+                        + "'wichtelm run' for a single backtest, or add axes to the [sweep] table.");
+                return EXIT_USAGE;
+            }
+            ParsedStrategy strategy = StrategyParser.parse(config.strategyPath());
+            List<SweepResult> rows = new SweepRunner(new BacktestRunner(environment))
+                    .run(strategy, config, objective, top, maxCombos);
+            List<String> axisNames = config.sweep().get().parameterNames();
+            Map<String, BigDecimal> baseParameters = ParameterResolver.resolve(strategy, config);
+            out.println(SweepConsoleReport.render(rows, axisNames, objective, top, baseParameters));
+            if (noReport) {
+                out.println("Sweep complete; CSV suppressed by --no-report.");
+            } else {
+                Path csv = writeSweepCsv(config, configFile, rows, axisNames, objective,
+                        outputOverride);
+                out.println("Sweep complete; results written to " + csv);
+            }
+            return EXIT_SUCCESS;
+        } catch (IOException | UncheckedIOException e) {
+            err.println("cannot read a required file: " + e.getMessage());
+            return EXIT_ERROR;
+        } catch (WichtelmException e) {
+            // SweepRunner records a failed combination as a result row rather
+            // than throwing, so a BacktestException never escapes the run; the
+            // exceptions that reach here are parse/config/data-source failures.
+            err.println(describe(e));
+            return EXIT_ERROR;
+        }
+    }
+
+    private Integer positiveInt(String raw, String flag) {
+        try {
+            int value = Integer.parseInt(raw);
+            if (value < 1) {
+                err.println(flag + " must be a positive integer, was " + raw);
+                return null;
+            }
+            return value;
+        } catch (NumberFormatException e) {
+            err.println(flag + " must be a positive integer, was " + raw);
+            return null;
+        }
+    }
+
+    private Path writeSweepCsv(BacktestConfig config, Path configFile, List<SweepResult> rows,
+                               List<String> axisNames, SweepObjective objective,
+                               Path outputOverride) {
+        String fileName = configFile.getFileName().toString();
+        int dot = fileName.lastIndexOf('.');
+        String basename = dot > 0 ? fileName.substring(0, dot) : fileName;
+        Path outputDirectory = outputOverride != null
+                ? outputOverride
+                : config.outputDirectory().orElse(Path.of("."));
+        LocalDateTime generatedAt = LocalDateTime.now(ZoneOffset.UTC);
+        return SweepCsvWriter.write(rows, axisNames, objective, outputDirectory, basename,
+                generatedAt);
+    }
+
     private int validateStrategy(String[] args) {
         if (args.length != 1) {
             err.println("wichtelm validate requires exactly one strategy file");
@@ -189,6 +331,8 @@ public final class WichtelmCli {
                     + " — " + s.getMessage();
             case ConfigParseException c -> "ConfigParseException [" + c.violatedRule() + "] at "
                     + c.filePath() + " (" + c.keyPath() + ") — " + c.getMessage();
+            case SweepConfigException s -> "SweepConfigException [" + s.violatedRule() + "] at "
+                    + s.filePath() + " (" + s.keyPath() + ") — " + s.getMessage();
             default -> e.getClass().getSimpleName() + ": " + e.getMessage();
         };
         return head + causeChain(e);
@@ -221,9 +365,15 @@ public final class WichtelmCli {
         stream.println("""
                 Usage:
                   wichtelm run <config-file> [--no-report] [--output-dir <path>]
+                  wichtelm sweep <config-file> [--objective <metric>] [--top <N>]
+                                               [--max-combos <N>] [--no-report] [--output-dir <path>]
                   wichtelm validate <strat-file>
                   wichtelm --version
                   wichtelm --help
+
+                sweep runs every combination declared in the config's [sweep] table and
+                ranks them by --objective (default sharpe; also total_return, sortino,
+                calmar, profit_factor), printing a ranked table and writing a CSV.
 
                 NOT financial advice. Use at your own risk. See README for full disclaimer.""");
     }

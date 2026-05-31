@@ -113,6 +113,7 @@ class WinLossCountReconciliationTest {
                 false,
                 Map.of(),
                 Optional.empty(),
+                Optional.empty(),
                 Optional.of(tempDir.resolve("{symbol}_{timeframe}.csv")),
                 Optional.empty(),
                 List.of());

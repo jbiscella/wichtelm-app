@@ -117,7 +117,7 @@ public class TierBSteps {
                 "TBX",
                 LocalDate.parse("2024-03-01"), LocalDate.parse("2024-04-01"),
                 DataSource.CSV, BigDecimal.valueOf(50), false,
-                Map.of(), Optional.empty(),
+                Map.of(), Optional.empty(), Optional.empty(),
                 Optional.of(tempCsvDir.resolve("{symbol}_{timeframe}.csv")),
                 Optional.empty(), List.of());
         run = new BacktestRunner().run(strategy, config, Map.of());
@@ -153,7 +153,7 @@ public class TierBSteps {
                 tempCsvDir.resolve("config.toml"), tempCsvDir.resolve("strategy.strat"),
                 "TBX", LocalDate.parse("2024-03-01"), LocalDate.parse("2024-04-01"),
                 DataSource.CSV, BigDecimal.valueOf(50), false,
-                Map.of(), Optional.empty(),
+                Map.of(), Optional.empty(), Optional.empty(),
                 Optional.of(tempCsvDir.resolve("{symbol}_{timeframe}.csv")),
                 Optional.empty(), List.of());
     }
