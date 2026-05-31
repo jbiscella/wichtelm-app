@@ -53,6 +53,22 @@ public class CliBehaviorSteps {
                 Then bogus_condition
             """;
 
+    private static final String SWEEPABLE_STRATEGY = """
+            Feature: CLI sweep test strategy
+              Primary timeframe: 1h
+              Parameter fast default 3
+
+              Scenario: Enter
+                Given no open position
+                When close is above sma(fast)
+                Then long_entry
+
+              Scenario: Exit
+                Given a long position is open
+                When close is below sma(fast)
+                Then long_exit
+            """;
+
     private final Map<String, String> environment = new HashMap<>();
     private Path tempDir;
     private Path configFile;
@@ -114,6 +130,22 @@ public class CliBehaviorSteps {
         writeConfig("[csv]\nfile = \"" + tempDir.resolve("{symbol}_{timeframe}.csv") + "\"\n");
     }
 
+    @Given("a sweep backtest config with a parseable strategy and CSV data")
+    public void aSweepBacktestConfig() throws IOException {
+        strategyFile = tempDir.resolve("strategy.strat");
+        Files.writeString(strategyFile, SWEEPABLE_STRATEGY);
+        writeHourlyCsv();
+        String toml = "strategy = \"" + strategyFile + "\"\n"
+                + "symbol = \"AAPL\"\ndata_source = \"csv\"\n\n"
+                + "[date_range]\nfrom = 2024-01-01\nto = 2024-01-10\n\n"
+                + "[sizing]\nposition_size_pct = 50\n\n"
+                + "[output]\ndirectory = \"" + tempDir.resolve("reports") + "\"\n\n"
+                + "[csv]\nfile = \"" + tempDir.resolve("{symbol}_{timeframe}.csv") + "\"\n\n"
+                + "[sweep]\nfast = { from = 2, to = 4, step = 1 }\n";
+        configFile = tempDir.resolve("my_backtest.toml");
+        Files.writeString(configFile, toml);
+    }
+
     @Given("a backtest config referencing a malformed strategy file")
     public void aConfigReferencingAMalformedStrategy() throws IOException {
         strategyFile = tempDir.resolve("strategy.strat");
@@ -142,6 +174,21 @@ public class CliBehaviorSteps {
     @When("wichtelm runs the config")
     public void wichtelmRunsTheConfig() {
         invoke("run", configFile.toString());
+    }
+
+    @When("wichtelm sweeps the config")
+    public void wichtelmSweepsTheConfig() {
+        invoke("sweep", configFile.toString());
+    }
+
+    @When("wichtelm sweeps the config with {string}")
+    public void wichtelmSweepsTheConfigWith(String extraArgs) {
+        String[] extra = extraArgs.split(" ");
+        String[] args = new String[extra.length + 2];
+        args[0] = "sweep";
+        args[1] = configFile.toString();
+        System.arraycopy(extra, 0, args, 2, extra.length);
+        invoke(args);
     }
 
     @When("wichtelm validates the strategy file")
@@ -187,6 +234,29 @@ public class CliBehaviorSteps {
     private boolean htmlReportExists() throws IOException {
         try (Stream<Path> paths = Files.walk(tempDir)) {
             return paths.anyMatch(p -> p.toString().endsWith(".html"));
+        }
+    }
+
+    @Then("stdout contains a ranked sweep table")
+    public void stdoutContainsRankedSweepTable() {
+        assertTrue(stdout.contains("rank") && stdout.contains("fast"),
+                () -> "stdout is not a ranked sweep table: " + stdout);
+    }
+
+    @Then("a sweep CSV file is created")
+    public void aSweepCsvFileIsCreated() throws IOException {
+        assertTrue(sweepCsvExists(), "no sweep CSV file was produced");
+    }
+
+    @Then("no sweep CSV file is created")
+    public void noSweepCsvFileIsCreated() throws IOException {
+        assertFalse(sweepCsvExists(), "a sweep CSV file was unexpectedly produced");
+    }
+
+    private boolean sweepCsvExists() throws IOException {
+        try (Stream<Path> paths = Files.walk(tempDir)) {
+            return paths.anyMatch(p -> p.getFileName().toString().contains("_sweep_")
+                    && p.toString().endsWith(".csv"));
         }
     }
 
