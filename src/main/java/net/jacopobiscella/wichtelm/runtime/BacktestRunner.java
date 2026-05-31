@@ -31,7 +31,7 @@ import java.util.function.UnaryOperator;
  * the data source, load the primary and higher-timeframe series, build the
  * SignalGenerator and BacktestSpec, and run the frau-holle backtester.
  */
-public final class BacktestRunner {
+public class BacktestRunner {
 
     /** Position sizing is percentage-based, so the initial capital is a fixed normalized base. */
     private static final BigDecimal NORMALIZED_INITIAL_CAPITAL = new BigDecimal("100000");
