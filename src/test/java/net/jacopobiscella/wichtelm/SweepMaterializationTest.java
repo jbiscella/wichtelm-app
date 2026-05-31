@@ -6,6 +6,9 @@ import net.jacopobiscella.wichtelm.config.SweepParameterResolver;
 import net.jacopobiscella.wichtelm.error.SweepConfigException;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParser;
+import net.jacopobiscella.wichtelm.sweep.SweepGrid;
+import net.jacopobiscella.wichtelm.sweep.SweepObjective;
+import net.jacopobiscella.wichtelm.sweep.SweepSpec;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
@@ -13,6 +16,8 @@ import java.io.IOException;
 import java.math.BigDecimal;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -89,6 +94,38 @@ class SweepMaterializationTest {
         BacktestConfig config = config(dir, "trend_period = { from = 1, to = 1000000, step = 1 }\n", "");
         SweepConfigException e = assertThrows(SweepConfigException.class,
                 () -> SweepParameterResolver.resolveAxes(strategy(dir), config, 500));
+        assertEquals("C15", e.violatedRule());
+    }
+
+    @Test
+    void nonFiniteSweepValueIsRejectedByC14(@TempDir Path dir) throws IOException {
+        Path strat = dir.resolve("strategy.strat");
+        Files.writeString(strat, STRATEGY);
+        String toml = "strategy = \"" + strat + "\"\n"
+                + "symbol = \"AAPL\"\ndata_source = \"eodhd\"\n\n"
+                + "[date_range]\nfrom = 2024-01-01\nto = 2024-12-31\n\n"
+                + "[sizing]\nposition_size_pct = 50\n\n"
+                + "[eodhd]\napi_token_env = \"EODHD_API_TOKEN\"\n"
+                + "\n[sweep]\nstop_loss_pct = { from = nan, to = 1, step = 0.5 }\n";
+        SweepConfigException e = assertThrows(SweepConfigException.class,
+                () -> ConfigParser.parse(toml, dir.resolve("config.toml").toString()));
+        assertEquals("C14", e.violatedRule());
+    }
+
+    @Test
+    void manyInRangeAxesWhoseProductOverflowsAreStillRejectedByC15() {
+        List<BigDecimal> axis = new ArrayList<>();
+        for (int v = 0; v < 500; v++) {
+            axis.add(BigDecimal.valueOf(v));
+        }
+        Map<String, List<BigDecimal>> axes = new LinkedHashMap<>();
+        for (int i = 0; i < 8; i++) {   // 500^8 overflows a long
+            axes.put("p" + i, axis);
+        }
+        SweepSpec spec = new SweepSpec(axes, SweepObjective.SHARPE, 5, 500);
+        assertEquals(Long.MAX_VALUE, spec.combinationCount(), "product must saturate, not wrap");
+        SweepConfigException e = assertThrows(SweepConfigException.class,
+                () -> SweepGrid.expand(spec, "config.toml"));
         assertEquals("C15", e.violatedRule());
     }
 }

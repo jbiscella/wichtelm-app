@@ -213,6 +213,12 @@ public final class ConfigParser {
     private BigDecimal numeric(Object value, String key, String field) {
         return switch (value) {
             case Long l -> new BigDecimal(l, DECIMAL);
+            // TOML's nan / inf reach here as a non-finite Double; new BigDecimal(d)
+            // would throw NumberFormatException and escape the C14 path, so reject
+            // them explicitly with the documented sweep config error.
+            case Double d when !Double.isFinite(d) -> throw sweepFail(
+                    "sweep." + key + "." + field, "C14",
+                    "sweep '" + key + "' " + field + " must be a finite number, was " + d);
             case Double d -> new BigDecimal(d, DECIMAL);
             case null, default -> throw sweepFail("sweep." + key + "." + field, "C14",
                     "sweep '" + key + "' " + field + " must be a numeric value");

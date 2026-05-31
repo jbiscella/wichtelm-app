@@ -33,11 +33,22 @@ public record SweepSpec(Map<String, List<BigDecimal>> axes,
         }
     }
 
-    /** The number of combinations the grid will expand to (the product of axis sizes). */
+    /**
+     * The number of combinations the grid will expand to (the product of axis
+     * sizes), saturating at {@link Long#MAX_VALUE} rather than wrapping. Several
+     * axes each within {@code --max-combos} can still multiply past
+     * {@code Long.MAX_VALUE} (e.g. eight axes of 500); an unchecked product would
+     * wrap and could slip under the cap, so the saturated value keeps the C15
+     * check in {@code SweepGrid.expand} correct.
+     */
     public long combinationCount() {
         long product = 1;
         for (List<BigDecimal> values : axes.values()) {
-            product *= values.size();
+            try {
+                product = Math.multiplyExact(product, (long) values.size());
+            } catch (ArithmeticException overflow) {
+                return Long.MAX_VALUE;
+            }
         }
         return product;
     }
