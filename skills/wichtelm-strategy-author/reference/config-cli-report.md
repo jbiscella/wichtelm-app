@@ -71,7 +71,7 @@ The optional `[sweep]` section (used only by `wichtelm sweep`, see CLI below) ad
 |---|---|
 | C12 | a parameter must not appear in both `[parameters]` (fixed) and `[sweep]` (varied) |
 | C13 | every `[sweep]` key must name a `Parameter` declared in the strategy |
-| C14 | a range `{ from, to, step }` needs numeric values with `step > 0` and `from <= to` (an integer parameter's step must be whole); a value list `[ … ]` must be non-empty and numeric |
+| C14 | a range `{ from, to, step }` needs finite numeric values (TOML `nan`/`inf` rejected) with `step > 0` and `from <= to`; a value list `[ … ]` must be non-empty and finite-numeric. For an **integer** parameter, `from`/`to`/`step` must *all* be whole (checked once the strategy's parameter type is known, like C13) |
 | C15 | the grid (product of axis sizes) must not exceed `--max-combos` (default 500) — checked before any backtest runs |
 
 A C12–C15 violation throws a `SweepConfigException` (a sibling of `ConfigParseException`).

@@ -108,10 +108,12 @@ public final class SweepParameterResolver {
             requireWhole(name, "step", range.step(), config);
         }
         List<BigDecimal> values = new ArrayList<>();
-        // Honor the inclusive 'to' bound within a tiny relative epsilon so a
+        // Honor the inclusive 'to' bound within a tiny fraction of the step so a
         // decimal endpoint that lands fractionally past 'to' due to DECIMAL64
-        // rounding is kept — but never emit a value beyond the declared 'to'.
-        BigDecimal inclusiveBound = range.to().add(endpointTolerance(range.to()), DECIMAL);
+        // rounding is kept — but never emit a value beyond the declared 'to'. The
+        // tolerance is scaled to the step (not the endpoint magnitude) so it can
+        // never rival a whole step even for very large endpoints.
+        BigDecimal inclusiveBound = range.to().add(endpointTolerance(range.step()), DECIMAL);
         for (BigDecimal value = range.from();
              value.compareTo(inclusiveBound) <= 0;
              value = value.add(range.step(), DECIMAL)) {
@@ -127,12 +129,14 @@ public final class SweepParameterResolver {
     }
 
     /**
-     * A near-equality tolerance scaled to the endpoint magnitude, so a DECIMAL64
-     * rounding wobble at {@code to} is absorbed without admitting the next whole
-     * step. Far smaller than half a step, it never reaches the following value.
+     * A near-equality tolerance for the inclusive endpoint: a tiny fraction of the
+     * step, large enough to absorb a DECIMAL64 rounding wobble at {@code to} yet
+     * always far below a whole step, so a value genuinely beyond the declared
+     * {@code to} is never emitted — even for large endpoints, where a
+     * magnitude-relative epsilon could grow to rival the step.
      */
-    private static BigDecimal endpointTolerance(BigDecimal to) {
-        return to.abs().max(BigDecimal.ONE).multiply(new BigDecimal("1E-12"), DECIMAL);
+    private static BigDecimal endpointTolerance(BigDecimal step) {
+        return step.multiply(new BigDecimal("1E-9"), DECIMAL);
     }
 
     private static void requireWhole(String name, String field, BigDecimal value,

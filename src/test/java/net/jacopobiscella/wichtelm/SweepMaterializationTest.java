@@ -98,6 +98,18 @@ class SweepMaterializationTest {
     }
 
     @Test
+    void largeEndpointDoesNotOvershootTo(@TempDir Path dir) throws IOException {
+        BacktestConfig config = config(dir,
+                "trend_period = { from = 999999999998, to = 1000000000000, step = 1 }\n", "");
+        Map<String, List<BigDecimal>> axes =
+                SweepParameterResolver.resolveAxes(strategy(dir), config, 500);
+        List<BigDecimal> values = axes.get("trend_period");
+        assertEquals(3, values.size(), () -> "expected the three endpoint values, got " + values);
+        assertEquals(0, new BigDecimal("1000000000000").compareTo(values.get(values.size() - 1)),
+                () -> "last value must be exactly 'to', got " + values);
+    }
+
+    @Test
     void nonFiniteSweepValueIsRejectedByC14(@TempDir Path dir) throws IOException {
         Path strat = dir.resolve("strategy.strat");
         Files.writeString(strat, STRATEGY);

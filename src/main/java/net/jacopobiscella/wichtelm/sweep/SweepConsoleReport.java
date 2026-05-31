@@ -108,7 +108,10 @@ public final class SweepConsoleReport {
             Map<String, BigDecimal> effective = new LinkedHashMap<>(baseParameters);
             effective.putAll(winner.combination());
             for (Map.Entry<String, BigDecimal> entry : effective.entrySet()) {
-                sb.append(entry.getKey()).append(" = ").append(num(entry.getValue())).append('\n');
+                // Exact, unrounded: this block is meant to be pasted back into a
+                // config to reproduce the row, so it must not lose precision the
+                // way the display-rounded table columns do.
+                sb.append(entry.getKey()).append(" = ").append(exact(entry.getValue())).append('\n');
             }
         }
         return sb.toString();
@@ -132,5 +135,10 @@ public final class SweepConsoleReport {
         }
         return value.setScale(Math.min(value.scale(), 4), RoundingMode.HALF_UP)
                 .stripTrailingZeros().toPlainString();
+    }
+
+    /** Exact, unrounded plain decimal — for the paste-ready winner block. */
+    private static String exact(BigDecimal value) {
+        return value.stripTrailingZeros().toPlainString();
     }
 }

@@ -80,7 +80,10 @@ public final class SweepCsvWriter {
         for (SweepResult row : rows) {
             csv.append(rank++);
             for (String name : axisNames) {
-                csv.append(',').append(plain(row.combination().get(name)));
+                // Exact, unrounded: this CSV is the combination -> metrics record
+                // (section 18.4), so a swept value must identify exactly what was
+                // backtested. Rounding is reserved for the display metric columns.
+                csv.append(',').append(exact(row.combination().get(name)));
             }
             if (row.metrics().isPresent()) {
                 BacktestMetrics m = row.metrics().get();
@@ -96,8 +99,11 @@ public final class SweepCsvWriter {
                         .append(',').append(objectiveCell(row, objective))
                         .append(",ok,");
             } else {
-                // params columns already written; pad the metric columns.
-                csv.append(",,,,,,,,").append(objective.wire()).append(",,failed,")
+                // Params columns already written; pad the eight metric columns
+                // (total_return..max_drawdown) with nine commas so 'objective'
+                // lands in its own column, then objective name, empty
+                // objective_value, status, and the failure reason.
+                csv.append(",,,,,,,,,").append(objective.wire()).append(",,failed,")
                         .append(escape(row.failure().orElse("")));
             }
             csv.append('\n');
@@ -108,6 +114,14 @@ public final class SweepCsvWriter {
     private static String objectiveCell(SweepResult row, SweepObjective objective) {
         Optional<BigDecimal> value = row.objectiveValue(objective);
         return value.map(SweepCsvWriter::plain).orElse("");
+    }
+
+    /** Exact, unrounded plain decimal — for swept-parameter cells (section 18.4). */
+    private static String exact(BigDecimal value) {
+        if (value == null) {
+            return "";
+        }
+        return value.stripTrailingZeros().toPlainString();
     }
 
     private static String plain(BigDecimal value) {
