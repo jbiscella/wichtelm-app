@@ -6,8 +6,11 @@ import org.hatrack.frauholle.result.BacktestMetrics;
 import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.FileAlreadyExistsException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
@@ -42,10 +45,23 @@ public final class SweepCsvWriter {
                              LocalDateTime generatedAt) {
         try {
             Files.createDirectories(outputDir);
-            Path file = outputDir.resolve(
-                    basename + "_sweep_" + TIMESTAMP.format(generatedAt) + ".csv");
-            Files.writeString(file, render(rows, axisNames, objective));
-            return file;
+            String content = render(rows, axisNames, objective);
+            String stem = basename + "_sweep_" + TIMESTAMP.format(generatedAt);
+            // Never overwrite (section 18.4 / 7.1). The timestamp is only
+            // second-precise, so two sweeps of the same config in the same UTC
+            // second would collide; CREATE_NEW makes each write atomic and a
+            // numeric suffix gives the loser of the race its own file.
+            for (int suffix = 0; ; suffix++) {
+                Path file = outputDir.resolve(
+                        suffix == 0 ? stem + ".csv" : stem + "-" + suffix + ".csv");
+                try {
+                    Files.writeString(file, content, StandardCharsets.UTF_8,
+                            StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE);
+                    return file;
+                } catch (FileAlreadyExistsException collision) {
+                    // try the next suffix
+                }
+            }
         } catch (IOException e) {
             throw new ReportGenerationException("failed to write sweep CSV to " + outputDir, e);
         }

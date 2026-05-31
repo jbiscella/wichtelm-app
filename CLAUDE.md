@@ -798,10 +798,14 @@ overbought = [65, 70, 75]                        # explicit list
 ```
 
 Range materialization is **type-aware** from the parameter's declared type
-(§3.8): an INTEGER parameter steps by whole numbers; a DECIMAL parameter steps
-in `MathContext.DECIMAL64` with the inclusive `to` bound honored within a
-half-step epsilon. Axis order follows TOML declaration order, which fixes the
-deterministic order of the expanded grid.
+(§3.8): an INTEGER parameter steps by whole numbers (its `from` / `to` / `step`
+must all be whole, else C14); a DECIMAL parameter steps in
+`MathContext.DECIMAL64` with the inclusive `to` bound honored within a small
+rounding tolerance — a value that should equal `to` but lands fractionally past
+it due to DECIMAL64 rounding is kept, but a value genuinely beyond the declared
+`to` is never emitted (e.g. `from = 0, to = 1, step = 0.6` yields `0, 0.6` — not
+`1.2`). Axis order follows TOML declaration order, which fixes the deterministic
+order of the expanded grid.
 
 ### 18.2 Sweep validation rules
 

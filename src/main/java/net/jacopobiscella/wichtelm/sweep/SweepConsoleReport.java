@@ -5,7 +5,9 @@ import org.hatrack.frauholle.result.BacktestMetrics;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 
 /**
  * Renders a sweep's ranked results as a monospace console table (CLAUDE.md
@@ -19,8 +21,18 @@ public final class SweepConsoleReport {
     private SweepConsoleReport() {
     }
 
+    /**
+     * @param baseParameters the resolved non-swept parameters (strategy defaults
+     *                        overlaid with the fixed {@code [parameters]}); the
+     *                        winner's paste-ready block prints the full effective
+     *                        set (these overlaid with its swept values) so copying
+     *                        it into a plain config reproduces the ranked row
+     *                        rather than silently reverting fixed parameters to
+     *                        their defaults
+     */
     public static String render(List<SweepResult> rows, List<String> axisNames,
-                                SweepObjective objective, int top) {
+                                SweepObjective objective, int top,
+                                Map<String, BigDecimal> baseParameters) {
         if (rows.isEmpty()) {
             return "Sweep produced no combinations.";
         }
@@ -90,8 +102,13 @@ public final class SweepConsoleReport {
         if (winner.ran()) {
             sb.append("\nBest combination - paste into [parameters] for a full report:\n");
             sb.append("[parameters]\n");
-            for (String name : axisNames) {
-                sb.append(name).append(" = ").append(num(winner.combination().get(name))).append('\n');
+            // Full effective set: base (defaults + fixed [parameters]) overlaid
+            // with the winner's swept values, so the block reproduces this row
+            // standalone instead of dropping fixed parameters back to defaults.
+            Map<String, BigDecimal> effective = new LinkedHashMap<>(baseParameters);
+            effective.putAll(winner.combination());
+            for (Map.Entry<String, BigDecimal> entry : effective.entrySet()) {
+                sb.append(entry.getKey()).append(" = ").append(num(entry.getValue())).append('\n');
             }
         }
         return sb.toString();

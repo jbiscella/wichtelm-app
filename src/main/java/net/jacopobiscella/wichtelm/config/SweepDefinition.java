@@ -1,6 +1,8 @@
 package net.jacopobiscella.wichtelm.config;
 
 import java.math.BigDecimal;
+import java.util.Collections;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -20,7 +22,11 @@ import java.util.Objects;
 public record SweepDefinition(Map<String, Axis> axes) {
 
     public SweepDefinition {
-        axes = Map.copyOf(axes);
+        // An unmodifiable LinkedHashMap copy: Map.copyOf does NOT preserve
+        // insertion order, but section 18.1 requires axis order to follow TOML
+        // declaration order (parameterNames() and the console/CSV column order
+        // depend on it being deterministic).
+        axes = Collections.unmodifiableMap(new LinkedHashMap<>(axes));
     }
 
     public boolean isEmpty() {

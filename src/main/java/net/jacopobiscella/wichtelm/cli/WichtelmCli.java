@@ -5,6 +5,7 @@ import net.jacopobiscella.wichtelm.config.ConfigParser;
 import net.jacopobiscella.wichtelm.config.ParameterResolver;
 import net.jacopobiscella.wichtelm.error.ConfigParseException;
 import net.jacopobiscella.wichtelm.error.StrategyParseException;
+import net.jacopobiscella.wichtelm.error.SweepConfigException;
 import net.jacopobiscella.wichtelm.error.WichtelmException;
 import net.jacopobiscella.wichtelm.report.HtmlReportGenerator;
 import net.jacopobiscella.wichtelm.report.ReportData;
@@ -227,7 +228,8 @@ public final class WichtelmCli {
             List<SweepResult> rows = new SweepRunner(new BacktestRunner(environment))
                     .run(strategy, config, objective, top, maxCombos);
             List<String> axisNames = config.sweep().get().parameterNames();
-            out.println(SweepConsoleReport.render(rows, axisNames, objective, top));
+            Map<String, BigDecimal> baseParameters = ParameterResolver.resolve(strategy, config);
+            out.println(SweepConsoleReport.render(rows, axisNames, objective, top, baseParameters));
             if (noReport) {
                 out.println("Sweep complete; CSV suppressed by --no-report.");
             } else {
@@ -326,6 +328,8 @@ public final class WichtelmCli {
                     + " — " + s.getMessage();
             case ConfigParseException c -> "ConfigParseException [" + c.violatedRule() + "] at "
                     + c.filePath() + " (" + c.keyPath() + ") — " + c.getMessage();
+            case SweepConfigException s -> "SweepConfigException [" + s.violatedRule() + "] at "
+                    + s.filePath() + " (" + s.keyPath() + ") — " + s.getMessage();
             default -> e.getClass().getSimpleName() + ": " + e.getMessage();
         };
         return head + causeChain(e);

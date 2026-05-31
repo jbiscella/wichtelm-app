@@ -36,13 +36,34 @@ public final class SweepParameterResolver {
 
     /**
      * Returns the materialized value sets per swept parameter, keyed in axis
-     * declaration order.
+     * declaration order. Equivalent to {@link #resolveAxes(ParsedStrategy,
+     * BacktestConfig, int)} with no combinatorial cap — use the 3-arg form on
+     * the run path so a single pathological range cannot allocate an unbounded
+     * axis before the grid cap is checked.
      *
      * @throws SweepConfigException if an axis names a parameter the strategy does
      *                              not declare (C13)
      */
     public static Map<String, List<BigDecimal>> resolveAxes(ParsedStrategy strategy,
                                                             BacktestConfig config) {
+        return resolveAxes(strategy, config, Integer.MAX_VALUE);
+    }
+
+    /**
+     * Returns the materialized value sets per swept parameter, keyed in axis
+     * declaration order, rejecting any axis whose own size already exceeds
+     * {@code maxCombos}. Because the grid is the product of the axis sizes, an
+     * axis larger than the cap guarantees the grid exceeds it (C15); catching it
+     * here means a single wide range (e.g. {@code from=1, to=1000000000, step=1})
+     * is rejected before its billion values are ever allocated, rather than after
+     * {@code SweepGrid.expand} would have OOM'd materializing the product.
+     *
+     * @throws SweepConfigException if an axis names a parameter the strategy does
+     *                              not declare (C13), or a materialized axis alone
+     *                              exceeds {@code maxCombos} (C15)
+     */
+    public static Map<String, List<BigDecimal>> resolveAxes(ParsedStrategy strategy,
+                                                            BacktestConfig config, int maxCombos) {
         if (config.sweep().isEmpty()) {
             return Map.of();
         }
@@ -61,38 +82,67 @@ public final class SweepParameterResolver {
                         "sweep." + name, "C13",
                         "sweep parameter '" + name + "' is not declared in the strategy");
             }
-            resolved.put(name, materialize(name, entry.getValue(), type, config));
+            resolved.put(name, materialize(name, entry.getValue(), type, config, maxCombos));
         }
         return resolved;
     }
 
     private static List<BigDecimal> materialize(String name, SweepDefinition.Axis axis,
-                                                ParameterType type, BacktestConfig config) {
+                                                ParameterType type, BacktestConfig config,
+                                                int maxCombos) {
         return switch (axis) {
             case SweepDefinition.ValueList list -> list.values();
-            case SweepDefinition.Range range -> expandRange(name, range, type, config);
+            case SweepDefinition.Range range -> expandRange(name, range, type, config, maxCombos);
         };
     }
 
     private static List<BigDecimal> expandRange(String name, SweepDefinition.Range range,
-                                                ParameterType type, BacktestConfig config) {
-        if (type == ParameterType.INTEGER && !isWhole(range.step())) {
-            throw new SweepConfigException(config.configPath().toString(),
-                    "sweep." + name + ".step", "C14",
-                    "sweep step for integer parameter '" + name + "' must be a whole number, was "
-                            + range.step());
+                                                ParameterType type, BacktestConfig config,
+                                                int maxCombos) {
+        if (type == ParameterType.INTEGER) {
+            // An integer axis must materialize whole values, so from / to / step
+            // all have to be whole — checking only the step would let a range like
+            // {from=1.5, to=3.5, step=1} push fractional values into the backtest.
+            requireWhole(name, "from", range.from(), config);
+            requireWhole(name, "to", range.to(), config);
+            requireWhole(name, "step", range.step(), config);
         }
         List<BigDecimal> values = new ArrayList<>();
-        // Honor the inclusive 'to' bound within half a step so a decimal endpoint
-        // that lands fractionally past 'to' due to DECIMAL64 rounding is kept.
-        BigDecimal epsilon = range.step().divide(BigDecimal.valueOf(2), DECIMAL);
-        BigDecimal inclusiveBound = range.to().add(epsilon, DECIMAL);
+        // Honor the inclusive 'to' bound within a tiny relative epsilon so a
+        // decimal endpoint that lands fractionally past 'to' due to DECIMAL64
+        // rounding is kept — but never emit a value beyond the declared 'to'.
+        BigDecimal inclusiveBound = range.to().add(endpointTolerance(range.to()), DECIMAL);
         for (BigDecimal value = range.from();
              value.compareTo(inclusiveBound) <= 0;
              value = value.add(range.step(), DECIMAL)) {
             values.add(type == ParameterType.INTEGER ? value.stripTrailingZeros() : value);
+            if (values.size() > maxCombos) {
+                throw new SweepConfigException(config.configPath().toString(),
+                        "sweep." + name, "C15",
+                        "sweep axis '" + name + "' materializes more than the cap of " + maxCombos
+                                + " combinations; narrow the range or raise --max-combos");
+            }
         }
         return values;
+    }
+
+    /**
+     * A near-equality tolerance scaled to the endpoint magnitude, so a DECIMAL64
+     * rounding wobble at {@code to} is absorbed without admitting the next whole
+     * step. Far smaller than half a step, it never reaches the following value.
+     */
+    private static BigDecimal endpointTolerance(BigDecimal to) {
+        return to.abs().max(BigDecimal.ONE).multiply(new BigDecimal("1E-12"), DECIMAL);
+    }
+
+    private static void requireWhole(String name, String field, BigDecimal value,
+                                     BacktestConfig config) {
+        if (!isWhole(value)) {
+            throw new SweepConfigException(config.configPath().toString(),
+                    "sweep." + name + "." + field, "C14",
+                    "sweep " + field + " for integer parameter '" + name
+                            + "' must be a whole number, was " + value);
+        }
     }
 
     private static boolean isWhole(BigDecimal value) {

@@ -47,7 +47,8 @@ public final class SweepRunner {
      */
     public List<SweepResult> run(ParsedStrategy strategy, BacktestConfig config,
                                  SweepObjective objective, int top, int maxCombos) {
-        Map<String, List<BigDecimal>> axes = SweepParameterResolver.resolveAxes(strategy, config);
+        Map<String, List<BigDecimal>> axes =
+                SweepParameterResolver.resolveAxes(strategy, config, maxCombos);
         SweepSpec spec = new SweepSpec(axes, objective, top, maxCombos);
         List<Map<String, BigDecimal>> grid = SweepGrid.expand(spec, config.configPath().toString());
 
@@ -76,6 +77,13 @@ public final class SweepRunner {
             BacktestRunResult result = backtestRunner.runWith(strategy, config, parameters, data);
             return SweepResult.success(combination, result.result().metrics());
         } catch (WichtelmException | BacktestException e) {
+            return SweepResult.failed(combination, e.getClass().getSimpleName() + ": " + e.getMessage());
+        } catch (RuntimeException e) {
+            // A bad swept value can trip an unchecked failure before frau-holle
+            // runs — e.g. a period that fails intValueExact()/a rule-constructor
+            // IllegalArgumentException inside NachtkrappMatchIndex.buildFor. Per
+            // section 18.3 that combination is recorded as a failed row, not fatal
+            // to the whole sweep.
             return SweepResult.failed(combination, e.getClass().getSimpleName() + ": " + e.getMessage());
         }
     }
