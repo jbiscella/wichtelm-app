@@ -16,6 +16,7 @@ import org.hatrack.commons.PriceSource;
 import org.hatrack.commons.Timeframe;
 import org.hatrack.dsl.BarIndicatorSource;
 import org.hatrack.dsl.ExpressionEvaluator;
+import org.hatrack.dsl.error.DslEvaluationException;
 import org.hatrack.frauholle.model.EquityPoint;
 import org.hatrack.frauholle.model.Position;
 import org.hatrack.frauholle.model.Trade;
@@ -1369,8 +1370,20 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                 ? NO_INDICATORS
                 : new BarIndicatorSource(beforeFill, data.strategy().featureName(),
                         beforeFill.getLast().time(), beforeFill.size() - 1);
-        return new ExpressionEvaluator(data.strategy().featureName(), fill, 0)
-                .arithmetic(expression, new ExpressionEvaluator.Scope(values, source));
+        try {
+            return new ExpressionEvaluator(data.strategy().featureName(), fill, 0)
+                    .arithmetic(expression, new ExpressionEvaluator.Scope(values, source));
+        } catch (DslEvaluationException e) {
+            // dsl-eval signals a runtime expression error (e.g. division by zero)
+            // with its own unchecked exception, which is NOT a WichtelmException.
+            // The backtest path has frau-holle wrap such errors into a
+            // BacktestException, but this report-time re-evaluation runs outside
+            // the engine, so wrap it in the report's own WichtelmException to keep
+            // the documented CLI diagnostic instead of an uncaught stack trace.
+            throw new ReportGenerationException(
+                    "failed to evaluate stop_loss/take_profit expression '" + expression
+                            + "' at report time", e);
+        }
     }
 
     /**
