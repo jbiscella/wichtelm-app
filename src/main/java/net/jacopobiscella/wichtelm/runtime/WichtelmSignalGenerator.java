@@ -1,7 +1,6 @@
 package net.jacopobiscella.wichtelm.runtime;
 
 import net.jacopobiscella.wichtelm.error.DslEvaluationException;
-import net.jacopobiscella.wichtelm.runtime.ExpressionEvaluator.Scope;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.FirstClassCondition;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
@@ -11,6 +10,11 @@ import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import net.jacopobiscella.wichtelm.strategy.Timeframes;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.Timeframe;
+import org.hatrack.dsl.BarIndicatorSource;
+import org.hatrack.dsl.ExpressionEvaluator;
+import org.hatrack.dsl.ExpressionEvaluator.Scope;
+import org.hatrack.dsl.NachtkrappMatchIndex;
+import org.hatrack.dsl.error.IndicatorWarmupException;
 import org.hatrack.frauholle.model.BarContext;
 import org.hatrack.frauholle.model.Direction;
 import org.hatrack.frauholle.model.Position;

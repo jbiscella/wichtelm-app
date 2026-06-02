@@ -1,8 +1,6 @@
 package net.jacopobiscella.wichtelm.report;
 
 import net.jacopobiscella.wichtelm.error.ReportGenerationException;
-import net.jacopobiscella.wichtelm.runtime.BarIndicatorSource;
-import net.jacopobiscella.wichtelm.runtime.ExpressionEvaluator;
 import net.jacopobiscella.wichtelm.runtime.SuppressedEntry;
 import net.jacopobiscella.wichtelm.runtime.WichtelmSignalGenerator;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
@@ -16,6 +14,8 @@ import org.hatrack.commons.OHLCSeries;
 import org.hatrack.commons.PivotPointVariant;
 import org.hatrack.commons.PriceSource;
 import org.hatrack.commons.Timeframe;
+import org.hatrack.dsl.BarIndicatorSource;
+import org.hatrack.dsl.ExpressionEvaluator;
 import org.hatrack.frauholle.model.EquityPoint;
 import org.hatrack.frauholle.model.Position;
 import org.hatrack.frauholle.model.Trade;
