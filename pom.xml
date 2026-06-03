@@ -30,10 +30,7 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <maven.compiler.release>25</maven.compiler.release>
 
-    <hatrack.version>0.55.0-alpha</hatrack.version>
-    <!-- dsl-eval was extracted from wichtelm-app and first published at 0.56.0-alpha;
-         the rest of the ha-track stack is still consumed at ${hatrack.version}. -->
-    <dsl.eval.version>0.56.0-alpha</dsl.eval.version>
+    <hatrack.version>0.56.0-alpha</hatrack.version>
     <tomlj.version>1.1.1</tomlj.version>
     <cucumber.version>7.34.3</cucumber.version>
     <junit.bom.version>5.14.4</junit.bom.version>
@@ -93,7 +90,7 @@
     <dependency>
       <groupId>net.jacopobiscella</groupId>
       <artifactId>dsl-eval</artifactId>
-      <version>${dsl.eval.version}</version>
+      <version>${hatrack.version}</version>
     </dependency>
     <dependency>
       <groupId>net.jacopobiscella</groupId>
