@@ -7,10 +7,15 @@ import net.jacopobiscella.wichtelm.config.BacktestConfig;
 import net.jacopobiscella.wichtelm.config.DataSource;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunner;
-import net.jacopobiscella.wichtelm.runtime.NachtkrappMatchIndex;
+import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.BuiltinCatalog;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.StrategyParser;
+import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
+import net.jacopobiscella.wichtelm.strategy.StrategyStep;
+import org.hatrack.commons.Timeframe;
+import org.hatrack.dsl.ExpressionRef;
+import org.hatrack.dsl.NachtkrappMatchIndex;
 import org.hatrack.frauholle.error.BacktestException;
 
 import java.io.IOException;
@@ -20,6 +25,7 @@ import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -214,7 +220,8 @@ public class TierBSteps {
         // primitives (periods, thresholds) keep the BigDecimal arg.
         if (BuiltinCatalog.isPivotPrimitive(name)) {
             NachtkrappMatchIndex index = NachtkrappMatchIndex.buildFor(
-                    strategy, Map.of(), run.primarySeries(), Map.of());
+                    tierBRefs(strategy), Map.of(), run.primarySeries(),
+                        strategy.primaryTimeframe().wire(), Map.of());
             assertTrue(index.hasKey(NachtkrappMatchIndex.Key.pivot(
                             name, arg, strategy.primaryTimeframe().wire())),
                     "the prepass should have indexed " + name + "(" + arg + ")");
@@ -234,7 +241,8 @@ public class TierBSteps {
 
     private void assertPrepassKey(String name, List<BigDecimal> args) {
         NachtkrappMatchIndex index = NachtkrappMatchIndex.buildFor(
-                strategy, Map.of(), run.primarySeries(), Map.of());
+                tierBRefs(strategy), Map.of(), run.primarySeries(),
+                        strategy.primaryTimeframe().wire(), Map.of());
         assertTrue(index.hasKey(new NachtkrappMatchIndex.Key(
                         name, args, strategy.primaryTimeframe().wire())),
                 "the prepass should have indexed " + name + args);
@@ -282,6 +290,27 @@ public class TierBSteps {
                 + (r.result().openPositionAtEnd().isPresent() ? 1 : 0);
     }
 
+    /**
+     * Flattens a strategy into the {@link ExpressionRef} list dsl-eval's
+     * {@code NachtkrappMatchIndex.buildFor} consumes — mirroring what
+     * {@code BacktestRunner} does — so these prepass-introspection assertions can
+     * rebuild the index outside the backtest pipeline.
+     */
+    private static List<ExpressionRef> tierBRefs(ParsedStrategy s) {
+        String primaryTfWire = s.primaryTimeframe().wire();
+        List<ExpressionRef> refs = new ArrayList<>();
+        for (BackgroundSeries series : s.backgroundSeries()) {
+            refs.add(new ExpressionRef(series.expression(),
+                    series.timeframe().map(Timeframe::wire).orElse(primaryTfWire)));
+        }
+        for (StrategyScenario scenario : s.scenarios()) {
+            for (StrategyStep step : scenario.conditionSteps()) {
+                refs.add(new ExpressionRef(step.text(), primaryTfWire));
+            }
+        }
+        return refs;
+    }
+
     @Then("the prepass-derived match count for ha_doji\\() is queryable")
     public void haDojiPrepassQueryable() {
         // The prepass index is built per backtest; the existence of `run`
@@ -289,7 +318,8 @@ public class TierBSteps {
         // backtest pipeline mirrors what BacktestRunner does and lets us
         // assert it returns SOMETHING (an index, not null).
         NachtkrappMatchIndex index = NachtkrappMatchIndex.buildFor(
-                strategy, Map.of(), run.primarySeries(), Map.of());
+                tierBRefs(strategy), Map.of(), run.primarySeries(),
+                        strategy.primaryTimeframe().wire(), Map.of());
         boolean queryable = index.hasKey(
                 new NachtkrappMatchIndex.Key("ha_doji", List.of(),
                         strategy.primaryTimeframe().wire()));

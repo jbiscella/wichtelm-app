@@ -4,9 +4,13 @@ import net.jacopobiscella.wichtelm.config.BacktestConfig;
 import net.jacopobiscella.wichtelm.error.DataSourceUnavailableException;
 import net.jacopobiscella.wichtelm.strategy.BackgroundSeries;
 import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
+import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
+import net.jacopobiscella.wichtelm.strategy.StrategyStep;
 import net.jacopobiscella.wichtelm.strategy.Timeframes;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.Timeframe;
+import org.hatrack.dsl.ExpressionRef;
+import org.hatrack.dsl.NachtkrappMatchIndex;
 import org.hatrack.frauholle.csv.CsvMarketDataSource;
 import org.hatrack.frauholle.engine.Backtester;
 import org.hatrack.frauholle.eodhd.EodhdMarketDataSource;
@@ -21,6 +25,7 @@ import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.time.Instant;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -127,8 +132,8 @@ public class BacktestRunner {
         // that declare no Tier B calls is a cheap no-op. This is rebuilt per
         // parameter set because the resolved rule arguments are parameter-driven.
         generator.setNachtkrappMatchIndex(
-                NachtkrappMatchIndex.buildFor(strategy, parameters, primarySeries,
-                        higherTimeframeBars));
+                NachtkrappMatchIndex.buildFor(tierBExpressionRefs(strategy), parameters,
+                        primarySeries, strategy.primaryTimeframe().wire(), higherTimeframeBars));
 
         // The most common run-time failure is that the data source returned too
         // few bars for the primary timeframe (frau-holle's BacktestSpec rejects a
@@ -155,6 +160,31 @@ public class BacktestRunner {
         BacktestResult result = new Backtester().run(spec);
         return new BacktestRunResult(result, primarySeries, higherTimeframeBars,
                 generator.triggerTimes(), generator.suppressedEntries());
+    }
+
+    /**
+     * Flattens the strategy into the {@link ExpressionRef} list the {@code dsl-eval}
+     * {@link NachtkrappMatchIndex#buildFor} consumes: every Background series
+     * expression (carrying its declared timeframe, or the primary when declared
+     * without {@code on}) and every Scenario condition step (always on the primary
+     * timeframe). This is the strategy walk that used to live inside the local
+     * {@code buildFor}; lifting it to the caller is what lets {@code dsl-eval} stay
+     * free of any wichtelm strategy-model dependency. Behaviour is unchanged — the
+     * same texts and timeframes are handed to the same detection logic.
+     */
+    private static List<ExpressionRef> tierBExpressionRefs(ParsedStrategy strategy) {
+        String primaryTfWire = strategy.primaryTimeframe().wire();
+        List<ExpressionRef> refs = new ArrayList<>();
+        for (BackgroundSeries series : strategy.backgroundSeries()) {
+            String tfWire = series.timeframe().map(Timeframe::wire).orElse(primaryTfWire);
+            refs.add(new ExpressionRef(series.expression(), tfWire));
+        }
+        for (StrategyScenario scenario : strategy.scenarios()) {
+            for (StrategyStep step : scenario.conditionSteps()) {
+                refs.add(new ExpressionRef(step.text(), primaryTfWire));
+            }
+        }
+        return refs;
     }
 
     /**
