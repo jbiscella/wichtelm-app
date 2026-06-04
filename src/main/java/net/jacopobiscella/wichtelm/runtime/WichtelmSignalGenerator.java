@@ -77,6 +77,15 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
      */
     private final Map<Instant, String> openPositionEntryScenario = new HashMap<>();
     /**
+     * High-water mark per open position (keyed by {@link Position#entryTime()})
+     * for a {@code trailing_stop}: the most favourable price reached since the
+     * fill — highest {@code high} for a long, lowest {@code low} for a short.
+     * Updated each in-position bar AFTER the breach check, so the level monitored
+     * on bar T uses the mark through bar T-1 (lookahead-safe, §3.4.1). Evicted on
+     * close alongside {@link #openPositionEntryScenario}.
+     */
+    private final Map<Instant, BigDecimal> trailingExtreme = new HashMap<>();
+    /**
      * Last entry scenario name whose Buy/Sell signal has been emitted but whose
      * resulting Position has not yet been observed in a subsequent BarContext.
      * Cleared on the next {@code generate} call.
@@ -242,6 +251,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private void reconcileEntryOwnership(Optional<Position> open) {
         if (open.isEmpty()) {
             openPositionEntryScenario.clear();
+            trailingExtreme.clear();
             pendingEntryScenarioName = null;
             return;
         }
@@ -312,6 +322,14 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
             }
         }
 
+        // trailing_stop (mutually exclusive with stop_loss, P23). It is a stop:
+        // it is checked before take_profit so it wins a same-bar tie (§6.3). The
+        // high-water mark is also advanced here, every in-position bar.
+        Optional<Signal> trailing = trailingExit(entry.get(), position, bar, isLong);
+        if (trailing.isPresent()) {
+            return trailing;
+        }
+
         Optional<BigDecimal> take = entry.get().takeProfitExpression()
                 .map(expression -> evaluateProtective(expression, position));
         if (take.isPresent()) {
@@ -322,6 +340,67 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Evaluates the position's {@code trailing_stop} (if any) on {@code bar} and
+     * advances the high-water mark. Returns a {@link Signal.ClosePositionAtPrice}
+     * when the trailing level (derived from the mark THROUGH the previous bar) is
+     * breached by this bar's low (long) / high (short); otherwise empty. The
+     * high-water mark is updated with this bar's favourable extreme AFTER the
+     * check, keeping the trail lookahead-safe and ratchet-only (§3.4.1).
+     */
+    private Optional<Signal> trailingExit(StrategyScenario entry, Position position,
+                                          OHLCBar bar, boolean isLong) {
+        Optional<String> exprOpt = entry.trailingStopExpression();
+        if (exprOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        String expression = exprOpt.get();
+        BigDecimal snapshot = evaluateProtective(expression, position);
+        boolean distanceMode = referencesAtrValue(expression);
+        Instant key = position.entryTime();
+        BigDecimal priorExtreme = trailingExtreme.get(key);
+
+        Optional<Signal> hit = Optional.empty();
+        if (priorExtreme != null) {
+            BigDecimal level = trailingLevel(priorExtreme, snapshot, distanceMode, isLong);
+            boolean breached = isLong
+                    ? bar.low().compareTo(level) <= 0
+                    : bar.high().compareTo(level) >= 0;
+            if (breached) {
+                hit = Optional.of(new Signal.ClosePositionAtPrice(level, intrabarFillTime(bar)));
+            }
+        }
+
+        BigDecimal barExtreme = isLong ? bar.high() : bar.low();
+        BigDecimal newExtreme = priorExtreme == null
+                ? barExtreme
+                : (isLong ? priorExtreme.max(barExtreme) : priorExtreme.min(barExtreme));
+        trailingExtreme.put(key, newExtreme);
+        return hit;
+    }
+
+    /**
+     * Trailing level from the high-water mark. ATR-distance mode subtracts/adds
+     * the snapshotted price distance; percentage mode scales the mark by
+     * {@code (1 -/+ pct/100)}. Long subtracts (stop below the high), short adds.
+     */
+    private static BigDecimal trailingLevel(BigDecimal extreme, BigDecimal snapshot,
+                                            boolean distanceMode, boolean isLong) {
+        if (distanceMode) {
+            return isLong ? extreme.subtract(snapshot) : extreme.add(snapshot);
+        }
+        BigDecimal factor = snapshot.divide(HUNDRED, MathContext.DECIMAL64);
+        BigDecimal multiplier = isLong
+                ? BigDecimal.ONE.subtract(factor)
+                : BigDecimal.ONE.add(factor);
+        return extreme.multiply(multiplier, MathContext.DECIMAL64);
+    }
+
+    /** A trailing_stop is ATR-distance mode iff its expression references atr_value. */
+    private static boolean referencesAtrValue(String expression) {
+        return ATR_VALUE_CALL.matcher(expression).find();
     }
 
     private BigDecimal evaluateProtective(String expression, Position position) {
@@ -364,6 +443,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         List<String> expressions = new ArrayList<>();
         scenario.stopLossExpression().ifPresent(expressions::add);
         scenario.takeProfitExpression().ifPresent(expressions::add);
+        scenario.trailingStopExpression().ifPresent(expressions::add);
         if (expressions.isEmpty() || primaryHistory.isEmpty()) {
             return Optional.empty();
         }
@@ -444,7 +524,9 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 : FirstClassCondition.SHORT_ENTRY;
         return strategy.scenarios().stream()
                 .filter(s -> s.terminalCondition() == entryCondition)
-                .filter(s -> s.stopLossExpression().isPresent() || s.takeProfitExpression().isPresent())
+                .filter(s -> s.stopLossExpression().isPresent()
+                        || s.takeProfitExpression().isPresent()
+                        || s.trailingStopExpression().isPresent())
                 .findFirst();
     }
 

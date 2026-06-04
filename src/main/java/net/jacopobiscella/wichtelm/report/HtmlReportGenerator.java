@@ -261,10 +261,13 @@ public final class HtmlReportGenerator {
                     .append(entry ? "enter " + dir : "close the position")
                     .append("</p>");
             if (entry && (s.stopLossExpression().isPresent()
-                    || s.takeProfitExpression().isPresent())) {
+                    || s.takeProfitExpression().isPresent()
+                    || s.trailingStopExpression().isPresent())) {
                 html.append("<p class=\"protective\">");
                 s.stopLossExpression().ifPresent(e ->
                         html.append("Stop: <code>").append(esc(e)).append("</code><br>"));
+                s.trailingStopExpression().ifPresent(e ->
+                        html.append("Trailing stop: <code>").append(esc(e)).append("</code><br>"));
                 s.takeProfitExpression().ifPresent(e ->
                         html.append("Take: <code>").append(esc(e)).append("</code>"));
                 html.append("</p>");
@@ -805,6 +808,20 @@ public final class HtmlReportGenerator {
     private String forcedExitTerm(ReportData data, StrategyScenario entryScenario, Trade trade) {
         String hitAt = formatPrice(trade.exitPrice());
         if (entryScenario != null) {
+            // A trailing_stop is mutually exclusive with stop_loss (P23). Its
+            // level is dynamic, so it is not re-derivable from a single snapshot
+            // like stop/take; label by clause presence. If a take_profit also
+            // accompanies it and the exit landed exactly on the take level, the
+            // take fired; otherwise the trailing stop did.
+            if (entryScenario.trailingStopExpression().isPresent()) {
+                Optional<BigDecimal> take = entryScenario.takeProfitExpression()
+                        .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
+                                trade.entryTime(), data));
+                if (take.isPresent() && trade.exitPrice().compareTo(take.get()) == 0) {
+                    return "take_profit (forced, hit at " + hitAt + ")";
+                }
+                return "trailing_stop (forced, hit at " + hitAt + ")";
+            }
             Optional<BigDecimal> stop = entryScenario.stopLossExpression()
                     .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
                             trade.entryTime(), data));
