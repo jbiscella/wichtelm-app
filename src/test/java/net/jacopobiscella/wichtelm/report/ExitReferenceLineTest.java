@@ -31,7 +31,7 @@ class ExitReferenceLineTest {
     private static StrategyScenario longEntry() {
         return new StrategyScenario("Enter long", PositionPrecondition.NO_OPEN_POSITION,
                 List.of(new StrategyStep("When", "close is above 1", 1)),
-                FirstClassCondition.LONG_ENTRY, Optional.empty(), Optional.empty(), 1);
+                FirstClassCondition.LONG_ENTRY, Optional.empty(), Optional.empty(), Optional.empty(), 1);
     }
 
     private static Annotation.HorizontalLevel level(List<Annotation> levels, String labelPrefix) {
