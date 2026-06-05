@@ -22,11 +22,12 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 /**
  * The protective-exit fill instant must land strictly inside the breaching bar
- * regardless of bar spacing. Real intraday feeds (e.g. EODHD crypto inserts a
- * flat, zero-volume filler bar around the US DST switch) can open the NEXT bar
- * sooner than {@code open + timeframe}; the old nominal-midpoint fill
- * ({@code open + timeframe/2}) then fell AFTER that next bar and frau-holle
- * rejected the {@code ClosePositionAtPrice} signal, aborting the backtest.
+ * regardless of bar spacing. An intraday series can contain bars spaced closer
+ * than the nominal timeframe (irregular / sub-timeframe spacing is observed in
+ * real provider data), so the NEXT bar can open sooner than {@code open +
+ * timeframe}; the old nominal-midpoint fill ({@code open + timeframe/2}) then
+ * fell AFTER that next bar and frau-holle rejected the {@code ClosePositionAtPrice}
+ * signal, aborting the backtest.
  * The generator cannot see the next bar (lookahead-safety), so the fill must be
  * a minimal instant after the bar's open — strictly before any sub-timeframe
  * next bar. AAA unit test; the Gherkin scenarios assume a regular bar grid.

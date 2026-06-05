@@ -394,6 +394,22 @@ public final class StrategyParser {
         int depth = 0;
         int i = 0;
         int n = expr.length();
+        // An expression must carry at least one operand (a numeric literal or an
+        // identifier/function name). "", "()", or a lone operator are balanced and
+        // token-clean yet syntactically invalid; without this guard they parse and
+        // only blow up opaquely at evaluation time (e.g. "And with trailing_stop
+        // at ()"). P15 covers expression syntax.
+        boolean hasOperand = false;
+        for (int p = 0; p < n; p++) {
+            char ch = expr.charAt(p);
+            if (Character.isLetterOrDigit(ch) || ch == '_') {
+                hasOperand = true;
+                break;
+            }
+        }
+        if (!hasOperand) {
+            throw fail("P15", line, 1, "expression has no operand: \"" + expr + "\"");
+        }
         while (i < n) {
             char c = expr.charAt(i);
             if (c == '(') {

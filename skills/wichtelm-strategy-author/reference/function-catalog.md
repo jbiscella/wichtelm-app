@@ -113,11 +113,13 @@ These primitives may appear **only** as a complete When/And step — never embed
 comparison, arithmetic, or a Background series (P14). CAMARILLA R4/S4, WOODIE/CAMARILLA
 variants, and non-daily pivot periods are out of scope in v1 (any other token → P21).
 
-## `atr_value(period)` — stop/take only
+## `atr_value(period)` — protective clauses only (stop_loss / take_profit / trailing_stop)
 
 `atr_value(period)` is the frozen-at-fill ATR accessor. It is the **only** function allowed
-inside `And with stop_loss at ...` / `And with take_profit at ...`, and it is **not** allowed
-in conditions (use `atr(period)` there). Example: `And with stop_loss at entry_price - 2 * atr_value(14)`.
+inside `And with stop_loss at ...`, `And with take_profit at ...`, and `And with trailing_stop at ...`
+(in `trailing_stop` it also selects ATR-distance mode), and it is **not** allowed in conditions
+(use `atr(period)` there). Example: `And with stop_loss at entry_price - 2 * atr_value(14)` or
+`And with trailing_stop at 3 * atr_value(14)`.
 
 ## Tuning a primitive's period/threshold
 

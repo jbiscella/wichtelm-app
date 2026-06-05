@@ -375,6 +375,12 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         BigDecimal priorExtreme = trailingExtreme.get(key);
 
         Optional<Signal> hit = Optional.empty();
+        // priorExtreme is null only on the fill bar — there is no prior in-position
+        // bar to anchor the high-water mark, so no trailing exit fires here (§3.4.1,
+        // by design and lookahead-safe). From the next bar on, the level is derived
+        // from the mark THROUGH the previous bar. A fixed stop_loss DOES guard the
+        // fill bar (snapshotted, not mark-anchored); the trailing carve-out is the
+        // deliberate difference, not an oversight.
         if (priorExtreme != null) {
             BigDecimal level = trailingLevel(priorExtreme, snapshot, distanceMode, isLong);
             boolean breached = isLong
@@ -576,14 +582,15 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         // opens. We cannot consult the next bar here — BarContext exposes only the
         // current bar and past history (lookahead-safety) — so we cannot know the
         // bar's actual duration. A nominal midpoint (open + timeframe/2) assumes
-        // every bar spans a full timeframe, but real intraday feeds (e.g. EODHD
-        // crypto inserts flat zero-volume filler bars around the US DST switch)
-        // can open the next bar sooner than open+timeframe; a nominal midpoint
-        // would then land after it and frau-holle rejects the signal. We instead
-        // place the fill a minimal instant after the open: strictly inside ANY
-        // well-formed bar (distinct, strictly-increasing timestamps) regardless of
-        // spacing. The exact sub-bar instant is cosmetic — the fill PRICE, not its
-        // timestamp, drives P&L, and the trade is still attributed to this bar.
+        // every bar spans a full timeframe, but an intraday series can contain
+        // bars spaced closer than the nominal timeframe (irregular or sub-timeframe
+        // spacing is observed in real provider data), so the next bar may open
+        // sooner than open+timeframe; a nominal midpoint would then land after it
+        // and frau-holle rejects the signal. We instead place the fill a minimal
+        // instant after the open: strictly inside ANY well-formed bar (distinct,
+        // strictly-increasing timestamps) regardless of spacing. The exact sub-bar
+        // instant is cosmetic — the fill PRICE, not its timestamp, drives P&L, and
+        // the trade is still attributed to this bar.
         return bar.time().plusNanos(1);
     }
 

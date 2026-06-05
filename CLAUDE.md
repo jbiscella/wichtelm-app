@@ -360,7 +360,7 @@ Per-backtest config file values override global preferences.
 
 | Step | Action |
 |---|---|
-| 1 | Parse strategy file: enforce all P1-P21 rules; produce a parsed strategy AST |
+| 1 | Parse strategy file: enforce all P1-P23 rules; produce a parsed strategy AST |
 | 2 | Parse config file: enforce all C1-C11 rules |
 | 3 | Resolve parameter values: per-config overrides take precedence over strategy defaults |
 | 4 | Resolve data source: instantiate `MarketDataSource` (frau-holle-csv or frau-holle-eodhd) and load OHLC bars for the primary TF and any Background higher-TFs |
@@ -492,7 +492,7 @@ All exceptions raised by `wichtelm-app` extend a single root type, mirroring the
 | Type | Thrown when |
 |---|---|
 | `WichtelmException` | abstract root |
-| `StrategyParseException extends WichtelmException` | a `.strat` file violates any of P1-P21 (§4). Carries: filePath, lineNumber, columnNumber, violatedRule, message, optional suggestion |
+| `StrategyParseException extends WichtelmException` | a `.strat` file violates any of P1-P23 (§4). Carries: filePath, lineNumber, columnNumber, violatedRule, message, optional suggestion |
 | `ConfigParseException extends WichtelmException` | a TOML config file violates any of C1-C11 (§5.2). Carries: filePath, key path, violatedRule, message |
 | `DslEvaluationException extends WichtelmException` | a runtime error occurs during DSL evaluation (e.g. division by zero in an expression, NaN propagation). Carries: filePath, lineNumber, barTime, barIndex, expression text, message, optional cause |
 | `DataSourceUnavailableException extends WichtelmException` | the data source (CSV file or EODHD API) cannot be reached or returns malformed data not caught by the driver's own validation. Wraps the underlying data-source exception as cause |
