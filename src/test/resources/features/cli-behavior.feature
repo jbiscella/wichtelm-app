@@ -40,3 +40,23 @@ Feature: CLI behavior
     When wichtelm is invoked with "--help"
     Then the CLI exit code is 0
     And stdout contains "Usage"
+
+  Scenario: wichtelm sweep runs the grid, prints a ranked table and writes a CSV
+    Given a sweep backtest config with a parseable strategy and CSV data
+    When wichtelm sweeps the config
+    Then the CLI exit code is 0
+    And stdout contains a ranked sweep table
+    And a sweep CSV file is created
+
+  Scenario: wichtelm sweep with --no-report writes no CSV but still prints the table
+    Given a sweep backtest config with a parseable strategy and CSV data
+    When wichtelm sweeps the config with "--no-report"
+    Then the CLI exit code is 0
+    And stdout contains a ranked sweep table
+    And no sweep CSV file is created
+
+  Scenario: wichtelm sweep with an unknown objective exits with a usage error
+    Given a sweep backtest config with a parseable strategy and CSV data
+    When wichtelm sweeps the config with "--objective bogus"
+    Then the CLI exit code is 2
+    And stderr mentions "objective"

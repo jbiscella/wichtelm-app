@@ -23,6 +23,7 @@ public record BacktestConfig(Path configPath,
                              BigDecimal positionSizePct,
                              boolean pyramiding,
                              Map<String, Object> parameterOverrides,
+                             Optional<SweepDefinition> sweep,
                              Optional<Path> outputDirectory,
                              Optional<Path> csvFile,
                              Optional<String> eodhdApiTokenEnv,
@@ -36,6 +37,7 @@ public record BacktestConfig(Path configPath,
         Objects.requireNonNull(dateTo, "dateTo");
         Objects.requireNonNull(dataSource, "dataSource");
         Objects.requireNonNull(positionSizePct, "positionSizePct");
+        Objects.requireNonNull(sweep, "sweep");
         Objects.requireNonNull(outputDirectory, "outputDirectory");
         Objects.requireNonNull(csvFile, "csvFile");
         Objects.requireNonNull(eodhdApiTokenEnv, "eodhdApiTokenEnv");

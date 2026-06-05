@@ -1,6 +1,7 @@
 package net.jacopobiscella.wichtelm.config;
 
 import net.jacopobiscella.wichtelm.error.ConfigParseException;
+import net.jacopobiscella.wichtelm.error.SweepConfigException;
 import org.tomlj.Toml;
 import org.tomlj.TomlParseResult;
 import org.tomlj.TomlTable;
@@ -30,7 +31,7 @@ public final class ConfigParser {
 
     private static final Set<String> KNOWN_TOP_LEVEL_KEYS = Set.of(
             "strategy", "symbol", "data_source", "date_range",
-            "sizing", "parameters", "output", "csv", "eodhd");
+            "sizing", "parameters", "sweep", "output", "csv", "eodhd");
 
     private final String filePath;
     private final Path configDir;
@@ -62,6 +63,7 @@ public final class ConfigParser {
         BigDecimal positionSizePct = parsePositionSizePct();
         boolean pyramiding = parsePyramiding();
         Map<String, Object> parameterOverrides = parseParameterOverrides();
+        Optional<SweepDefinition> sweep = parseSweep(parameterOverrides);
         Optional<Path> outputDirectory = parseOutputDirectory();
         parseOutputFormat();
         Optional<Path> csvFile = parseCsvFile(dataSource);
@@ -69,7 +71,7 @@ public final class ConfigParser {
         collectUnknownTopLevelKeys();
 
         return new BacktestConfig(Path.of(filePath), strategyPath, symbol, range[0], range[1],
-                dataSource, positionSizePct, pyramiding, parameterOverrides,
+                dataSource, positionSizePct, pyramiding, parameterOverrides, sweep,
                 outputDirectory, csvFile, eodhdApiTokenEnv, warnings);
     }
 
@@ -141,6 +143,86 @@ public final class ConfigParser {
             }
         }
         return overrides;
+    }
+
+    /**
+     * Parses the optional {@code [sweep]} table (CLAUDE.md section 18). Each key
+     * maps to either a range inline table ({@code from} / {@code to} / {@code
+     * step}) or an explicit array of values. Enforces the structural sweep rules:
+     * C12 (a parameter must not appear in both {@code [parameters]} and {@code
+     * [sweep]}) and C14 (a well-formed range with a positive step and {@code from
+     * <= to}, or a non-empty value list). C13 (every axis names a declared
+     * strategy parameter) needs the strategy and is enforced later by
+     * {@code SweepParameterResolver}.
+     */
+    private Optional<SweepDefinition> parseSweep(Map<String, Object> parameterOverrides) {
+        TomlTable table = toml.getTable("sweep");
+        if (table == null) {
+            return Optional.empty();
+        }
+        Map<String, SweepDefinition.Axis> axes = new LinkedHashMap<>();
+        for (String key : table.keySet()) {
+            if (parameterOverrides.containsKey(key)) {
+                throw sweepFail("sweep." + key, "C12",
+                        "parameter '" + key + "' is both fixed in [parameters] and swept in "
+                                + "[sweep]; choose one");
+            }
+            axes.put(key, parseAxis(key, table.get(key)));
+        }
+        return Optional.of(new SweepDefinition(axes));
+    }
+
+    private SweepDefinition.Axis parseAxis(String key, Object raw) {
+        return switch (raw) {
+            case TomlTable rangeTable -> parseRangeAxis(key, rangeTable);
+            case org.tomlj.TomlArray array -> parseListAxis(key, array);
+            case null, default -> throw sweepFail("sweep." + key, "C14",
+                    "sweep parameter '" + key + "' must be a range table "
+                            + "{ from = .., to = .., step = .. } or a non-empty array of values");
+        };
+    }
+
+    private SweepDefinition.Axis parseRangeAxis(String key, TomlTable rangeTable) {
+        BigDecimal from = numeric(rangeTable.get("from"), key, "from");
+        BigDecimal to = numeric(rangeTable.get("to"), key, "to");
+        BigDecimal step = numeric(rangeTable.get("step"), key, "step");
+        if (step.signum() <= 0) {
+            throw sweepFail("sweep." + key + ".step", "C14",
+                    "sweep range step for '" + key + "' must be positive, was " + step);
+        }
+        if (from.compareTo(to) > 0) {
+            throw sweepFail("sweep." + key, "C14",
+                    "sweep range for '" + key + "' must have from <= to, was from " + from
+                            + " to " + to);
+        }
+        return new SweepDefinition.Range(from, to, step);
+    }
+
+    private SweepDefinition.Axis parseListAxis(String key, org.tomlj.TomlArray array) {
+        if (array.isEmpty()) {
+            throw sweepFail("sweep." + key, "C14",
+                    "sweep value list for '" + key + "' must not be empty");
+        }
+        List<BigDecimal> values = new ArrayList<>(array.size());
+        for (int i = 0; i < array.size(); i++) {
+            values.add(numeric(array.get(i), key, "value[" + i + "]"));
+        }
+        return new SweepDefinition.ValueList(values);
+    }
+
+    private BigDecimal numeric(Object value, String key, String field) {
+        return switch (value) {
+            case Long l -> new BigDecimal(l, DECIMAL);
+            // TOML's nan / inf reach here as a non-finite Double; new BigDecimal(d)
+            // would throw NumberFormatException and escape the C14 path, so reject
+            // them explicitly with the documented sweep config error.
+            case Double d when !Double.isFinite(d) -> throw sweepFail(
+                    "sweep." + key + "." + field, "C14",
+                    "sweep '" + key + "' " + field + " must be a finite number, was " + d);
+            case Double d -> new BigDecimal(d, DECIMAL);
+            case null, default -> throw sweepFail("sweep." + key + "." + field, "C14",
+                    "sweep '" + key + "' " + field + " must be a numeric value");
+        };
     }
 
     private Optional<Path> parseOutputDirectory() {
@@ -223,5 +305,9 @@ public final class ConfigParser {
 
     private ConfigParseException fail(String keyPath, String rule, String message) {
         return new ConfigParseException(filePath, keyPath, rule, message);
+    }
+
+    private SweepConfigException sweepFail(String keyPath, String rule, String message) {
+        return new SweepConfigException(filePath, keyPath, rule, message);
     }
 }

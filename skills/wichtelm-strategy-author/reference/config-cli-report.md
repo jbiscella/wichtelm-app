@@ -26,6 +26,12 @@ pyramiding        = false       # default false; true lets a same-direction entr
 rsi_period = 21
 oversold   = 25
 
+# Optional: sweep parameter ranges/lists for `wichtelm sweep` (CLAUDE.md §18).
+# A parameter is either fixed (in [parameters]) or swept (here), never both.
+[sweep]
+overbought = { from = 65, to = 75, step = 5 }   # range -> 65, 70, 75
+take_profit = [8, 12, 16]                         # explicit list
+
 # Optional: output
 [output]
 directory = "./reports"
@@ -59,6 +65,17 @@ api_token_env = "EODHD_API_TOKEN"        # NAME of an env var; never the token i
 | C10 | `output.format` must be `"html"` in v1 |
 | C11 | unknown top-level keys → warning, not an error |
 
+The optional `[sweep]` section (used only by `wichtelm sweep`, see CLI below) adds four more:
+
+| Rule | Summary |
+|---|---|
+| C12 | a parameter must not appear in both `[parameters]` (fixed) and `[sweep]` (varied) |
+| C13 | every `[sweep]` key must name a `Parameter` declared in the strategy |
+| C14 | a range `{ from, to, step }` needs finite numeric values (TOML `nan`/`inf` rejected) with `step > 0` and `from <= to`; a value list `[ … ]` must be non-empty and finite-numeric. For an **integer** parameter, a range's `from`/`to`/`step` *and* every value-list entry must all be whole (checked once the strategy's parameter type is known, like C13) |
+| C15 | the grid (product of axis sizes) must not exceed `--max-combos` (default 500) — checked before any backtest runs |
+
+A C12–C15 violation throws a `SweepConfigException` (a sibling of `ConfigParseException`).
+
 A parse-time violation throws a `ConfigParseException` naming the offending key and rule.
 One thing to keep separate: for C9, only a missing/blank `api_token_env` *key* is a parse
 error. If the key is present but the **environment variable it names is unset/empty**, that is
@@ -80,6 +97,39 @@ because `EODHD_API_TOKEN` isn't exported.
 > project README) — in v1, settings come from the per-backtest config and CLI flags, so don't
 > rely on global preferences for a working run until that lands.
 
+### EODHD data availability (and the "insufficient market data" error)
+
+If a run fails with `DataSourceUnavailableException: insufficient market data: only <n> <TF>
+bar(s) loaded for <symbol> over <from> → <to>; a backtest needs at least 2 bars`, it means the
+data source returned only `<n>` bars for the primary timeframe and the backtester needs **at
+least 2**. (The message includes a CSV- or EODHD-specific hint; the underlying frau-holle check
+is `[V6]`.) Common causes with `data_source = "eodhd"`:
+
+- **Token history limits (the usual culprit).** EODHD's free/registered plan provides only **~1
+  year** of EOD history (and ~20 API calls/day); paid plans go back 30+ years (see the
+  [EODHD pricing page](https://eodhd.com/pricing)). So a multi-year request on a free token returns
+  almost nothing — in one observed case a single recent bar, dated ~1 year before "today" — which
+  trips this error.
+- **The public `demo` token** serves full EOD history, but **only** for six tickers: `AAPL.US`,
+  `TSLA.US`, `VTI.US`, `AMZN.US`, `BTC-USD.CC`, `EURUSD.FOREX`. For those, a daily/weekly strategy
+  works out of the box (`export EODHD_API_TOKEN=demo`); any other symbol returns almost nothing.
+- **Intraday is short-lived.** EODHD intraday history is limited, and the `demo` token's intraday is
+  only a rolling ~4-month window, so a multi-year intraday range returns ~0 bars. Keep intraday
+  `[date_range]`s recent.
+- **Endpoint by timeframe.** `1d`/`1w` use the EOD endpoint (years of history); `1m`/`5m`/`1h` use
+  intraday. **`4h` is not supported** by the EODHD driver (only `1m`, `5m`, `1h`).
+
+Verify what the API actually returns before blaming the strategy — count the bars:
+
+```sh
+curl -s "https://eodhd.com/api/eod/AAPL.US?api_token=$EODHD_API_TOKEN&fmt=json&from=2020-01-01&to=2024-12-31&period=d" | grep -o '"date"' | wc -l
+```
+
+If that prints ~1, it's the token/plan (try `demo` for the six tickers above, upgrade the plan, or
+switch to `data_source = "csv"`); if it prints hundreds, the strategy's timeframe or range is the
+issue. The same `[V6]` error also fires for a too-narrow `[date_range]`, or a `{timeframe}` that
+doesn't match the CSV file's bar interval.
+
 ## CLI
 
 | Command | Effect |
@@ -88,7 +138,16 @@ because `EODHD_API_TOKEN` isn't exported.
 | `wichtelm run <config>.toml` | run the backtest and write an HTML report |
 | `wichtelm run <config>.toml --no-report` | run but skip report generation |
 | `wichtelm run <config>.toml --output-dir <path>` | override the output directory |
+| `wichtelm sweep <config>.toml` | run every combination in the config's `[sweep]` table; print a ranked table and write a `{config}_sweep_{timestamp}.csv` |
+| `wichtelm sweep … --objective <metric>` | rank by `sharpe` (default), `total_return`, `sortino`, `calmar`, or `profit_factor` |
+| `wichtelm sweep … --top <N>` / `--max-combos <N>` | rows tabulated in the console (default 10) / grid cap (default 500) |
+| `wichtelm sweep … --no-report` / `--output-dir <path>` | console table only (no CSV) / override the output directory |
 | `wichtelm --version` / `wichtelm --help` | version / usage |
+
+`sweep` is the optimization entry point (CLAUDE.md §18): it loads the market data once and
+re-runs the backtest per combination. The default objective is `sharpe` because ranking on raw
+return alone tends to crown an overfit lucky run. To turn a winning row into a full per-trade HTML
+report, copy its printed `[parameters]` block into a plain config and `wichtelm run` it.
 
 Output directory precedence: `--output-dir` > `[output].directory` > current directory.
 

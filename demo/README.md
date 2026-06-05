@@ -65,6 +65,35 @@ stable): run each `demo/tstx-*.toml` / `demo/tstc-*.toml`, then rename each
 fresh `{config}_{timestamp}.html` to its committed `{config}-report.html`.
 EODHD-derived reports are never committed (see below).
 
+### Parameter sweep (CLAUDE.md §18)
+
+`demo/tstx-swing-1d-sweep.toml` reuses the swing strategy and CSV fixtures but
+adds a `[sweep]` table that ranges over four parameters (81 combinations). The
+`sweep` command loads the data once, runs every combination, prints a ranked
+table and writes a CSV of combination → metrics:
+
+```sh
+java -jar target/wichtelm.jar sweep demo/tstx-swing-1d-sweep.toml --objective sharpe --top 5
+java -jar target/wichtelm.jar sweep demo/tstx-swing-1d-sweep.toml --objective total_return --top 5
+```
+
+The default objective is `sharpe` (risk-adjusted; also `total_return`,
+`sortino`, `calmar`, `profit_factor`). To explore a winning combination in a
+full per-trade HTML report, copy its printed `[parameters]` block into a plain
+`run` config and `wichtelm run` it.
+
+Each run writes a timestamped `{basename}_sweep_{timestamp}.csv`; those are
+regenerable run artifacts and are git-ignored (not committed), like the
+timestamped HTML. As a stable reference — parity with the committed
+`*-report.html` demos — one promoted leaderboard is checked in at
+`demo/reports/tstx-swing-1d-sweep-leaderboard.csv` (the `--objective sharpe` run
+of the config above; 81 combinations, ranked best-first). Regenerate it with:
+
+```sh
+cd demo && java -jar ../target/wichtelm.jar sweep tstx-swing-1d-sweep.toml --objective sharpe
+mv reports/tstx-swing-1d-sweep_sweep_*.csv reports/tstx-swing-1d-sweep-leaderboard.csv
+```
+
 ## The synthetic data
 
 `GenerateData.java` is a deterministic, JDK-only single-file program (it lives

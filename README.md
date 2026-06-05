@@ -113,24 +113,57 @@ The `package` phase produces these artifacts in `target/`:
 |---|---|
 | `target/wichtelm.jar` | The executable JAR. All permissively-licensed dependencies are shaded in; the LGPL JFreeChart library is **not** — see [License](#license) |
 | `target/lib/jfreechart.jar` | The LGPL JFreeChart library, loaded at runtime via the JAR's manifest `Class-Path`. Must stay next to `wichtelm.jar` (as `lib/jfreechart.jar`) when the JAR is copied or distributed |
-| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage` (bundles both JARs); the executable is `target/dist/wichtelm/bin/wichtelm` |
+| `target/dist/wichtelm/` | A native CLI launcher app-image produced by `jpackage` (bundles both JARs). The executable is `target/dist/wichtelm/bin/wichtelm` on Linux, `target/dist/wichtelm.app/Contents/MacOS/wichtelm` on macOS, and `target\dist\wichtelm\wichtelm.exe` on Windows (see the Windows note below before relying on the `.exe`) |
 
 You can run the tool either way:
 
 ```sh
-# via the executable JAR
+# via the executable JAR (works on every platform)
 java -jar target/wichtelm.jar --help
 
-# via the native launcher
+# via the native launcher (Linux path shown; see the table for the macOS path)
 target/dist/wichtelm/bin/wichtelm --help
 ```
 
-To make `wichtelm` available everywhere, put the launcher's `bin` directory on
-your `PATH`, or define a shell alias:
+To make `wichtelm` available everywhere:
+
+**macOS / Linux** — define a shell alias (simplest, works on both), e.g. in your
+shell rc file:
 
 ```sh
 alias wichtelm='java -jar /absolute/path/to/wichtelm-app/target/wichtelm.jar'
 ```
+
+(Or put the native launcher on your `PATH` — `target/dist/wichtelm/bin/wichtelm` on
+Linux, `target/dist/wichtelm.app/Contents/MacOS/wichtelm` on macOS.)
+
+**Windows** — there is no `alias` command, so use the portable JAR via a shim or a
+PowerShell function (both need JDK 25 on your `PATH`). A `wichtelm.bat` placed in a
+folder already on your `PATH`:
+
+```bat
+@echo off
+java -jar "C:\path\to\wichtelm-app\target\wichtelm.jar" %*
+```
+
+…or a PowerShell profile function (the analog of the bash alias — `Set-Alias` can't
+bake in the `-jar` argument); add to your `$PROFILE`:
+
+```powershell
+function wichtelm { java -jar "C:\path\to\wichtelm-app\target\wichtelm.jar" @args }
+```
+
+To put a folder on `PATH`, edit it via **System Properties → Environment Variables →
+User variables → Path → New** rather than `setx PATH "%PATH%;…"`, which has a
+1024-character limit and can truncate your existing `PATH`.
+
+> Windows native launcher: the build produces `target\dist\wichtelm\wichtelm.exe`, but
+> the `jpackage` step does not pass `--win-console`, so that `.exe` runs as a GUI app
+> and won't print `--help` / `run` output to your terminal. Use the JAR-based options
+> above for CLI use on Windows.
+
+On any platform, `java -jar target/wichtelm.jar ...` works without installing
+anything (it just needs JDK 25 on your `PATH`).
 
 The rest of this document writes `wichtelm` for brevity; substitute whichever
 form you installed.
@@ -399,9 +432,19 @@ The skill contains:
   HA + moving-average crossover, multi-timeframe HA), plus the canonical
   reference. Illustrative starting points, not tuned strategies.
 
-To use it, upload the `skills/wichtelm-strategy-author/` folder to Claude
-(Settings → Capabilities → Skills) or zip it and add it as a skill, then ask
-Claude to help you build a strategy.
+To use it on [claude.ai](https://claude.ai), package the skill as a **`.zip`** whose
+root contains the `wichtelm-strategy-author/` folder (with `SKILL.md` inside it). From
+the repo root:
+
+```sh
+( cd skills && zip -r ../wichtelm-strategy-author.zip wichtelm-strategy-author )
+```
+
+Then, on any plan (Free, Pro, Max, Team, or Enterprise): enable **Code execution and file
+creation** in **Settings → Capabilities**, open **Customize → Skills**, click **+ → Create
+skill**, and upload the `.zip`. The exact menu labels vary by plan/version, so see the Claude
+Help Center's [How to create custom Skills](https://support.claude.com/en/articles/12512198-how-to-create-custom-skills)
+for the current steps. Once it's added, ask Claude to help you build a strategy.
 
 ---
 

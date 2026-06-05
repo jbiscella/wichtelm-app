@@ -16,8 +16,9 @@ strategies, not the person building the app.
 
 **Use this skill when** a user is authoring or fixing a `.strat` strategy file, writing the
 TOML backtest config, choosing indicators / Heikin-Ashi / MACD / RSI / moving-average /
-pivot primitives, resolving a `StrategyParseException` (rules P1–P23) or
-`ConfigParseException` (rules C1–C11), or interpreting a wichtelm HTML backtest report.
+pivot primitives, setting up a parameter sweep (`[sweep]` + `wichtelm sweep`), resolving a
+`StrategyParseException` (rules P1–P23), `ConfigParseException` (rules C1–C11) or
+`SweepConfigException` (rules C12–C15), or interpreting a wichtelm HTML backtest report.
 
 ## How to use this skill
 
@@ -30,8 +31,9 @@ pivot primitives, resolving a `StrategyParseException` (rules P1–P23) or
    - `reference/validation-rules.md` — all 23 parse-time rules (P1–P23) with the exact
      error message the parser emits and how to fix each. Use this to pre-empt errors and
      to debug a `StrategyParseException`.
-   - `reference/config-cli-report.md` — the TOML config schema (rules C1–C11), the CLI
-     commands and exit codes, and how to read the HTML report.
+   - `reference/config-cli-report.md` — the TOML config schema (rules C1–C11), the optional
+     `[sweep]` table and `wichtelm sweep` command (rules C12–C15), the CLI commands and exit
+     codes, and how to read the HTML report.
    - `reference/guided-builder.md` — a menu-driven, clause-by-clause flow for building a
      strategy interactively (see "Guided vs direct" below).
 2. **Start from a worked example.** `examples/` contains five strategies pairing Heikin-Ashi
