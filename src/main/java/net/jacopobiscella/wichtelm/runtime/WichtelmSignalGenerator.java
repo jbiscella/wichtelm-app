@@ -7,7 +7,6 @@ import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.PositionPrecondition;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
-import net.jacopobiscella.wichtelm.strategy.Timeframes;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.Timeframe;
 import org.hatrack.dsl.BarIndicatorSource;
@@ -23,7 +22,6 @@ import org.hatrack.frauholle.port.SignalGenerator;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -575,9 +573,21 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     }
 
     private Instant intrabarFillTime(OHLCBar bar) {
-        Instant open = bar.time();
-        Instant close = Timeframes.advance(open, timeframe);
-        return open.plus(Duration.between(open, close).dividedBy(2));
+        // A protective exit fills somewhere inside the bar that breached the
+        // level. frau-holle's ClosePositionAtPrice contract requires this instant
+        // to fall strictly after the bar's open AND strictly before the NEXT bar
+        // opens. We cannot consult the next bar here — BarContext exposes only the
+        // current bar and past history (lookahead-safety) — so we cannot know the
+        // bar's actual duration. A nominal midpoint (open + timeframe/2) assumes
+        // every bar spans a full timeframe, but real intraday feeds (e.g. EODHD
+        // crypto inserts flat zero-volume filler bars around the US DST switch)
+        // can open the next bar sooner than open+timeframe; a nominal midpoint
+        // would then land after it and frau-holle rejects the signal. We instead
+        // place the fill a minimal instant after the open: strictly inside ANY
+        // well-formed bar (distinct, strictly-increasing timestamps) regardless of
+        // spacing. The exact sub-bar instant is cosmetic — the fill PRICE, not its
+        // timestamp, drives P&L, and the trade is still attributed to this bar.
+        return bar.time().plusNanos(1);
     }
 
     private OHLCBar previousBar(BarContext context) {
