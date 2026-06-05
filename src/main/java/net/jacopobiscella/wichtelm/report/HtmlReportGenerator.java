@@ -9,6 +9,7 @@ import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.PositionPrecondition;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
+import net.jacopobiscella.wichtelm.strategy.TrailingStops;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.OHLCSeries;
 import org.hatrack.commons.PivotPointVariant;
@@ -556,6 +557,13 @@ public final class HtmlReportGenerator {
         // for part of its range. The hold-bar tally and the MFE/MAE window
         // must include the exit bar only in the forced-exit case.
         boolean forcedExit = exitHit == null;
+        // The protective clause that forced this exit (trailing_stop / stop_loss /
+        // take_profit / generic), computed once so the conditions row, scenario
+        // row, and Rule line all show the same attribution. Null when the exit was
+        // Scenario-driven (the rows then render that scenario's terms instead).
+        StrategyScenario entryScenarioForLabel =
+                entryHit != null ? scenarioByName.get(entryHit.scenarioName()) : null;
+        String forcedLabel = forcedExit ? forcedExitLabel(data, entryScenarioForLabel, trade) : null;
         int holdBars = countBarsBetween(data.primarySeries().bars(),
                 trade.entryTime(), trade.exitTime(), forcedExit);
         // "Sessions" = distinct calendar dates that actually have bars in the
@@ -593,7 +601,7 @@ public final class HtmlReportGenerator {
                         + "</svg></span>")
                 .append("</div>");
 
-        appendConditionsRow(html, entryHit, exitHit, scenarioByName, "closed");
+        appendConditionsRow(html, entryHit, exitHit, scenarioByName, "closed", forcedLabel);
         html.append("</summary>");
 
         // ─── Expanded body ─────────────────────────────────────────────────
@@ -607,7 +615,7 @@ public final class HtmlReportGenerator {
                 .append(statCell("MAE", formatSignedPercentRaw(mfeMae[1]), "neg"))
                 .append("</div>");
 
-        appendScenarioRow(html, entryHit, exitHit, "closed");
+        appendScenarioRow(html, entryHit, exitHit, "closed", forcedLabel);
         appendRuleLine(html, data, scenarioByName, entryHit, exitHit, false, trade);
         appendChartFrames(html, data, renderer, trade.entryTime(), trade.exitTime(),
                 entryHit, exitHit, scenarioByName, false, dirClass, isWin,
@@ -665,7 +673,7 @@ public final class HtmlReportGenerator {
                         + "</svg></span>")
                 .append("</div>");
 
-        appendConditionsRow(html, entryHit, null, scenarioByName, "open");
+        appendConditionsRow(html, entryHit, null, scenarioByName, "open", null);
         html.append("</summary>");
 
         html.append("<div class=\"body\"><div class=\"stats\">")
@@ -679,7 +687,7 @@ public final class HtmlReportGenerator {
                 .append(statCell("MAE", formatSignedPercentRaw(mfeMae[1]), "neg"))
                 .append("</div>");
 
-        appendScenarioRow(html, entryHit, null, "open");
+        appendScenarioRow(html, entryHit, null, "open", null);
         appendRuleLine(html, data, scenarioByName, entryHit, null, true, null);
         // Open trade — isWin irrelevant, the renderer will use NEUTRAL fill.
         // exitPrice is null: an open position has not closed, so no Exit line.
@@ -699,7 +707,8 @@ public final class HtmlReportGenerator {
     // ─── Conditions row & scenario header ────────────────────────────────────
 
     private void appendConditionsRow(StringBuilder html, TriggerHit entryHit, TriggerHit exitHit,
-                                      Map<String, StrategyScenario> scenarioByName, String state) {
+                                      Map<String, StrategyScenario> scenarioByName, String state,
+                                      String forcedLabel) {
         html.append("<div class=\"cond\">");
         if (entryHit != null) {
             StrategyScenario s = scenarioByName.get(entryHit.scenarioName());
@@ -726,7 +735,9 @@ public final class HtmlReportGenerator {
             }
         } else {
             html.append(" <span class=\"ar\">→</span> <span class=\"lbl\">exit</span>")
-                    .append("<span class=\"term\">stop_loss / take_profit</span>");
+                    .append("<span class=\"term\">")
+                    .append(esc(forcedLabel != null ? forcedLabel : "forced exit"))
+                    .append("</span>");
         }
         html.append("</div>");
     }
@@ -746,7 +757,7 @@ public final class HtmlReportGenerator {
     }
 
     private void appendScenarioRow(StringBuilder html, TriggerHit entryHit, TriggerHit exitHit,
-                                    String state) {
+                                    String state, String forcedLabel) {
         html.append("<div class=\"scenario\">")
                 .append("<div class=\"seg\"><span class=\"lbl\">entry</span><span class=\"nm\">")
                 .append(esc(entryHit != null ? entryHit.scenarioName() : "—"))
@@ -759,7 +770,7 @@ public final class HtmlReportGenerator {
         } else if (exitHit != null) {
             exitName = exitHit.scenarioName();
         } else {
-            exitName = "stop_loss / take_profit";
+            exitName = forcedLabel != null ? forcedLabel : "forced exit";
             exitNameClass = "nm code";
         }
         html.append("<div class=\"seg\"><span class=\"lbl\">exit</span><span class=\"")
@@ -822,7 +833,7 @@ public final class HtmlReportGenerator {
         String expr = exprOpt.get();
         BigDecimal snapshot = evaluateLevel(expr, trade.entryPrice(), trade.quantity(),
                 trade.entryTime(), data);
-        boolean distanceMode = expr.contains("atr_value");
+        boolean distanceMode = TrailingStops.isAtrDistanceMode(expr);
         boolean isLong = trade.direction().toString().equalsIgnoreCase("LONG");
         // Favourable extreme of every held bar in [entryTime, exitTime). The exit
         // bar (its open precedes the intrabar fill) is the last such bar; the
@@ -852,52 +863,61 @@ public final class HtmlReportGenerator {
         return Optional.of(extreme.multiply(multiplier, DECIMAL));
     }
 
-    private String forcedExitTerm(ReportData data, StrategyScenario entryScenario, Trade trade) {
-        String hitAt = formatPrice(trade.exitPrice());
-        if (entryScenario != null) {
-            // A trailing_stop is mutually exclusive with stop_loss (P23). Its
-            // level is dynamic, so it is not re-derivable from a single snapshot
-            // like stop/take; label by clause presence. If a take_profit also
-            // accompanies it and the exit landed exactly on the take level, the
-            // take fired; otherwise the trailing stop did.
-            if (entryScenario.trailingStopExpression().isPresent()) {
-                Optional<BigDecimal> take = entryScenario.takeProfitExpression()
-                        .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
-                                trade.entryTime(), data));
-                if (take.isPresent() && trade.exitPrice().compareTo(take.get()) == 0) {
-                    return "take_profit (forced, hit at " + hitAt + ")";
-                }
-                // Attribute to the trailing stop ONLY when the exit price matches
-                // the recomputed trailing level — an end-of-series forced close
-                // (filled at the bar close) would otherwise be mislabeled. When
-                // the cause cannot be confirmed, keep the generic label.
-                Optional<BigDecimal> level = trailingLevelAtExit(data, entryScenario, trade);
-                if (level.isPresent() && trade.exitPrice().compareTo(level.get()) == 0) {
-                    return "trailing_stop (forced, hit at " + hitAt + ")";
-                }
-                return "forced exit (hit at " + hitAt + ")";
+    /**
+     * Short name of the protective clause that forced this exit — one of
+     * {@code stop_loss}, {@code take_profit}, {@code trailing_stop}, or the
+     * generic {@code forced exit} when the cause cannot be confirmed (e.g. an
+     * end-of-series close). Shared by the conditions row, scenario row, and the
+     * Rule line so all three agree, and centralised here so the trailing/take/stop
+     * priority matches the runtime exactly.
+     */
+    private String forcedExitLabel(ReportData data, StrategyScenario entryScenario, Trade trade) {
+        if (entryScenario == null) {
+            return "forced exit";
+        }
+        BigDecimal exit = trade.exitPrice();
+        // A trailing_stop is mutually exclusive with stop_loss (P23). The runtime
+        // checks trailingExit BEFORE take_profit, so the trailing stop wins a
+        // same-bar tie (§6.3) — test the recomputed trailing level FIRST, then
+        // take. Attributing to a level only when the exit price matches it keeps
+        // an end-of-series close (filled at the bar close) generic.
+        if (entryScenario.trailingStopExpression().isPresent()) {
+            Optional<BigDecimal> level = trailingLevelAtExit(data, entryScenario, trade);
+            if (level.isPresent() && exit.compareTo(level.get()) == 0) {
+                return "trailing_stop";
             }
-            Optional<BigDecimal> stop = entryScenario.stopLossExpression()
-                    .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
-                            trade.entryTime(), data));
             Optional<BigDecimal> take = entryScenario.takeProfitExpression()
                     .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
                             trade.entryTime(), data));
-            boolean isStop;
-            if (stop.isPresent() && take.isPresent()) {
-                BigDecimal ex = trade.exitPrice();
-                isStop = ex.subtract(stop.get()).abs()
-                        .compareTo(ex.subtract(take.get()).abs()) <= 0;
-            } else if (stop.isPresent()) {
-                isStop = true;
-            } else if (take.isPresent()) {
-                isStop = false;
-            } else {
-                return "forced exit (hit at " + hitAt + ")";
+            if (take.isPresent() && exit.compareTo(take.get()) == 0) {
+                return "take_profit";
             }
-            return (isStop ? "stop_loss" : "take_profit") + " (forced, hit at " + hitAt + ")";
+            return "forced exit";
         }
-        return "forced exit (hit at " + hitAt + ")";
+        Optional<BigDecimal> stop = entryScenario.stopLossExpression()
+                .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
+                        trade.entryTime(), data));
+        Optional<BigDecimal> take = entryScenario.takeProfitExpression()
+                .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
+                        trade.entryTime(), data));
+        if (stop.isPresent() && take.isPresent()) {
+            // stop_loss wins a same-bar tie (§6.3) — pick the nearer level, stop on a tie.
+            return exit.subtract(stop.get()).abs().compareTo(exit.subtract(take.get()).abs()) <= 0
+                    ? "stop_loss" : "take_profit";
+        } else if (stop.isPresent()) {
+            return "stop_loss";
+        } else if (take.isPresent()) {
+            return "take_profit";
+        }
+        return "forced exit";
+    }
+
+    private String forcedExitTerm(ReportData data, StrategyScenario entryScenario, Trade trade) {
+        String hitAt = formatPrice(trade.exitPrice());
+        String label = forcedExitLabel(data, entryScenario, trade);
+        return label.equals("forced exit")
+                ? "forced exit (hit at " + hitAt + ")"
+                : label + " (forced, hit at " + hitAt + ")";
     }
 
     // ─── Chart frames ────────────────────────────────────────────────────────

@@ -142,8 +142,12 @@ Scenario: ...
 ## Not in the catalog (don't suggest these in v1)
 
 Stochastic, Bollinger Bands, ADX/DMI, Supertrend, Ichimoku, VWAP, OBV, parabolic SAR,
-**trailing stops** (stops are fixed at fill — no per-bar updating), SMA-vs-SMA crosses,
-and user-defined functions. If a popular setup needs one of these, offer the closest
-expressible equivalent: `stddev(period)` as a volatility gauge, a fixed `atr_value`
-stop instead of a trailing ATR stop, `sma_crosses_above_ema` instead of an SMA-SMA cross,
-or a Background series + comparison for a custom level.
+SMA-vs-SMA crosses, and user-defined functions. If a popular setup needs one of these,
+offer the closest expressible equivalent: `stddev(period)` as a volatility gauge,
+`sma_crosses_above_ema` instead of an SMA-SMA cross, or a Background series + comparison
+for a custom level.
+
+**Trailing stops ARE in the catalog** (high-water-mark, per-bar ratcheting):
+`And with trailing_stop at <expr>` on an entry scenario — percentage mode by default, or
+ATR-distance mode when `<expr>` references `atr_value(period)` (e.g. `3 * atr_value(14)`).
+Mutually exclusive with `stop_loss` (P23); `take_profit` may accompany it.

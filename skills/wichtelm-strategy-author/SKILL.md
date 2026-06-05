@@ -131,9 +131,12 @@ Feature: <strategy name>
 
 ## What the DSL cannot do (don't suggest these)
 
-The catalog has no Stochastic, no Bollinger Bands, no Supertrend, and **no trailing
-stops** (stops are fixed at fill time). Multi-symbol portfolios, commissions/slippage,
-and dynamic position sizing are out of scope in v1. If a user asks for one of these,
-say so and offer the closest expressible equivalent (e.g. `stddev(period)` for a
-volatility gauge, a fixed `atr_value`-based stop instead of a trailing ATR stop). See
-`reference/function-catalog.md` for the full boundary.
+The catalog has no Stochastic, no Bollinger Bands, and no Supertrend. Multi-symbol
+portfolios, commissions/slippage, and dynamic position sizing are out of scope in v1.
+**Trailing stops ARE supported** — `And with trailing_stop at <expr>` on an entry
+scenario (high-water-mark trailing; percentage mode, or ATR-distance mode when the
+expression references `atr_value`; mutually exclusive with `stop_loss` per P23). If a
+user asks for an out-of-scope item, say so and offer the closest expressible equivalent
+(e.g. `stddev(period)` for a volatility gauge, or a fixed `atr_value`-based `stop_loss`
+when a trailing stop is not wanted). See `reference/function-catalog.md` for the full
+boundary.

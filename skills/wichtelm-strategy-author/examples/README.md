@@ -37,7 +37,8 @@ use the suggested equivalent instead:
 |---|---|---|
 | HA + Stochastic | not in catalog | RSI primitives (`rsi_oversold` / `rsi_overbought` / `rsi_crosses_50`) |
 | HA + Bollinger Bands | not in catalog | `stddev(period)` Background series + a comparison; or `highest_high`/`lowest_low` channels |
-| HA + Supertrend / ATR **trailing** stop | not in catalog (stops are fixed at fill) | fixed `atr_value(period)` stop/take (see `ha-ema200-atr.strat`) |
+| HA + ATR **trailing** stop | **supported** | `And with trailing_stop at 3 * atr_value(14)` (ATR-distance) or `And with trailing_stop at 8` (percentage) on an entry scenario |
+| HA + Supertrend | not in catalog | a fixed `atr_value(period)` stop/take (see `ha-ema200-atr.strat`), or a `trailing_stop` for a ratcheting exit |
 | 50/200 **SMA**-cross golden cross | no SMA-vs-SMA primitive | `sma_crosses_above_ema(50, 200)` (SMA-vs-EMA), as in `ha-ma-crossover.strat` |
 | HA + ADX / VWAP / Ichimoku | not in catalog | a trend filter via `price_above_ema` / `sma_above_ema`, or a pivot primitive |
 

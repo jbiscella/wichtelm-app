@@ -7,6 +7,7 @@ import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.PositionPrecondition;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
+import net.jacopobiscella.wichtelm.strategy.TrailingStops;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.Timeframe;
 import org.hatrack.dsl.BarIndicatorSource;
@@ -411,16 +412,12 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
 
     /**
      * A trailing_stop is ATR-distance mode iff its expression calls atr_value.
-     * Matches the call by name + '(' regardless of the argument form, so a valid
-     * whole-number-decimal period like {@code atr_value(14.0)} (accepted by P21)
-     * is still detected — {@link #ATR_VALUE_CALL}'s argument pattern would miss it.
+     * Delegates to {@link TrailingStops#isAtrDistanceMode} so the runtime and the
+     * HTML report share one definition (§3.4.1) rather than re-deriving it.
      */
     private static boolean referencesAtrValue(String expression) {
-        return ATR_VALUE_REF.matcher(expression).find();
+        return TrailingStops.isAtrDistanceMode(expression);
     }
-
-    /** {@code atr_value(} by name, any argument — for distance-mode detection. */
-    private static final Pattern ATR_VALUE_REF = Pattern.compile("atr_value\\s*\\(");
 
     private BigDecimal evaluateProtective(String expression, Position position) {
         // Resolve at the entry fill so atr_value(period) snapshots ATR there and
