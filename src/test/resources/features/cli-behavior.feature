@@ -8,6 +8,20 @@ Feature: CLI behavior
     Then the CLI exit code is 0
     And an HTML report file is created
 
+  Scenario: wichtelm run with --dump-equity writes the equity CSV alongside the report
+    Given a valid backtest config with a parseable strategy and CSV data
+    When wichtelm runs the config with "--dump-equity"
+    Then the CLI exit code is 0
+    And an HTML report file is created
+    And an equity CSV file is created
+
+  Scenario: wichtelm run with --no-report --dump-equity writes only the equity CSV
+    Given a valid backtest config with a parseable strategy and CSV data
+    When wichtelm runs the config with "--no-report --dump-equity"
+    Then the CLI exit code is 0
+    And no HTML report file is created
+    And an equity CSV file is created
+
   Scenario: wichtelm run with a malformed strategy exits non-zero
     Given a backtest config referencing a malformed strategy file
     When wichtelm runs the config

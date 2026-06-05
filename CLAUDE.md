@@ -33,6 +33,7 @@ The "public API" of `wichtelm-app` is NOT a Java type catalog — `wichtelm-app`
 |---|---|
 | `wichtelm run <config-file>` | runs a backtest using the strategy and parameters declared in the TOML config file |
 | `wichtelm run <config-file> --no-report` | runs the backtest without producing the HTML report |
+| `wichtelm run <config-file> --dump-equity` | additionally writes the per-bar mark-to-market equity curve to `{config_basename}_equity_{timestamp}.csv` (`time,equity,cash,position_value`), independent of the HTML report (combine with `--no-report` for a report-free export). A debug/analysis side-channel for the same series the report renders as SVG (§7.4), NOT a report format — see §15 |
 | `wichtelm run <config-file> --output-dir <path>` | overrides the output directory configured globally |
 | `wichtelm validate <strat-file>` | parses the strategy file and reports parse-time errors without running a backtest |
 | `wichtelm --version` | prints the application version |
@@ -771,7 +772,7 @@ The following are explicitly NOT implemented in v1:
 - ~~Parameter sweep tooling~~ — GRADUATED to a documented increment in §18 as the `wichtelm sweep` command: a `[sweep]` config table declares per-parameter ranges/lists, the grid runs every combination over once-loaded data, and results rank by a selectable objective (default Sharpe). Console table + CSV output; no HTML leaderboard
 - User-defined DSL functions and macros
 - Expression-typed first arguments for window aggregates (e.g. `highest(<expression>, period)` where the first arg is computed bar-by-bar). v1 covers the common cases via hard-coded variants (`highest_high`, `lowest_low`, `highest_close`, `lowest_close`). Generic expression-typed args may be introduced if Tier B's boolean primitives or future features require them.
-- Output formats beyond HTML (PDF, JSON, CSV trade export)
+- Output **report** formats beyond HTML (PDF, JSON, CSV trade export). NOTE: this bars alternate *report* renderings; it does not bar the `run --dump-equity` debug/analysis side-channel (§2.1), which emits the per-bar equity series (already computed and rendered as SVG in §7.4) as a CSV so it can be consumed without scraping the HTML. The HTML report remains the sole report format
 - Boolean and String parameter types
 - Indicators and window aggregates in `And with stop_loss at` / `And with take_profit at` clauses, EXCEPT `atr_value(period)` — the frozen-at-fill ATR accessor graduated into stop/take scope in the 0.52 increment (§3.4, P16). All other indicators/window aggregates remain disallowed there
 - ~~Trailing stops (dynamic stop-loss that updates per bar)~~ — GRADUATED to §3.4/§3.4.1 as the `And with trailing_stop at <expr>` clause: a high-water-mark trailing stop with percentage and ATR-distance modes (disambiguated by whether the expression references `atr_value`), mutually exclusive with `stop_loss` (P23)

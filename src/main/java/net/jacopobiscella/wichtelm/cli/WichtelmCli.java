@@ -7,6 +7,7 @@ import net.jacopobiscella.wichtelm.error.ConfigParseException;
 import net.jacopobiscella.wichtelm.error.StrategyParseException;
 import net.jacopobiscella.wichtelm.error.SweepConfigException;
 import net.jacopobiscella.wichtelm.error.WichtelmException;
+import net.jacopobiscella.wichtelm.report.EquityCsvWriter;
 import net.jacopobiscella.wichtelm.report.HtmlReportGenerator;
 import net.jacopobiscella.wichtelm.report.ReportData;
 import net.jacopobiscella.wichtelm.runtime.BacktestRunResult;
@@ -96,10 +97,12 @@ public final class WichtelmCli {
     private int runBacktest(String[] args) {
         String configPath = null;
         boolean noReport = false;
+        boolean dumpEquity = false;
         Path outputOverride = null;
         for (int i = 0; i < args.length; i++) {
             switch (args[i]) {
                 case "--no-report" -> noReport = true;
+                case "--dump-equity" -> dumpEquity = true;
                 case "--output-dir" -> {
                     if (++i >= args.length) {
                         err.println("--output-dir requires a path argument");
@@ -134,6 +137,14 @@ public final class WichtelmCli {
             } else {
                 Path report = writeReport(config, configFile, strategy, result, parameters, outputOverride);
                 out.println("Backtest complete; report written to " + report);
+            }
+            // --dump-equity is independent of the report: it emits the raw per-bar
+            // equity series even when the report is suppressed, so an analyst can
+            // bulk-export equity curves across many runs (e.g. --no-report
+            // --dump-equity for a fast, light export).
+            if (dumpEquity) {
+                Path equityCsv = writeEquityCsv(config, configFile, result, outputOverride);
+                out.println("Equity curve written to " + equityCsv);
             }
             return EXIT_SUCCESS;
         } catch (IOException | UncheckedIOException e) {
@@ -281,6 +292,19 @@ public final class WichtelmCli {
                 generatedAt);
     }
 
+    private Path writeEquityCsv(BacktestConfig config, Path configFile, BacktestRunResult result,
+                                Path outputOverride) {
+        String fileName = configFile.getFileName().toString();
+        int dot = fileName.lastIndexOf('.');
+        String basename = dot > 0 ? fileName.substring(0, dot) : fileName;
+        Path outputDirectory = outputOverride != null
+                ? outputOverride
+                : config.outputDirectory().orElse(Path.of("."));
+        LocalDateTime generatedAt = LocalDateTime.now(ZoneOffset.UTC);
+        return EquityCsvWriter.write(result.result().equityCurve(), outputDirectory, basename,
+                generatedAt);
+    }
+
     private int validateStrategy(String[] args) {
         if (args.length != 1) {
             err.println("wichtelm validate requires exactly one strategy file");
@@ -364,12 +388,17 @@ public final class WichtelmCli {
     private void printUsage(PrintStream stream) {
         stream.println("""
                 Usage:
-                  wichtelm run <config-file> [--no-report] [--output-dir <path>]
+                  wichtelm run <config-file> [--no-report] [--dump-equity] [--output-dir <path>]
                   wichtelm sweep <config-file> [--objective <metric>] [--top <N>]
                                                [--max-combos <N>] [--no-report] [--output-dir <path>]
                   wichtelm validate <strat-file>
                   wichtelm --version
                   wichtelm --help
+
+                --dump-equity writes the per-bar mark-to-market equity curve to
+                {basename}_equity_{timestamp}.csv (time,equity,cash,position_value),
+                independent of the HTML report; combine with --no-report for a
+                report-free export.
 
                 sweep runs every combination declared in the config's [sweep] table and
                 ranks them by --objective (default sharpe; also total_return, sortino,
