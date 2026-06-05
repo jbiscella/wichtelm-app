@@ -1,6 +1,6 @@
-# Parse-time validation rules (P1–P22)
+# Parse-time validation rules (P1–P23)
 
-The parser enforces 22 rules. A violation throws a `StrategyParseException` carrying the file
+The parser enforces 23 rules. A violation throws a `StrategyParseException` carrying the file
 path, line, column, the violated rule id, and a message — printed like:
 
 ```

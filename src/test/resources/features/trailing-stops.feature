@@ -30,3 +30,10 @@ Feature: Trailing-stop signal emission (Block 4)
     When an in-position bar prints high 120 low 100
     And an in-position bar prints high 116 low 114
     Then a ClosePositionAtPrice signal is emitted at price 114
+
+  Scenario: ATR-distance trailing_stop detects atr_value even with a decimal period
+    Given a constant-range warmup history of 14 bars with range 2
+    And a long position opened at 100 with trailing_stop "3 * atr_value(14.0)"
+    When an in-position bar prints high 120 low 100
+    And an in-position bar prints high 116 low 114
+    Then a ClosePositionAtPrice signal is emitted at price 114

@@ -294,6 +294,13 @@ public final class StrategyParser {
         Optional<String> trailingStop = Optional.empty();
         for (int s = thenIndex + 1; s < steps.size(); s++) {
             RawStep step = steps.get(s);
+            // Protective clauses are standard Gherkin `And` steps after the
+            // terminal Then (P11). Reject other keywords (But/Given/When/Or…)
+            // so a non-`And` clause is not silently accepted from its text alone.
+            if (!step.keyword().equals("And")) {
+                throw fail("P10", step.line(), 1,
+                        "a protective clause after Then must use 'And' (was '" + step.keyword() + "')");
+            }
             String text = step.text();
             String expression;
             ProtectiveKind kind;

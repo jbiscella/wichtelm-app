@@ -1,6 +1,6 @@
 ---
 name: wichtelm-strategy-author
-description: Write, review, and debug wichtelm-app .strat backtesting strategies (a Gherkin-conformant, Heikin-Ashi-based DSL), their TOML config, and reports — including P1-P22 / C1-C11 parse-error debugging.
+description: Write, review, and debug wichtelm-app .strat backtesting strategies (a Gherkin-conformant, Heikin-Ashi-based DSL), their TOML config, and reports — including P1-P23 / C1-C11 parse-error debugging.
 ---
 
 # Authoring wichtelm-app strategies
@@ -16,7 +16,7 @@ strategies, not the person building the app.
 
 **Use this skill when** a user is authoring or fixing a `.strat` strategy file, writing the
 TOML backtest config, choosing indicators / Heikin-Ashi / MACD / RSI / moving-average /
-pivot primitives, resolving a `StrategyParseException` (rules P1–P22) or
+pivot primitives, resolving a `StrategyParseException` (rules P1–P23) or
 `ConfigParseException` (rules C1–C11), or interpreting a wichtelm HTML backtest report.
 
 ## How to use this skill
@@ -27,7 +27,7 @@ pivot primitives, resolving a `StrategyParseException` (rules P1–P22) or
    - `reference/function-catalog.md` — the **complete, closed** list of every built-in
      function/indicator with its exact argument count and defaults. If a name is not in
      this file, it does not exist — do not invent functions.
-   - `reference/validation-rules.md` — all 22 parse-time rules (P1–P22) with the exact
+   - `reference/validation-rules.md` — all 23 parse-time rules (P1–P23) with the exact
      error message the parser emits and how to fix each. Use this to pre-empt errors and
      to debug a `StrategyParseException`.
    - `reference/config-cli-report.md` — the TOML config schema (rules C1–C11), the CLI

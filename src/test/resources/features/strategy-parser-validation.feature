@@ -154,3 +154,15 @@ Feature: Strategy parser parse-time validation
     Given a strategy file with "And with trailing_stop at 3 * atr_value(14)"
     When the parser reads the file
     Then no exception is thrown
+
+  Scenario: A protective clause that does not use And is rejected by P10
+    Given a strategy file with "When close exceeds 1"
+    And the same Scenario has "But with stop_loss at entry_price * 0.98" appended
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P10"
+
+  Scenario: A trailing_stop with a whole-number-decimal ATR period parses successfully
+    Given a strategy file with "And with trailing_stop at 3 * atr_value(14.0)"
+    When the parser reads the file
+    Then no exception is thrown

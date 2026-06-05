@@ -358,6 +358,15 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         }
         String expression = exprOpt.get();
         BigDecimal snapshot = evaluateProtective(expression, position);
+        // A trailing distance/percentage must be positive. P21 catches a bare
+        // non-positive literal/parameter at parse time, but a compound form
+        // (e.g. "-1 * atr_value(14)" or "trail_pct - 20") can only be checked
+        // once evaluated — a non-positive value would yield an impossible stop
+        // (above the high-water mark for a long), so fail loud instead.
+        if (snapshot.signum() <= 0) {
+            throw new DslEvaluationException(strategy.featureName(), 0, bar.time(), 0, expression,
+                    "trailing_stop value must be > 0 but evaluated to " + snapshot.toPlainString());
+        }
         boolean distanceMode = referencesAtrValue(expression);
         Instant key = position.entryTime();
         BigDecimal priorExtreme = trailingExtreme.get(key);
@@ -398,10 +407,18 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         return extreme.multiply(multiplier, MathContext.DECIMAL64);
     }
 
-    /** A trailing_stop is ATR-distance mode iff its expression references atr_value. */
+    /**
+     * A trailing_stop is ATR-distance mode iff its expression calls atr_value.
+     * Matches the call by name + '(' regardless of the argument form, so a valid
+     * whole-number-decimal period like {@code atr_value(14.0)} (accepted by P21)
+     * is still detected — {@link #ATR_VALUE_CALL}'s argument pattern would miss it.
+     */
     private static boolean referencesAtrValue(String expression) {
-        return ATR_VALUE_CALL.matcher(expression).find();
+        return ATR_VALUE_REF.matcher(expression).find();
     }
+
+    /** {@code atr_value(} by name, any argument — for distance-mode detection. */
+    private static final Pattern ATR_VALUE_REF = Pattern.compile("atr_value\\s*\\(");
 
     private BigDecimal evaluateProtective(String expression, Position position) {
         // Resolve at the entry fill so atr_value(period) snapshots ATR there and

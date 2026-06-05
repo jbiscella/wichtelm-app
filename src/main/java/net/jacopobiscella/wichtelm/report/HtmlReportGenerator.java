@@ -805,6 +805,52 @@ public final class HtmlReportGenerator {
         return String.join(" AND ", parts);
     }
 
+    /**
+     * Recomputes the trailing-stop level at the trade's exit by replaying the
+     * high-water mark over the held window, mirroring the runtime's lookahead-safe
+     * rule (level from the mark THROUGH the bar before the exit bar). Returns empty
+     * when there is no trailing clause or too few in-window bars. The caller uses
+     * {@code exitPrice == level} to confirm a genuine trailing hit versus an
+     * end-of-series forced close.
+     */
+    private Optional<BigDecimal> trailingLevelAtExit(ReportData data, StrategyScenario entry, Trade trade) {
+        Optional<String> exprOpt = entry.trailingStopExpression();
+        if (exprOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        String expr = exprOpt.get();
+        BigDecimal snapshot = evaluateLevel(expr, trade.entryPrice(), trade.quantity(),
+                trade.entryTime(), data);
+        boolean distanceMode = expr.contains("atr_value");
+        boolean isLong = trade.direction().toString().equalsIgnoreCase("LONG");
+        // Favourable extreme of every held bar in [entryTime, exitTime). The exit
+        // bar (its open precedes the intrabar fill) is the last such bar; the
+        // runtime sets the level from the mark through the PRIOR bar, so drop it.
+        List<BigDecimal> extremes = new ArrayList<>();
+        for (OHLCBar bar : data.primarySeries().bars()) {
+            if (bar.time().isBefore(trade.entryTime())) {
+                continue;
+            }
+            if (!bar.time().isBefore(trade.exitTime())) {
+                break;
+            }
+            extremes.add(isLong ? bar.high() : bar.low());
+        }
+        if (extremes.size() < 2) {
+            return Optional.empty();
+        }
+        BigDecimal extreme = extremes.getFirst();
+        for (int i = 1; i < extremes.size() - 1; i++) {
+            extreme = isLong ? extreme.max(extremes.get(i)) : extreme.min(extremes.get(i));
+        }
+        if (distanceMode) {
+            return Optional.of(isLong ? extreme.subtract(snapshot) : extreme.add(snapshot));
+        }
+        BigDecimal factor = snapshot.divide(HUNDRED, DECIMAL);
+        BigDecimal multiplier = isLong ? BigDecimal.ONE.subtract(factor) : BigDecimal.ONE.add(factor);
+        return Optional.of(extreme.multiply(multiplier, DECIMAL));
+    }
+
     private String forcedExitTerm(ReportData data, StrategyScenario entryScenario, Trade trade) {
         String hitAt = formatPrice(trade.exitPrice());
         if (entryScenario != null) {
@@ -820,7 +866,15 @@ public final class HtmlReportGenerator {
                 if (take.isPresent() && trade.exitPrice().compareTo(take.get()) == 0) {
                     return "take_profit (forced, hit at " + hitAt + ")";
                 }
-                return "trailing_stop (forced, hit at " + hitAt + ")";
+                // Attribute to the trailing stop ONLY when the exit price matches
+                // the recomputed trailing level — an end-of-series forced close
+                // (filled at the bar close) would otherwise be mislabeled. When
+                // the cause cannot be confirmed, keep the generic label.
+                Optional<BigDecimal> level = trailingLevelAtExit(data, entryScenario, trade);
+                if (level.isPresent() && trade.exitPrice().compareTo(level.get()) == 0) {
+                    return "trailing_stop (forced, hit at " + hitAt + ")";
+                }
+                return "forced exit (hit at " + hitAt + ")";
             }
             Optional<BigDecimal> stop = entryScenario.stopLossExpression()
                     .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
