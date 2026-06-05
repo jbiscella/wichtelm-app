@@ -326,9 +326,25 @@ public final class StrategyParser {
                     ? ExprContext.TRAILING : ExprContext.STOP_TAKE;
             analyzeExpression(expression, step.line(), exprContext, parameterNames, seriesNames);
             switch (kind) {
-                case STOP -> stopLoss = Optional.of(expression);
-                case TAKE -> takeProfit = Optional.of(expression);
+                case STOP -> {
+                    if (stopLoss.isPresent()) {
+                        throw fail("P11", step.line(), 1,
+                                "duplicate stop_loss clause on a Scenario (it is singular)");
+                    }
+                    stopLoss = Optional.of(expression);
+                }
+                case TAKE -> {
+                    if (takeProfit.isPresent()) {
+                        throw fail("P11", step.line(), 1,
+                                "duplicate take_profit clause on a Scenario (it is singular)");
+                    }
+                    takeProfit = Optional.of(expression);
+                }
                 case TRAILING -> {
+                    if (trailingStop.isPresent()) {
+                        throw fail("P11", step.line(), 1,
+                                "duplicate trailing_stop clause on a Scenario (it is singular)");
+                    }
                     requirePositiveTrailing(expression, step.line());
                     trailingStop = Optional.of(expression);
                 }
@@ -469,6 +485,91 @@ public final class StrategyParser {
         }
         if (depth != 0) {
             throw fail("P15", line, 1, "unbalanced parentheses in expression");
+        }
+        // Protective clauses (stop_loss / take_profit / trailing_stop) are pure
+        // arithmetic — no comparison-operator words, no boolean primitives — so we
+        // can additionally enforce operand/operator ordering. Conditions are NOT
+        // validated this way (they carry "crosses below", "is above", ha_doji() …).
+        if (context == ExprContext.STOP_TAKE || context == ExprContext.TRAILING) {
+            validateArithmeticStructure(expr, line);
+        }
+    }
+
+    /**
+     * Operand/operator state machine for protective-clause arithmetic. The scan in
+     * {@link #analyzeExpression} checks balanced parens, known names and the
+     * presence of an operand, but not ordering — so {@code "1 +"},
+     * {@code "3 * atr_value(14) +"} or {@code "1 2"} have operands and balanced
+     * parens yet are malformed, and would fail opaquely at evaluation instead of
+     * as a deterministic P15. A leading/unary {@code +}/{@code -} is allowed; a
+     * function call ({@code atr_value(14)}) counts as a single operand.
+     */
+    private void validateArithmeticStructure(String expr, int line) {
+        int n = expr.length();
+        int i = 0;
+        boolean expectOperand = true;
+        while (i < n) {
+            char c = expr.charAt(i);
+            if (c == ' ') {
+                i++;
+            } else if (c == '(') {
+                if (!expectOperand) {
+                    throw fail("P15", line, i + 1,
+                            "malformed expression (operator expected before '('): \"" + expr + "\"");
+                }
+                i++;
+            } else if (c == ')') {
+                if (expectOperand) {
+                    throw fail("P15", line, i + 1,
+                            "malformed expression (operand expected before ')'): \"" + expr + "\"");
+                }
+                i++;
+            } else if (c == '+' || c == '-' || c == '*' || c == '/') {
+                if (expectOperand) {
+                    if (c == '*' || c == '/') {
+                        throw fail("P15", line, i + 1,
+                                "malformed expression (operand expected before '" + c + "'): \"" + expr + "\"");
+                    }
+                    // leading/unary '+'/'-' — still awaiting the operand it signs
+                    i++;
+                } else {
+                    expectOperand = true;
+                    i++;
+                }
+            } else if (Character.isLetter(c) || c == '_') {
+                if (!expectOperand) {
+                    throw fail("P15", line, i + 1,
+                            "malformed expression (operator expected before operand): \"" + expr + "\"");
+                }
+                int j = i;
+                while (j < n && (Character.isLetterOrDigit(expr.charAt(j)) || expr.charAt(j) == '_')) {
+                    j++;
+                }
+                int k = j;
+                while (k < n && expr.charAt(k) == ' ') {
+                    k++;
+                }
+                // identifier immediately followed by '(' is a function call — one operand
+                i = (k < n && expr.charAt(k) == '(') ? closeParenIndex(expr, k, line) + 1 : j;
+                expectOperand = false;
+            } else if (Character.isDigit(c) || c == '.') {
+                if (!expectOperand) {
+                    throw fail("P15", line, i + 1,
+                            "malformed expression (operator expected before operand): \"" + expr + "\"");
+                }
+                int j = i;
+                while (j < n && (Character.isDigit(expr.charAt(j)) || expr.charAt(j) == '.')) {
+                    j++;
+                }
+                i = j;
+                expectOperand = false;
+            } else {
+                i++;
+            }
+        }
+        if (expectOperand) {
+            throw fail("P15", line, 1,
+                    "malformed expression (trailing operator or missing operand): \"" + expr + "\"");
         }
     }
 

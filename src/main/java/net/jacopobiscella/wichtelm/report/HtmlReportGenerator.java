@@ -900,13 +900,17 @@ public final class HtmlReportGenerator {
         Optional<BigDecimal> take = entryScenario.takeProfitExpression()
                 .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
                         trade.entryTime(), data));
-        if (stop.isPresent() && take.isPresent()) {
-            // stop_loss wins a same-bar tie (§6.3) — pick the nearer level, stop on a tie.
-            return exit.subtract(stop.get()).abs().compareTo(exit.subtract(take.get()).abs()) <= 0
-                    ? "stop_loss" : "take_profit";
-        } else if (stop.isPresent()) {
+        // A genuine stop_loss / take_profit forced exit fills EXACTLY at the
+        // snapshotted level (ClosePositionAtPrice). Confirm the exit price matches
+        // a level before attributing it — otherwise an end-of-series close (filled
+        // at the last bar's close, matching neither) would be mislabelled. Same
+        // price-confirmation the trailing branch uses. stop_loss wins a tie (§6.3).
+        boolean atStop = stop.isPresent() && exit.compareTo(stop.get()) == 0;
+        boolean atTake = take.isPresent() && exit.compareTo(take.get()) == 0;
+        if (atStop) {
             return "stop_loss";
-        } else if (take.isPresent()) {
+        }
+        if (atTake) {
             return "take_profit";
         }
         return "forced exit";
