@@ -85,7 +85,7 @@ Every Scenario in the body of the strategy MUST terminate its sequence of steps 
 
 ### 3.4 Stop-loss, take-profit, and trailing-stop clauses
 
-A Scenario terminating with `Then long_entry` or `Then short_entry` MAY have one or both of the following standard Gherkin `And` steps appended:
+A Scenario terminating with `Then long_entry` or `Then short_entry` MAY append the following protective standard Gherkin `And` steps — `take_profit` together with **either** a fixed `stop_loss` **or** a `trailing_stop`; `stop_loss` and `trailing_stop` are mutually exclusive (at most one of the two — §3.4.1, P23):
 
 - `And with stop_loss at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
 - `And with take_profit at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
@@ -921,3 +921,71 @@ out-of-sample, not a guarantee, is left to the author.
 objective, tradeless-sorts-last, market-data-loaded-exactly-once). The `sweep`
 command, its CSV output and `--objective` validation are specified in
 `cli-behavior.feature` (§14).
+
+## 19. Gap-aware protective-exit fills (next increment — NOT yet implemented)
+
+> **As** a strategy author, **I want** a protective exit that the market gapped
+> straight through to fill at the realistic worse price, **so that** my backtest
+> P&L is not flattered by assuming an impossible fill at a level the price never
+> traded.
+
+**Status: planned, not implemented.** This is the next increment, raised from a
+PR #60 review of the trailing-stop work. It is recorded here so the spec stays
+the source of truth; no code implements it yet.
+
+### 19.1 Current behavior (the gap)
+
+All three protective exits — `stop_loss`, `take_profit`, `trailing_stop` — emit
+`ClosePositionAtPrice(level, intrabar_time)` at the **snapshotted / trailing
+level**, with no adjustment for an opening gap (§3.4, §6.2). When a bar opens
+**beyond** the protective level (a long whose `low`/`open` gaps below the stop,
+or a short whose `high`/`open` gaps above it), the fill is still booked at the
+level even though the price never traded there on that bar. This **overstates
+P&L** on gap-through exits. The behavior is uniform across the three clauses (it
+is not trailing-specific — see `WichtelmSignalGenerator.protectiveExit` /
+`trailingExit`), which is why it is corrected here as one cross-cutting increment
+rather than patched into the trailing path alone.
+
+### 19.2 Target behavior
+
+When the bar's **open** is already beyond the protective level in the exit
+direction, fill at the **open** (the realistic, pessimistic price) instead of the
+level. When the level is within the bar's traded range, behavior is unchanged
+(fill at the level). This keeps the pessimistic convention (§6.3) and applies
+identically to `stop_loss`, `take_profit` and `trailing_stop`.
+
+| Bar relative to a long's protective level `L` | Fill price |
+|---|---|
+| `open <= L` and `low <= L` (gap-through) | `open` (worse than `L`) |
+| `open > L` and `low <= L` (intrabar touch) | `L` (unchanged) |
+| `low > L` (not reached) | no exit |
+
+(The short side mirrors this around `high`/`open` and `L` from above.)
+
+### 19.3 Behavioral spec
+
+A new `protective-gap-fill.feature` to specify, at minimum:
+
+```gherkin
+Scenario: A long stop_loss gapped through fills at the bar open, not the stale level
+  Given a long position opened at 100 with stop_loss at 98
+  And the next in-position bar opens at 95 with high 96, low 94, close 95
+  When the runtime evaluates that bar
+  Then a ClosePositionAtPrice signal is emitted with price 95
+  And the fill price is NOT 98
+
+Scenario: A long trailing_stop gapped through fills at the bar open
+  Given a long position with a trailing level of 108 through the previous bar
+  And the next bar opens at 105 with high 106, low 104
+  When the runtime evaluates that bar
+  Then a ClosePositionAtPrice signal is emitted with price 105
+
+Scenario: An intrabar touch (no gap) still fills at the level
+  Given a long position opened at 100 with stop_loss at 98
+  And the next bar opens at 99 with high 99.5, low 97, close 98.5
+  When the runtime evaluates that bar
+  Then a ClosePositionAtPrice signal is emitted with price 98
+```
+
+On delivery: update §3.4 / §6.2 to state the gap-aware fill rule, and regenerate
+the demo reports (their metrics may shift slightly for any gap-through exits).
