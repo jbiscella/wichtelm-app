@@ -49,9 +49,10 @@ class SkillRegressionTest {
     private static final String[] QUOTED_PARSER_MESSAGES = {
             "duplicate parameter declaration:",
             "Scenario must terminate with",
-            "only 'And with stop_loss at' / 'And with take_profit at' may follow Then",
-            "stop_loss/take_profit clauses are not allowed on exit Scenarios",
-            "atr_value(...) is only valid in stop_loss/take_profit expressions;",
+            "'And with trailing_stop at' may follow Then",
+            "stop_loss/take_profit/trailing_stop clauses are not allowed on exit Scenarios",
+            "atr_value(...) is only valid in stop_loss/take_profit/trailing_stop",
+            "a Scenario may declare at most one of stop_loss and trailing_stop",
             "Background series timeframe must be strictly higher than the primary timeframe",
             "trade-context variable not allowed in an entry Scenario:",
             "duplicate Scenario name:",

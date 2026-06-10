@@ -7,7 +7,7 @@ import net.jacopobiscella.wichtelm.strategy.ParsedStrategy;
 import net.jacopobiscella.wichtelm.strategy.PositionPrecondition;
 import net.jacopobiscella.wichtelm.strategy.StrategyScenario;
 import net.jacopobiscella.wichtelm.strategy.StrategyStep;
-import net.jacopobiscella.wichtelm.strategy.Timeframes;
+import net.jacopobiscella.wichtelm.strategy.TrailingStops;
 import org.hatrack.commons.OHLCBar;
 import org.hatrack.commons.Timeframe;
 import org.hatrack.dsl.BarIndicatorSource;
@@ -23,7 +23,6 @@ import org.hatrack.frauholle.port.SignalGenerator;
 
 import java.math.BigDecimal;
 import java.math.MathContext;
-import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -80,6 +79,15 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
      * scenarios would silently apply the wrong stop.
      */
     private final Map<Instant, String> openPositionEntryScenario = new HashMap<>();
+    /**
+     * High-water mark per open position (keyed by {@link Position#entryTime()})
+     * for a {@code trailing_stop}: the most favourable price reached since the
+     * fill — highest {@code high} for a long, lowest {@code low} for a short.
+     * Updated each in-position bar AFTER the breach check, so the level monitored
+     * on bar T uses the mark through bar T-1 (lookahead-safe, §3.4.1). Evicted on
+     * close alongside {@link #openPositionEntryScenario}.
+     */
+    private final Map<Instant, BigDecimal> trailingExtreme = new HashMap<>();
     /**
      * Last entry scenario name whose Buy/Sell signal has been emitted but whose
      * resulting Position has not yet been observed in a subsequent BarContext.
@@ -246,6 +254,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     private void reconcileEntryOwnership(Optional<Position> open) {
         if (open.isEmpty()) {
             openPositionEntryScenario.clear();
+            trailingExtreme.clear();
             pendingEntryScenarioName = null;
             return;
         }
@@ -316,6 +325,14 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
             }
         }
 
+        // trailing_stop (mutually exclusive with stop_loss, P23). It is a stop:
+        // it is checked before take_profit so it wins a same-bar tie (§6.3). The
+        // high-water mark is also advanced here, every in-position bar.
+        Optional<Signal> trailing = trailingExit(entry.get(), position, bar, isLong);
+        if (trailing.isPresent()) {
+            return trailing;
+        }
+
         Optional<BigDecimal> take = entry.get().takeProfitExpression()
                 .map(expression -> evaluateProtective(expression, position));
         if (take.isPresent()) {
@@ -326,6 +343,86 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Evaluates the position's {@code trailing_stop} (if any) on {@code bar} and
+     * advances the high-water mark. Returns a {@link Signal.ClosePositionAtPrice}
+     * when the trailing level (derived from the mark THROUGH the previous bar) is
+     * breached by this bar's low (long) / high (short); otherwise empty. The
+     * high-water mark is updated with this bar's favourable extreme AFTER the
+     * check, keeping the trail lookahead-safe and ratchet-only (§3.4.1).
+     */
+    private Optional<Signal> trailingExit(StrategyScenario entry, Position position,
+                                          OHLCBar bar, boolean isLong) {
+        Optional<String> exprOpt = entry.trailingStopExpression();
+        if (exprOpt.isEmpty()) {
+            return Optional.empty();
+        }
+        String expression = exprOpt.get();
+        BigDecimal snapshot = evaluateProtective(expression, position);
+        // A trailing distance/percentage must be positive. P21 catches a bare
+        // non-positive literal/parameter at parse time, but a compound form
+        // (e.g. "-1 * atr_value(14)" or "trail_pct - 20") can only be checked
+        // once evaluated — a non-positive value would yield an impossible stop
+        // (above the high-water mark for a long), so fail loud instead.
+        if (snapshot.signum() <= 0) {
+            throw new DslEvaluationException(strategy.featureName(), 0, bar.time(), 0, expression,
+                    "trailing_stop value must be > 0 but evaluated to " + snapshot.toPlainString());
+        }
+        boolean distanceMode = referencesAtrValue(expression);
+        Instant key = position.entryTime();
+        BigDecimal priorExtreme = trailingExtreme.get(key);
+
+        Optional<Signal> hit = Optional.empty();
+        // priorExtreme is null only on the fill bar — there is no prior in-position
+        // bar to anchor the high-water mark, so no trailing exit fires here (§3.4.1,
+        // by design and lookahead-safe). From the next bar on, the level is derived
+        // from the mark THROUGH the previous bar. A fixed stop_loss DOES guard the
+        // fill bar (snapshotted, not mark-anchored); the trailing carve-out is the
+        // deliberate difference, not an oversight.
+        if (priorExtreme != null) {
+            BigDecimal level = trailingLevel(priorExtreme, snapshot, distanceMode, isLong);
+            boolean breached = isLong
+                    ? bar.low().compareTo(level) <= 0
+                    : bar.high().compareTo(level) >= 0;
+            if (breached) {
+                hit = Optional.of(new Signal.ClosePositionAtPrice(level, intrabarFillTime(bar)));
+            }
+        }
+
+        BigDecimal barExtreme = isLong ? bar.high() : bar.low();
+        BigDecimal newExtreme = priorExtreme == null
+                ? barExtreme
+                : (isLong ? priorExtreme.max(barExtreme) : priorExtreme.min(barExtreme));
+        trailingExtreme.put(key, newExtreme);
+        return hit;
+    }
+
+    /**
+     * Trailing level from the high-water mark. ATR-distance mode subtracts/adds
+     * the snapshotted price distance; percentage mode scales the mark by
+     * {@code (1 -/+ pct/100)}. Long subtracts (stop below the high), short adds.
+     */
+    private static BigDecimal trailingLevel(BigDecimal extreme, BigDecimal snapshot,
+                                            boolean distanceMode, boolean isLong) {
+        if (distanceMode) {
+            return isLong ? extreme.subtract(snapshot) : extreme.add(snapshot);
+        }
+        BigDecimal factor = snapshot.divide(HUNDRED, MathContext.DECIMAL64);
+        BigDecimal multiplier = isLong
+                ? BigDecimal.ONE.subtract(factor)
+                : BigDecimal.ONE.add(factor);
+        return extreme.multiply(multiplier, MathContext.DECIMAL64);
+    }
+
+    /**
+     * A trailing_stop is ATR-distance mode iff its expression calls atr_value.
+     * Delegates to {@link TrailingStops#isAtrDistanceMode} so the runtime and the
+     * HTML report share one definition (§3.4.1) rather than re-deriving it.
+     */
+    private static boolean referencesAtrValue(String expression) {
+        return TrailingStops.isAtrDistanceMode(expression);
     }
 
     private BigDecimal evaluateProtective(String expression, Position position) {
@@ -368,6 +465,7 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
         List<String> expressions = new ArrayList<>();
         scenario.stopLossExpression().ifPresent(expressions::add);
         scenario.takeProfitExpression().ifPresent(expressions::add);
+        scenario.trailingStopExpression().ifPresent(expressions::add);
         if (expressions.isEmpty() || primaryHistory.isEmpty()) {
             return Optional.empty();
         }
@@ -448,7 +546,9 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 : FirstClassCondition.SHORT_ENTRY;
         return strategy.scenarios().stream()
                 .filter(s -> s.terminalCondition() == entryCondition)
-                .filter(s -> s.stopLossExpression().isPresent() || s.takeProfitExpression().isPresent())
+                .filter(s -> s.stopLossExpression().isPresent()
+                        || s.takeProfitExpression().isPresent()
+                        || s.trailingStopExpression().isPresent())
                 .findFirst();
     }
 
@@ -476,9 +576,22 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
     }
 
     private Instant intrabarFillTime(OHLCBar bar) {
-        Instant open = bar.time();
-        Instant close = Timeframes.advance(open, timeframe);
-        return open.plus(Duration.between(open, close).dividedBy(2));
+        // A protective exit fills somewhere inside the bar that breached the
+        // level. frau-holle's ClosePositionAtPrice contract requires this instant
+        // to fall strictly after the bar's open AND strictly before the NEXT bar
+        // opens. We cannot consult the next bar here — BarContext exposes only the
+        // current bar and past history (lookahead-safety) — so we cannot know the
+        // bar's actual duration. A nominal midpoint (open + timeframe/2) assumes
+        // every bar spans a full timeframe, but an intraday series can contain
+        // bars spaced closer than the nominal timeframe (irregular or sub-timeframe
+        // spacing is observed in real provider data), so the next bar may open
+        // sooner than open+timeframe; a nominal midpoint would then land after it
+        // and frau-holle rejects the signal. We instead place the fill a minimal
+        // instant after the open: strictly inside ANY well-formed bar (distinct,
+        // strictly-increasing timestamps) regardless of spacing. The exact sub-bar
+        // instant is cosmetic — the fill PRICE, not its timestamp, drives P&L, and
+        // the trade is still attributed to this bar.
+        return bar.time().plusNanos(1);
     }
 
     private OHLCBar previousBar(BarContext context) {

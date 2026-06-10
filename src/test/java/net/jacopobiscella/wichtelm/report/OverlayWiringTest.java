@@ -51,7 +51,7 @@ class OverlayWiringTest {
     private static StrategyScenario entry(String stepText) {
         return new StrategyScenario("Enter", PositionPrecondition.NO_OPEN_POSITION,
                 List.of(new StrategyStep("When", stepText, 1)),
-                FirstClassCondition.LONG_ENTRY, Optional.empty(), Optional.empty(), 1);
+                FirstClassCondition.LONG_ENTRY, Optional.empty(), Optional.empty(), Optional.empty(), 1);
     }
 
     // ─── MA-trend-filter primitives → SMA / EMA overlays ─────────────────────
@@ -255,7 +255,7 @@ class OverlayWiringTest {
             steps.add(new StrategyStep(i == 0 ? "When" : "And", stepTexts[i], i + 1));
         }
         return new StrategyScenario("Enter", PositionPrecondition.NO_OPEN_POSITION, steps,
-                FirstClassCondition.LONG_ENTRY, Optional.empty(), Optional.empty(), 1);
+                FirstClassCondition.LONG_ENTRY, Optional.empty(), Optional.empty(), Optional.empty(), 1);
     }
 
     private static ParsedStrategy primaryOnlyStrategy(String primaryTf) {

@@ -176,6 +176,16 @@ public class CliBehaviorSteps {
         invoke("run", configFile.toString());
     }
 
+    @When("wichtelm runs the config with {string}")
+    public void wichtelmRunsTheConfigWith(String extraArgs) {
+        String[] extra = extraArgs.split(" ");
+        String[] args = new String[extra.length + 2];
+        args[0] = "run";
+        args[1] = configFile.toString();
+        System.arraycopy(extra, 0, args, 2, extra.length);
+        invoke(args);
+    }
+
     @When("wichtelm sweeps the config")
     public void wichtelmSweepsTheConfig() {
         invoke("sweep", configFile.toString());
@@ -234,6 +244,14 @@ public class CliBehaviorSteps {
     private boolean htmlReportExists() throws IOException {
         try (Stream<Path> paths = Files.walk(tempDir)) {
             return paths.anyMatch(p -> p.toString().endsWith(".html"));
+        }
+    }
+
+    @Then("an equity CSV file is created")
+    public void anEquityCsvFileIsCreated() throws IOException {
+        try (Stream<Path> paths = Files.walk(tempDir)) {
+            assertTrue(paths.anyMatch(p -> p.getFileName().toString().contains("_equity_")
+                    && p.toString().endsWith(".csv")), "no equity CSV file was produced");
         }
     }
 

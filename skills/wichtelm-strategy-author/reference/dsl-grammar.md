@@ -29,7 +29,14 @@ Feature: <name>
     Then <long_entry|long_exit|short_entry|short_exit>
     And with stop_loss at <expression>
     And with take_profit at <expression>
+    And with trailing_stop at <expression>
 ```
+
+> **Protective clauses** (entry scenarios only): `take_profit` may accompany
+> **either** a fixed `stop_loss` **or** a `trailing_stop`, but `stop_loss` and
+> `trailing_stop` are mutually exclusive (P23). `trailing_stop` is a high-water-mark
+> trailing stop — percentage mode unless the expression references `atr_value`,
+> then ATR-distance (chandelier) mode. See `function-catalog.md` for the full rules.
 
 > **Comments must be on their own line.** The parser skips only *whole-line* `#` comments; it
 > does not strip inline `# ...` text. `Primary timeframe: 1h   # primary` or

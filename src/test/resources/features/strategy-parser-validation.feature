@@ -118,3 +118,51 @@ Feature: Strategy parser parse-time validation
     When the parser reads the file
     Then StrategyParseException is thrown
     And violatedRule is "P21"
+
+  Scenario: stop_loss and trailing_stop on the same entry Scenario is rejected by P23
+    Given a strategy file with "And with stop_loss at entry_price * 0.98"
+    And the same Scenario has "And with trailing_stop at 5" appended
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P23"
+
+  Scenario: trailing_stop clause on a long_exit Scenario is rejected by P12
+    Given a strategy file with a Scenario terminating with "Then long_exit"
+    And the same Scenario has "And with trailing_stop at 5" appended
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P12"
+
+  Scenario: A trade-context variable in a trailing_stop expression is rejected by P16
+    Given a strategy file with "And with trailing_stop at entry_price * 0.95"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P16"
+
+  Scenario: A non-positive trailing_stop literal is rejected by P21
+    Given a strategy file with "And with trailing_stop at 0"
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P21"
+
+  Scenario: A percentage trailing_stop parses successfully
+    Given a strategy file with "And with trailing_stop at 8"
+    When the parser reads the file
+    Then no exception is thrown
+
+  Scenario: An ATR-distance trailing_stop parses successfully
+    Given a strategy file with "And with trailing_stop at 3 * atr_value(14)"
+    When the parser reads the file
+    Then no exception is thrown
+
+  Scenario: A protective clause that does not use And is rejected by P10
+    Given a strategy file with "When close exceeds 1"
+    And the same Scenario has "But with stop_loss at entry_price * 0.98" appended
+    When the parser reads the file
+    Then StrategyParseException is thrown
+    And violatedRule is "P10"
+
+  Scenario: A trailing_stop with a whole-number-decimal ATR period parses successfully
+    Given a strategy file with "And with trailing_stop at 3 * atr_value(14.0)"
+    When the parser reads the file
+    Then no exception is thrown

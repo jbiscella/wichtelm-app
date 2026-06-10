@@ -33,6 +33,7 @@ The "public API" of `wichtelm-app` is NOT a Java type catalog — `wichtelm-app`
 |---|---|
 | `wichtelm run <config-file>` | runs a backtest using the strategy and parameters declared in the TOML config file |
 | `wichtelm run <config-file> --no-report` | runs the backtest without producing the HTML report |
+| `wichtelm run <config-file> --dump-equity` | additionally writes the per-bar mark-to-market equity curve to `{config_basename}_equity_{timestamp}.csv` (`time,equity,cash,position_value`), independent of the HTML report (combine with `--no-report` for a report-free export). A debug/analysis side-channel for the same series the report renders as SVG (§7.4), NOT a report format — see §15 |
 | `wichtelm run <config-file> --output-dir <path>` | overrides the output directory configured globally |
 | `wichtelm validate <strat-file>` | parses the strategy file and reports parse-time errors without running a backtest |
 | `wichtelm --version` | prints the application version |
@@ -82,16 +83,30 @@ The 4 first-class conditions emitted by Scenarios are:
 
 Every Scenario in the body of the strategy MUST terminate its sequence of steps with `Then <one of the 4 conditions>`. Diagnostic/visualization-only Scenarios are NOT allowed in `.strat` files.
 
-### 3.4 Stop-loss and take-profit clauses
+### 3.4 Stop-loss, take-profit, and trailing-stop clauses
 
-A Scenario terminating with `Then long_entry` or `Then short_entry` MAY have one or both of the following standard Gherkin `And` steps appended:
+A Scenario terminating with `Then long_entry` or `Then short_entry` MAY append the following protective standard Gherkin `And` steps — `take_profit` together with **either** a fixed `stop_loss` **or** a `trailing_stop`; `stop_loss` and `trailing_stop` are mutually exclusive (at most one of the two — §3.4.1, P23):
 
 - `And with stop_loss at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
 - `And with take_profit at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
+- `And with trailing_stop at <expression>` — declares a **dynamic** stop that ratchets in the favourable direction as the trade moves, locking in profit while letting the trend run (§3.4.1).
 
-The expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted, with one exception: `atr_value(period)` — the frozen-at-fill ATR accessor (e.g. `entry_price - 2 * atr_value(14)`), evaluated once at the entry fill bar and held constant for the trade. It is valid ONLY inside `stop_loss` / `take_profit` (use `atr(period)` in conditions). (`entry_time` is reserved — see §15.)
+The stop_loss / take_profit expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted, with one exception: `atr_value(period)` — the frozen-at-fill ATR accessor (e.g. `entry_price - 2 * atr_value(14)`), evaluated once at the entry fill bar and held constant for the trade. It is valid ONLY inside `stop_loss` / `take_profit` / `trailing_stop` (use `atr(period)` in conditions). (`entry_time` is reserved — see §15.)
 
-Each open position is bound at fill time to the scenario that emitted its Buy/Sell signal; the protective-exit evaluator uses that scenario's stop_loss / take_profit expressions, not the first same-direction entry scenario in source order. Two `long_entry` scenarios with different stops therefore each apply their own stop to the position they opened.
+Each open position is bound at fill time to the scenario that emitted its Buy/Sell signal; the protective-exit evaluator uses that scenario's stop_loss / take_profit / trailing_stop expressions, not the first same-direction entry scenario in source order. Two `long_entry` scenarios with different stops therefore each apply their own stop to the position they opened.
+
+#### 3.4.1 Trailing-stop semantics
+
+`And with trailing_stop at <expression>` declares a stop that follows the trade's **high-water mark** (the most favourable price reached since the fill) and only ever moves in the favourable direction — it never loosens. The `<expression>` value is snapshotted at the fill and held constant for the trade; what trails is the anchor (the high-water mark), not the distance. Two modes are disambiguated by the expression text:
+
+- **Percentage mode** — the expression does NOT reference `atr_value`. The value is read as a **percentage**. For a long, the stop is `high_water_mark * (1 - pct/100)`; for a short, `low_water_mark * (1 + pct/100)`. Example: `And with trailing_stop at trail_pct` or `And with trailing_stop at 8`.
+- **ATR-distance mode** — the expression references `atr_value(period)`. The value is read as a **price distance** (in instrument units) subtracted from / added to the high-water mark (a chandelier-style exit, ATR frozen at fill). For a long, the stop is `high_water_mark - distance`; for a short, `low_water_mark + distance`. Example: `And with trailing_stop at 3 * atr_value(14)`.
+
+The expression may reference ONLY constants, declared `Parameter` values, and (in ATR-distance mode) `atr_value(period)`. Trade-context variables (`entry_price`, `position_size`), Background series, indicators, and window aggregates are NOT accepted (P16). A non-positive numeric literal is rejected by P21.
+
+**High-water mark and lookahead-safety.** The high-water mark accumulates the highest `high` (long) / lowest `low` (short) of every bar the position has been open for. The trailing level monitored on bar T is computed from the high-water mark **through bar T-1** (the bars that closed before T), then compared against bar T's `low` (long) / `high` (short); the current bar's own extreme is folded into the mark only AFTER the breach check. This makes the trail lookahead-safe (it never uses bar T's high to justify exiting on bar T's low) and pessimistic. On the fill bar itself there is no prior in-position bar, so no trailing exit can fire there.
+
+A scenario may declare AT MOST ONE of `stop_loss` and `trailing_stop` (they are mutually exclusive — P23); `take_profit` MAY accompany either. When `take_profit` accompanies a `trailing_stop`, the trailing stop wins intrabar on a same-bar tie (stop side, §6.3).
 
 **Warmup suppression.** Because `atr_value(period)` is snapshotted at the entry fill, an entry that matches before its ATR is warm (fewer than `period` bars precede the fill) cannot be given its declared stop. Rather than open a position without its declared protection (misrepresenting the strategy) or abort the backtest, the runtime **suppresses that entry**: no position opens, and the same scenario fires naturally on a later bar once the indicator warms. Each suppressed entry is recorded (bar time, scenario name, reason) and listed in a "Suppressed entries" diagnostics section of the HTML report (§7), so the author can see why early trades are missing.
 
@@ -133,7 +148,7 @@ Expressions in Scenarios use the following syntax:
 | MACD primitives (from nachtkrapp) — Tier B booleans | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
 | MA trend filter primitives (from nachtkrapp 0.52) — Tier B booleans | `price_above_sma(period)`, `price_below_sma(period)`, `price_above_ema(period)`, `price_below_ema(period)`, `price_crosses_above_sma(period)`, `price_crosses_below_sma(period)`, `price_crosses_above_ema(period)`, `price_crosses_below_ema(period)`, `sma_above_ema(sma_period, ema_period)`, `sma_crosses_above_ema(sma_period, ema_period)`, `sma_crosses_below_ema(sma_period, ema_period)` — `PriceSource.CLOSE`; price-vs-MA via `PriceVsMARule`/`PriceMACrossRule`, MA-vs-MA via `MAVsMARule`/`MACrossMARule` |
 | Pivot point primitives (from nachtkrapp 0.52) — Tier B booleans | `price_above_pivot(level)`, `price_below_pivot(level)`, `price_crosses_above_pivot(level)`, `price_crosses_below_pivot(level)` — the lone argument is a **symbolic STANDARD daily pivot level** token (`P`, `R1`, `R2`, `R3`, `S1`, `S2`, `S3`), NOT a numeric period. `PriceSource.CLOSE`; resolved via nachtkrapp `PivotPointRule(1d, STANDARD, CLOSE)`, which aggregates the primary series to daily bars (UTC boundaries) and reads the prior completed day's OHLC. CAMARILLA's `R4`/`S4`, the WOODIE/CAMARILLA variants, and weekly/non-daily periods are out of scope in v1 (a non-STANDARD level token is rejected by P21). The level stays symbolic end-to-end via a dedicated boolean-step path in `ExpressionEvaluator.condition` — it never flows through the numeric arithmetic evaluator. Consequently a pivot primitive is valid ONLY as a complete `When`/`And` condition step (e.g. `When price_above_pivot(R1)`); embedding it in a comparison, in arithmetic, or in a Background series is rejected at parse time (P14) |
-| Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `position_size`, `atr_value(period)` (stop_loss/take_profit only — frozen-at-fill ATR, §3.4) (`entry_time` reserved — see §15) |
+| Trade-context variables (in exit Scenarios and `And with` clauses) | `entry_price`, `position_size`, `atr_value(period)` (stop_loss/take_profit/trailing_stop only — frozen-at-fill ATR, §3.4/§3.4.1) (`entry_time` reserved — see §15) |
 
 Composite indicators are exposed as flat per-component functions in v1: there is no callable `macd` — its components are the three `macd_*` functions listed above, consistent with how every other indicator in the catalog is exposed flat. A field-accessor syntax (`macd(...).macd_line`) was considered and rejected: it would require a postfix-access layer in the expression parser plus indicator-specific parse-time validation, for no gain over flat functions. If field accessors are ever wanted, that is a general parser feature, not a MACD concern.
 
@@ -250,18 +265,19 @@ Each rule below MUST be enforced at parse time. On violation, the parser throws 
 | P8 | Higher-TF references in Background MUST use a TF strictly higher than the primary TF (verified via Timeframe ordering) |
 | P9 | Each `Scenario:` block MUST contain at least one step |
 | P10 | Each Scenario MUST terminate with `Then <X>` where X is one of: `long_entry`, `long_exit`, `short_entry`, `short_exit` |
-| P11 | A Scenario terminating with `Then long_entry` or `Then short_entry` MAY have appended one or both `And with stop_loss at <expr>` and `And with take_profit at <expr>` lines after the `Then` step |
-| P12 | A Scenario terminating with `Then long_exit` or `Then short_exit` MUST NOT have `And with stop_loss at` or `And with take_profit at` clauses |
+| P11 | A Scenario terminating with `Then long_entry` or `Then short_entry` MAY have appended `And with stop_loss at <expr>`, `And with take_profit at <expr>`, and/or `And with trailing_stop at <expr>` lines after the `Then` step |
+| P12 | A Scenario terminating with `Then long_exit` or `Then short_exit` MUST NOT have `And with stop_loss at`, `And with take_profit at`, or `And with trailing_stop at` clauses |
 | P13 | Identifiers referenced in expressions MUST resolve to: a built-in market variable, a declared parameter, a declared Background series, a built-in function/indicator (from §3.7), or a trade-context variable (only in exit Scenarios and `And with` clauses on entry Scenarios) |
 | P14 | Function calls MUST match the arity and parameter types of the built-in function. Unknown function names produce a parse error |
 | P15 | Arithmetic expressions MUST be syntactically valid; unbalanced parentheses produce a parse error |
-| P16 | `And with stop_loss at <expr>` and `And with take_profit at <expr>` expressions MUST NOT reference built-in functions/indicators (§3.7) or Background-declared series. Only constants, parameters, trade-context variables, and `atr_value(period)` (the sole admitted function — the frozen-at-fill ATR accessor, §3.4) are allowed. A non-integer or non-positive `atr_value` period is rejected by P21 |
+| P16 | `And with stop_loss at <expr>` and `And with take_profit at <expr>` expressions MUST NOT reference built-in functions/indicators (§3.7) or Background-declared series. Only constants, parameters, trade-context variables, and `atr_value(period)` (the sole admitted function — the frozen-at-fill ATR accessor, §3.4) are allowed. A non-integer or non-positive `atr_value` period is rejected by P21. `And with trailing_stop at <expr>` is stricter: it allows ONLY constants, parameters, and `atr_value(period)` — trade-context variables (`entry_price`, `position_size`), Background series, and other indicators are rejected (§3.4.1) |
 | P17 | Trade-context variables (`entry_price`, `position_size`) MUST NOT appear in Scenarios terminating with `Then long_entry` or `Then short_entry` (no position exists at entry time) |
 | P18 | A Scenario starting with `Given no open position` MUST terminate with `Then long_entry` or `Then short_entry` (semantic consistency) |
 | P19 | A Scenario starting with `Given a long position is open` MUST terminate with `Then long_exit` (semantic consistency) |
 | P20 | A Scenario starting with `Given a short position is open` MUST terminate with `Then short_exit` (semantic consistency) |
 | P21 | Static numeric range checks: where parameters are passed to functions with known valid ranges (e.g. RSI threshold in (0, 100), period > 0), violations produce a parse error |
 | P22 | Scenario names (the text after `Scenario:` in each block) MUST be unique within a strategy. Two Scenarios with the same name in the same `.strat` file produce a parse error. This is symmetric to P4 (unique Parameter names) and P7 (unique Background series names) |
+| P23 | A Scenario MUST NOT declare both `And with stop_loss at` and `And with trailing_stop at` — a fixed stop and a trailing stop are mutually exclusive on the same position. `And with take_profit at` MAY accompany either (§3.4.1) |
 
 ## 5. Config file — TOML grammar
 
@@ -345,7 +361,7 @@ Per-backtest config file values override global preferences.
 
 | Step | Action |
 |---|---|
-| 1 | Parse strategy file: enforce all P1-P21 rules; produce a parsed strategy AST |
+| 1 | Parse strategy file: enforce all P1-P23 rules; produce a parsed strategy AST |
 | 2 | Parse config file: enforce all C1-C11 rules |
 | 3 | Resolve parameter values: per-config overrides take precedence over strategy defaults |
 | 4 | Resolve data source: instantiate `MarketDataSource` (frau-holle-csv or frau-holle-eodhd) and load OHLC bars for the primary TF and any Background higher-TFs |
@@ -373,14 +389,17 @@ If multiple Scenarios with the same `Then` would fire on the same bar, the first
 
 If a Scenario with `Then long_entry` has a `And with stop_loss at <expr>` clause, the runtime evaluates `<expr>` at the fill time of the entry, snapshots the result as the stop price, and emits `ClosePositionAtPrice(snapshotted_price, intrabar_time)` on the first subsequent bar whose `low` reaches the stop price (for long) or whose `high` reaches the stop price (for short).
 
+If a Scenario has a `And with trailing_stop at <expr>` clause, the runtime snapshots `<expr>` at the fill (a percentage or an ATR distance, §3.4.1), maintains the position's high-water mark across bars, and on each bar derives the trailing level from the high-water mark **through the previous bar**; it emits `ClosePositionAtPrice(trailing_level, intrabar_time)` on the first bar whose `low` (long) / `high` (short) reaches that level. The high-water mark only ratchets in the favourable direction, so the trailing level never loosens.
+
 If pyramiding is enabled and a `long_entry` (or `short_entry`) fires while a position of the same direction is open, the runtime emits `AddToPosition(quantity, direction)` instead of an ignored Buy/Sell.
 
 ### 6.3 Priority rules
 
 | Concurrent event in same bar T | Resolution |
 |---|---|
-| Intrabar stop_loss/take_profit AND close-evaluated exit Scenario both trigger | stop_loss/take_profit wins (intrabar precedes close) |
+| Intrabar stop_loss/take_profit/trailing_stop AND close-evaluated exit Scenario both trigger | the intrabar protective exit wins (intrabar precedes close) |
 | Intrabar stop_loss AND take_profit both within `[low, high]` of the same bar | stop_loss wins (pessimistic convention — the backtest assumes the worse fill, mirroring industry tooling) |
+| Intrabar trailing_stop AND take_profit both within `[low, high]` of the same bar | trailing_stop wins (stop side — same pessimistic convention as stop_loss vs take_profit) |
 | Multiple exit Scenarios match in source order | first in source order wins |
 | Multiple entry Scenarios match (no position open, multiple matching `Given no open position` Scenarios) | first in source order wins |
 
@@ -431,7 +450,7 @@ Closed trades come first, sorted strictly by entry timestamp ascending; the stil
 | P/L | signed percent, semantic-coloured, with a `price <±X.XX%>` sub-line. For open trades, replaces the sub-line with a `STILL OPEN` tag |
 | Chevron | rotates 180° when expanded |
 
-Directly under the summary, a compact monospace **conditions row** lists the entry Scenario's When/And step expressions and the exit Scenario's, separated by `→`. Each step is followed by a green `✓` (every step holds at trigger time by construction). For forced-close exits the exit term shows `stop_loss / take_profit`; for open trades it shows `still open at window end`.
+Directly under the summary, a compact monospace **conditions row** lists the entry Scenario's When/And step expressions and the exit Scenario's, separated by `→`. Each step is followed by a green `✓` (every step holds at trigger time by construction). For forced-close exits the exit term shows the protective clause that fired (`stop_loss`, `take_profit`, or `trailing_stop`); for open trades it shows `still open at window end`.
 
 #### Expanded body
 
@@ -441,7 +460,7 @@ Per-trade stats grid (6 columns): **Entry · Exit · Hold · P/L · MFE · MAE**
 
 Both rendered as signed percent, MFE in semantic green, MAE in semantic red, P/L semantic.
 
-Below the stats, a scenario row spells out the full entry and exit Scenario names. For open trades the exit name is `still open`; for forced-close exits it is `stop_loss / take_profit` in monospace.
+Below the stats, a scenario row spells out the full entry and exit Scenario names. For open trades the exit name is `still open`; for forced-close exits it is the protective clause that fired (`stop_loss`, `take_profit`, or `trailing_stop`) in monospace.
 
 Below the scenario row come **one or two chart frames**:
 
@@ -474,7 +493,7 @@ All exceptions raised by `wichtelm-app` extend a single root type, mirroring the
 | Type | Thrown when |
 |---|---|
 | `WichtelmException` | abstract root |
-| `StrategyParseException extends WichtelmException` | a `.strat` file violates any of P1-P21 (§4). Carries: filePath, lineNumber, columnNumber, violatedRule, message, optional suggestion |
+| `StrategyParseException extends WichtelmException` | a `.strat` file violates any of P1-P23 (§4). Carries: filePath, lineNumber, columnNumber, violatedRule, message, optional suggestion |
 | `ConfigParseException extends WichtelmException` | a TOML config file violates any of C1-C11 (§5.2). Carries: filePath, key path, violatedRule, message |
 | `DslEvaluationException extends WichtelmException` | a runtime error occurs during DSL evaluation (e.g. division by zero in an expression, NaN propagation). Carries: filePath, lineNumber, barTime, barIndex, expression text, message, optional cause |
 | `DataSourceUnavailableException extends WichtelmException` | the data source (CSV file or EODHD API) cannot be reached or returns malformed data not caught by the driver's own validation. Wraps the underlying data-source exception as cause |
@@ -646,6 +665,33 @@ Scenario: pyramiding enabled allows long_entry while long position is open
   When the SignalGenerator emits a signal for bar T
   Then the emitted Signal is AddToPosition with direction LONG
   And the position size grows by the configured per-entry amount
+
+Scenario: percentage trailing_stop ratchets up and fires when price retraces
+  Given a long position opened at price 100 with trailing_stop at 10 percent
+  And a later bar prints a high of 120 (high-water mark 120)
+  And the next bar's low reaches 108
+  When the runtime evaluates that bar
+  Then a ClosePositionAtPrice signal is emitted with price 108
+  And the trailing level was derived from the high-water mark through the previous bar (120 * 0.90)
+
+Scenario: trailing_stop never loosens on a pullback
+  Given a long position opened at price 100 with trailing_stop at 10 percent
+  And the high-water mark has reached 120 (trailing level 108)
+  And a later bar pulls back to a high of 112 without breaching 108
+  When the runtime evaluates subsequent bars
+  Then the trailing level remains 108 (it does not drop back toward 112 * 0.90)
+
+Scenario: ATR-distance trailing_stop uses a frozen-at-fill distance
+  Given a long_entry Scenario with "And with trailing_stop at 3 * atr_value(14)"
+  When the entry fills and the ATR(14) at fill is 2.0
+  Then the trailing distance is 6.0 and the stop trails 6.0 below the high-water mark
+
+Scenario: stop_loss and trailing_stop on the same Scenario is rejected by P23
+  Given a strategy with a Scenario terminating with "Then long_entry"
+  And the same Scenario has both "And with stop_loss at entry_price * 0.98" and "And with trailing_stop at 5"
+  When the parser reads the file
+  Then StrategyParseException is thrown
+  And violatedRule is "P23"
 ```
 
 ## 13. Block 5 — Report generation
@@ -726,10 +772,10 @@ The following are explicitly NOT implemented in v1:
 - ~~Parameter sweep tooling~~ — GRADUATED to a documented increment in §18 as the `wichtelm sweep` command: a `[sweep]` config table declares per-parameter ranges/lists, the grid runs every combination over once-loaded data, and results rank by a selectable objective (default Sharpe). Console table + CSV output; no HTML leaderboard
 - User-defined DSL functions and macros
 - Expression-typed first arguments for window aggregates (e.g. `highest(<expression>, period)` where the first arg is computed bar-by-bar). v1 covers the common cases via hard-coded variants (`highest_high`, `lowest_low`, `highest_close`, `lowest_close`). Generic expression-typed args may be introduced if Tier B's boolean primitives or future features require them.
-- Output formats beyond HTML (PDF, JSON, CSV trade export)
+- Output **report** formats beyond HTML (PDF, JSON, CSV trade export). NOTE: this bars alternate *report* renderings; it does not bar the `run --dump-equity` debug/analysis side-channel (§2.1), which emits the per-bar equity series (already computed and rendered as SVG in §7.4) as a CSV so it can be consumed without scraping the HTML. The HTML report remains the sole report format
 - Boolean and String parameter types
 - Indicators and window aggregates in `And with stop_loss at` / `And with take_profit at` clauses, EXCEPT `atr_value(period)` — the frozen-at-fill ATR accessor graduated into stop/take scope in the 0.52 increment (§3.4, P16). All other indicators/window aggregates remain disallowed there
-- Trailing stops (dynamic stop-loss that updates per bar)
+- ~~Trailing stops (dynamic stop-loss that updates per bar)~~ — GRADUATED to §3.4/§3.4.1 as the `And with trailing_stop at <expr>` clause: a high-water-mark trailing stop with percentage and ATR-distance modes (disambiguated by whether the expression references `atr_value`), mutually exclusive with `stop_loss` (P23)
 - ~~`price_above_sma` / `price_above_ema` / price-MA cross variants~~ — GRADUATED to the §3.7 catalog in the 0.52 MA-trend-filter increment as 11 flat Tier B primitives (8 price-vs-MA via nachtkrapp `PriceVsMARule`/`PriceMACrossRule`, 3 MA-vs-MA via `MAVsMARule`/`MACrossMARule`)
 - ~~pivot point primitives~~ — GRADUATED to the §3.7 catalog in the 0.52 pivot-point increment as 4 flat Tier B primitives (`price_above_pivot` / `price_below_pivot` / `price_crosses_above_pivot` / `price_crosses_below_pivot`) over STANDARD daily levels via nachtkrapp `PivotPointRule`. Non-STANDARD levels (CAMARILLA R4/S4), the WOODIE/CAMARILLA variants, and non-daily pivot periods remain out of scope (selectable in a follow-up additive release)
 - Diagnostic / visualization-only Scenarios in `.strat` files
@@ -875,3 +921,71 @@ out-of-sample, not a guarantee, is left to the author.
 objective, tradeless-sorts-last, market-data-loaded-exactly-once). The `sweep`
 command, its CSV output and `--objective` validation are specified in
 `cli-behavior.feature` (§14).
+
+## 19. Gap-aware protective-exit fills (next increment — NOT yet implemented)
+
+> **As** a strategy author, **I want** a protective exit that the market gapped
+> straight through to fill at the realistic worse price, **so that** my backtest
+> P&L is not flattered by assuming an impossible fill at a level the price never
+> traded.
+
+**Status: planned, not implemented.** This is the next increment, raised from a
+PR #60 review of the trailing-stop work. It is recorded here so the spec stays
+the source of truth; no code implements it yet.
+
+### 19.1 Current behavior (the gap)
+
+All three protective exits — `stop_loss`, `take_profit`, `trailing_stop` — emit
+`ClosePositionAtPrice(level, intrabar_time)` at the **snapshotted / trailing
+level**, with no adjustment for an opening gap (§3.4, §6.2). When a bar opens
+**beyond** the protective level (a long whose `low`/`open` gaps below the stop,
+or a short whose `high`/`open` gaps above it), the fill is still booked at the
+level even though the price never traded there on that bar. This **overstates
+P&L** on gap-through exits. The behavior is uniform across the three clauses (it
+is not trailing-specific — see `WichtelmSignalGenerator.protectiveExit` /
+`trailingExit`), which is why it is corrected here as one cross-cutting increment
+rather than patched into the trailing path alone.
+
+### 19.2 Target behavior
+
+When the bar's **open** is already beyond the protective level in the exit
+direction, fill at the **open** (the realistic, pessimistic price) instead of the
+level. When the level is within the bar's traded range, behavior is unchanged
+(fill at the level). This keeps the pessimistic convention (§6.3) and applies
+identically to `stop_loss`, `take_profit` and `trailing_stop`.
+
+| Bar relative to a long's protective level `L` | Fill price |
+|---|---|
+| `open <= L` and `low <= L` (gap-through) | `open` (worse than `L`) |
+| `open > L` and `low <= L` (intrabar touch) | `L` (unchanged) |
+| `low > L` (not reached) | no exit |
+
+(The short side mirrors this around `high`/`open` and `L` from above.)
+
+### 19.3 Behavioral spec
+
+A new `protective-gap-fill.feature` to specify, at minimum:
+
+```gherkin
+Scenario: A long stop_loss gapped through fills at the bar open, not the stale level
+  Given a long position opened at 100 with stop_loss at 98
+  And the next in-position bar opens at 95 with high 96, low 94, close 95
+  When the runtime evaluates that bar
+  Then a ClosePositionAtPrice signal is emitted with price 95
+  And the fill price is NOT 98
+
+Scenario: A long trailing_stop gapped through fills at the bar open
+  Given a long position with a trailing level of 108 through the previous bar
+  And the next bar opens at 105 with high 106, low 104
+  When the runtime evaluates that bar
+  Then a ClosePositionAtPrice signal is emitted with price 105
+
+Scenario: An intrabar touch (no gap) still fills at the level
+  Given a long position opened at 100 with stop_loss at 98
+  And the next bar opens at 99 with high 99.5, low 97, close 98.5
+  When the runtime evaluates that bar
+  Then a ClosePositionAtPrice signal is emitted with price 98
+```
+
+On delivery: update §3.4 / §6.2 to state the gap-aware fill rule, and regenerate
+the demo reports (their metrics may shift slightly for any gap-through exits).

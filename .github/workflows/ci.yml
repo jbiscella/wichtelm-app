@@ -12,6 +12,7 @@ on:
 
 permissions:
   contents: read
+  security-events: write  # upload Trivy SARIF to the code-scanning / Security tab
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -42,3 +43,48 @@ jobs:
           name: surefire-reports
           path: "**/target/surefire-reports/**"
           if-no-files-found: warn
+
+  security-scan:
+    name: Dependencies (Trivy SCA)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the source
+        uses: actions/checkout@v4
+
+      # Trivy resolves the Maven dependency tree from pom.xml (transitive deps
+      # included, fetched over the network) and matches it against its CVE DB.
+      # No build step: the package phase runs jpackage (a heavy native step), so
+      # we scan the manifest directly rather than the built artifact.
+      #
+      # Report pass: every severity -> SARIF -> GitHub Security tab. Never fails
+      # the build (exit-code 0) and runs even if the gate below fails, so the
+      # full findings stay visible under Security -> Code scanning.
+      - name: Trivy scan (SARIF, all severities)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          format: sarif
+          output: trivy-results.sarif
+          severity: LOW,MEDIUM,HIGH,CRITICAL
+          exit-code: "0"
+
+      - name: Upload Trivy SARIF to code scanning
+        if: ${{ !cancelled() }}
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-results.sarif
+          category: trivy-dependencies
+
+      # Gate pass: ignore-unfixed keeps CI green on advisories with no upstream
+      # fix; the build fails on fixable HIGH/CRITICAL dependency vulnerabilities.
+      - name: Trivy gate (fail on fixable HIGH/CRITICAL)
+        uses: aquasecurity/trivy-action@v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

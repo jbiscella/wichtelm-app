@@ -184,6 +184,13 @@ wichtelm run my-backtest.toml --no-report
 
 # 4. Run and override the output directory
 wichtelm run my-backtest.toml --output-dir ./reports
+
+# 5. Run and also dump the per-bar equity curve as CSV (with or without the report)
+wichtelm run my-backtest.toml --dump-equity
+wichtelm run my-backtest.toml --no-report --dump-equity
+
+# 6. Sweep a parameter grid declared in the config's [sweep] table
+wichtelm sweep my-backtest.toml --objective sharpe --top 10
 ```
 
 A successful `run` prints the path of the report it wrote:
@@ -198,7 +205,9 @@ Backtest complete; report written to ./reports/my-backtest_2026-05-19T14-30-00.h
 
 ```
 Usage:
-  wichtelm run <config-file> [--no-report] [--output-dir <path>]
+  wichtelm run <config-file> [--no-report] [--dump-equity] [--output-dir <path>]
+  wichtelm sweep <config-file> [--objective <metric>] [--top <N>]
+                               [--max-combos <N>] [--no-report] [--output-dir <path>]
   wichtelm validate <strat-file>
   wichtelm --version
   wichtelm --help
@@ -208,7 +217,9 @@ Usage:
 |---|---|
 | `wichtelm run <config-file>` | Runs a backtest using the strategy and parameters declared in the TOML config file, then writes an HTML report |
 | `wichtelm run <config-file> --no-report` | Runs the backtest but does not produce an HTML report |
+| `wichtelm run <config-file> --dump-equity` | Additionally writes the per-bar mark-to-market equity curve to `{config}_equity_{timestamp}.csv` (`time,equity,cash,position_value`), independent of the report; combine with `--no-report` for a report-free export |
 | `wichtelm run <config-file> --output-dir <path>` | Runs the backtest and writes the report to `<path>`, overriding the `[output].directory` set in the config file |
+| `wichtelm sweep <config-file>` | Runs every parameter combination declared in the config's `[sweep]` table over once-loaded data, ranks them by `--objective` (default `sharpe`; also `total_return`, `sortino`, `calmar`, `profit_factor`), prints a ranked table and writes a `{config}_sweep_{timestamp}.csv`. Flags: `--top <N>` (table rows, default 10), `--max-combos <N>` (grid cap, default 500), `--no-report` (CSV suppressed), `--output-dir <path>` |
 | `wichtelm validate <strat-file>` | Parses the strategy file and reports parse-time errors; does **not** run a backtest or load any data |
 | `wichtelm --version` | Prints the application version |
 | `wichtelm --help` | Prints CLI usage |
@@ -287,51 +298,55 @@ primary timeframe.
 
 ### Built-in function / indicator catalog
 
-The DSL grammar defines the catalog below. **Not every entry is evaluable by
-the backtest runtime yet** — entries marked *runtime pending* parse and
-validate but fail at runtime if a backtest actually reaches them (indicator
-functions raise a `DslEvaluationException`; `bar_time` raises an
-unresolved-identifier error). Stick to the runtime-supported entries for a
-strategy that runs end to end.
-
-**Runtime-supported today:**
+The catalog is **closed in v1** and, apart from the one entry noted below, every
+function and variable is fully evaluated at runtime. The boolean primitives (the
+HA / RSI / MACD / MA-trend / pivot families) resolve through a one-shot nachtkrapp
+`DetectionEngine` pre-pass and may be used as bare boolean steps
+(e.g. `When ha_strong_bullish()`, `And rsi_oversold(30)`).
 
 | Category | Available |
 |---|---|
 | Market variables | `open`, `high`, `low`, `close`, `volume`, `bar_index` |
 | Base indicators | `sma(period)`, `ema(period)`, `rsi(period)`, `atr(period)`, `stddev(period)` |
-| Trade-context variables | `entry_price`, `position_size` (exit scenarios and `And with` clauses only); `atr_value(period)` (the frozen-at-fill ATR accessor — `And with stop_loss` / `And with take_profit` clauses only) |
+| Composite (decomposed) | `macd_line(fast, slow, signal)`, `macd_signal(fast, slow, signal)`, `macd_histogram(fast, slow, signal)` |
+| Window aggregates | `highest_high(period)`, `lowest_low(period)`, `highest_close(period)`, `lowest_close(period)`, `avg_volume(period)` |
+| Heikin-Ashi primitives (boolean) | `ha_doji()` / `ha_doji(maxBodyRatio)`, `ha_strong()`, `ha_strong_bullish()`, `ha_strong_bearish()`, `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)` |
+| RSI level primitives (boolean) | `rsi_overbought(threshold)`, `rsi_oversold(threshold)`, `rsi_crosses_50()` |
+| MACD primitives (boolean) | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
+| MA trend filter primitives (boolean) | `price_above_sma(period)`, `price_below_sma(period)`, `price_above_ema(period)`, `price_below_ema(period)`, `price_crosses_above_sma(period)`, `price_crosses_below_sma(period)`, `price_crosses_above_ema(period)`, `price_crosses_below_ema(period)`, `sma_above_ema(sma_period, ema_period)`, `sma_crosses_above_ema(sma_period, ema_period)`, `sma_crosses_below_ema(sma_period, ema_period)` |
+| Pivot point primitives (boolean) | `price_above_pivot(level)`, `price_below_pivot(level)`, `price_crosses_above_pivot(level)`, `price_crosses_below_pivot(level)` — `level` is a symbolic STANDARD daily pivot token (`P`, `R1`, `R2`, `R3`, `S1`, `S2`, `S3`), used only as a complete `When`/`And` step |
+| Trade-context variables | `entry_price`, `position_size` (exit scenarios and `And with` clauses only); `atr_value(period)` (the frozen-at-fill ATR accessor — `And with stop_loss` / `take_profit` / `trailing_stop` clauses only) |
 
-**Parser-accepted but *runtime pending* (will fail during a backtest):**
+The lone exception is **`bar_time`**: it is in the grammar and passes
+`wichtelm validate`, but it is **not resolved at runtime** in v1 — a strategy that
+references it fails the backtest with an unresolved-identifier error. Don't use it
+in a strategy you intend to run (a time-typed expression sub-language is future
+work).
 
-| Category | Names |
-|---|---|
-| Market variables | `bar_time` |
-| Composite | `macd(fast, slow, signal)` |
-| Window aggregates | `highest(<expr>, period)`, `lowest(<expr>, period)`, `avg_volume(period)` |
-| Heikin-Ashi primitives | `ha_bullish_reversal(streak)`, `ha_bearish_reversal(streak)`, `ha_strong(...)`, `ha_doji(...)` |
-| Price / MA primitives | `price_above_ma(...)`, `price_crosses_ma(...)` |
-| RSI level primitives | `rsi_crosses_50()`, `rsi_overbought(threshold)`, `rsi_oversold(threshold)` |
-| MACD primitives | `macd_bullish_cross()`, `macd_bearish_cross()`, `macd_zero_cross_up()`, `macd_zero_cross_down()` |
+### Stop-loss, take-profit, and trailing-stop
 
-The catalog is closed in v1; the *runtime pending* entries are wired into the
-evaluator in subsequent increments.
-
-### Stop-loss and take-profit
-
-A scenario ending in `Then long_entry` or `Then short_entry` may append one or
-both of:
+A scenario ending in `Then long_entry` or `Then short_entry` may append a
+`take_profit` plus **either** a fixed `stop_loss` **or** a `trailing_stop` (the two
+stops are mutually exclusive — rule P23):
 
 ```gherkin
 And with stop_loss at entry_price * (1 - stop_loss_pct / 100)
 And with take_profit at entry_price * (1 + take_profit_pct / 100)
+And with trailing_stop at 8                 # percentage mode
+And with trailing_stop at 3 * atr_value(14) # ATR-distance (chandelier) mode
 ```
 
-The expression is snapshotted at the entry's fill time and monitored intrabar.
-It may reference **only** constants, parameters, trade-context variables, and
-`atr_value(period)` — the frozen-at-fill ATR accessor admitted as the sole
-function exception (e.g. `entry_price - 2 * atr_value(14)`). Other indicators,
-window aggregates, and background series are not allowed.
+`stop_loss` / `take_profit` are snapshotted at the entry's fill time and monitored
+intrabar; they may reference **only** constants, parameters, trade-context
+variables, and `atr_value(period)` (the frozen-at-fill ATR accessor admitted as the
+sole function exception). A **`trailing_stop`** follows the trade's high-water mark
+and only ever ratchets in the favourable direction; its value is read as a
+**percentage** unless the expression references `atr_value`, in which case it is a
+**price distance** below/above the high-water mark (chandelier exit). The trailing
+expression is stricter — only constants, parameters and `atr_value(period)` are
+allowed (no trade-context variables). The trailing level is computed from the
+high-water mark **through the previous bar** (lookahead-safe). When both fire
+intrabar, the stop side wins over `take_profit` (pessimistic convention).
 
 ### Canonical example
 
@@ -382,9 +397,9 @@ Feature: Mean Reversion with Trend Filter
 A copy of the canonical strategy lives at
 `src/test/resources/strategies/canonical.strat`.
 
-### Validation rules (P1–P22)
+### Validation rules (P1–P23)
 
-The parser enforces 22 parse-time rules. A violation throws a
+The parser enforces 23 parse-time rules. A violation throws a
 `StrategyParseException` carrying the file path, line, column, and the
 violated rule identifier. Highlights:
 
@@ -395,13 +410,17 @@ violated rule identifier. Highlights:
   higher than the primary.
 - **P10** — every scenario must end with one of the four first-class
   conditions.
-- **P12/P16** — `stop_loss`/`take_profit` clauses are allowed only on entry
-  scenarios and may not reference indicators or background series, except
-  `atr_value(period)` — the frozen-at-fill ATR accessor.
+- **P11/P12/P16** — `stop_loss` / `take_profit` / `trailing_stop` clauses are
+  allowed only on entry scenarios and may not reference indicators or background
+  series, except `atr_value(period)` — the frozen-at-fill ATR accessor
+  (`trailing_stop` additionally disallows trade-context variables).
 - **P13/P14** — every identifier and function call must resolve to a known
   variable, parameter, series, or built-in.
 - **P18–P20** — the opening `Given` must be semantically consistent with the
   terminating `Then` (e.g. `Given no open position` must end with an entry).
+- **P23** — a scenario may not declare both `stop_loss` and `trailing_stop` (a
+  fixed stop and a trailing stop are mutually exclusive); `take_profit` may
+  accompany either.
 
 Run `wichtelm validate <file>` to check a strategy against all rules without
 running a backtest.
@@ -422,7 +441,7 @@ The skill contains:
 - **`SKILL.md`** — the authoring workflow and the rules that most often trip
   people up.
 - **`reference/`** — the complete function/indicator catalog with exact
-  arities, the full grammar, all 22 validation rules (P1–P22) with the exact
+  arities, the full grammar, all 23 validation rules (P1–P23) with the exact
   parser error messages, and the TOML / CLI / report guide.
 - **`reference/guided-builder.md`** — a menu-driven flow that builds a strategy
   **clause by clause**: it asks one question at a time, offers only valid
@@ -535,6 +554,34 @@ wichtelm run my-backtest.toml
 If the named variable is unset or empty, the run fails with a clear error
 naming the variable.
 
+### Parameter sweep — the `[sweep]` table
+
+`wichtelm sweep` runs every combination of an optional `[sweep]` table. Each key
+is a declared `Parameter` name mapped to a numeric **range** inline table or an
+explicit **value list**; range stepping is type-aware (integer parameters step in
+whole numbers, decimals in `DECIMAL64`). A parameter held fixed goes in
+`[parameters]`; the same name must **not** appear in both.
+
+```toml
+[parameters]
+trend_period = 200                            # held constant
+
+[sweep]
+rsi_period = { from = 8, to = 16, step = 2 }  # 8, 10, 12, 14, 16
+oversold   = { from = 25, to = 35, step = 5 } # 25, 30, 35
+overbought = [65, 70, 75]                      # explicit list
+```
+
+The grid is the Cartesian product of the axes (capped by `--max-combos`, default
+500). Sweep-specific rules **C12–C15** are checked before any backtest runs
+(C12: no parameter in both `[parameters]` and `[sweep]`; C13: every `[sweep]` key
+must be a declared parameter; C14: finite `from`/`to`/`step` with `step > 0` and
+`from <= to`, whole numbers for integer parameters; C15: grid size ≤
+`--max-combos`). Violations raise a `SweepConfigException`. Market data is loaded
+once and reused across the grid; combinations are ranked by `--objective` and
+written to a CSV (every combination) plus a console table (the `--top` rows) with
+a paste-ready `[parameters]` block for the winner.
+
 ---
 
 ## Configuration precedence
@@ -599,8 +646,9 @@ Most application errors derive from a single root exception,
 
 | Exception | Raised when |
 |---|---|
-| `StrategyParseException` | A `.strat` file violates a P-rule (P1–P22) |
+| `StrategyParseException` | A `.strat` file violates a P-rule (P1–P23) |
 | `ConfigParseException` | A TOML config file violates a C-rule (C1–C11) |
+| `SweepConfigException` | A `[sweep]` table violates a sweep rule (C12–C15) |
 | `DslEvaluationException` | A runtime error occurs while evaluating a DSL expression (e.g. division by zero) |
 | `DataSourceUnavailableException` | The CSV file or EODHD API cannot be reached or returns malformed data |
 | `ReportGenerationException` | HTML rendering fails (e.g. a filesystem write error) |
@@ -694,14 +742,16 @@ The following are **not** implemented in v1:
 - Multi-symbol portfolio strategies
 - Slippage and commission models
 - Dynamic position sizing (ATR-/volatility-proportional)
-- Walk-forward optimization and parameter sweeps
+- Walk-forward optimization (rolling out-of-sample re-fit). Single-window
+  **parameter sweep** *is* implemented — see `wichtelm sweep` and the `[sweep]`
+  config table
 - User-defined DSL functions and macros
-- Output formats other than HTML
+- Report formats other than HTML (the `run --dump-equity` debug CSV aside, which
+  emits the per-bar equity series — it is not an alternate report rendering)
 - Boolean and String parameter types
-- Indicators or window aggregates inside `stop_loss` / `take_profit` clauses,
-  **except** `atr_value(period)` — the frozen-at-fill ATR accessor that
-  graduated into stop / take scope in the 0.52 increment
-- Trailing stops
+- Indicators or window aggregates inside `stop_loss` / `take_profit` /
+  `trailing_stop` clauses, **except** `atr_value(period)` — the frozen-at-fill
+  ATR accessor that graduated into stop / take / trailing scope
 - Literal `[csv].file` paths without the `{symbol}` placeholder
 - Parallel execution of multiple backtests in one invocation
 - A global preferences file (`~/.config/wichtelm/config.toml`) — specified but

@@ -1,6 +1,6 @@
 ---
 name: wichtelm-strategy-author
-description: Write, review, and debug wichtelm-app .strat backtesting strategies (a Gherkin-conformant, Heikin-Ashi-based DSL), their TOML config, and reports — including P1-P22 / C1-C11 parse-error debugging.
+description: Write, review, and debug wichtelm-app .strat backtesting strategies (a Gherkin-conformant, Heikin-Ashi-based DSL), their TOML config, and reports — including P1-P23 / C1-C11 parse-error debugging.
 ---
 
 # Authoring wichtelm-app strategies
@@ -17,7 +17,7 @@ strategies, not the person building the app.
 **Use this skill when** a user is authoring or fixing a `.strat` strategy file, writing the
 TOML backtest config, choosing indicators / Heikin-Ashi / MACD / RSI / moving-average /
 pivot primitives, setting up a parameter sweep (`[sweep]` + `wichtelm sweep`), resolving a
-`StrategyParseException` (rules P1–P22), `ConfigParseException` (rules C1–C11) or
+`StrategyParseException` (rules P1–P23), `ConfigParseException` (rules C1–C11) or
 `SweepConfigException` (rules C12–C15), or interpreting a wichtelm HTML backtest report.
 
 ## How to use this skill
@@ -28,7 +28,7 @@ pivot primitives, setting up a parameter sweep (`[sweep]` + `wichtelm sweep`), r
    - `reference/function-catalog.md` — the **complete, closed** list of every built-in
      function/indicator with its exact argument count and defaults. If a name is not in
      this file, it does not exist — do not invent functions.
-   - `reference/validation-rules.md` — all 22 parse-time rules (P1–P22) with the exact
+   - `reference/validation-rules.md` — all 23 parse-time rules (P1–P23) with the exact
      error message the parser emits and how to fix each. Use this to pre-empt errors and
      to debug a `StrategyParseException`.
    - `reference/config-cli-report.md` — the TOML config schema (rules C1–C11), the optional
@@ -131,9 +131,12 @@ Feature: <strategy name>
 
 ## What the DSL cannot do (don't suggest these)
 
-The catalog has no Stochastic, no Bollinger Bands, no Supertrend, and **no trailing
-stops** (stops are fixed at fill time). Multi-symbol portfolios, commissions/slippage,
-and dynamic position sizing are out of scope in v1. If a user asks for one of these,
-say so and offer the closest expressible equivalent (e.g. `stddev(period)` for a
-volatility gauge, a fixed `atr_value`-based stop instead of a trailing ATR stop). See
-`reference/function-catalog.md` for the full boundary.
+The catalog has no Stochastic, no Bollinger Bands, and no Supertrend. Multi-symbol
+portfolios, commissions/slippage, and dynamic position sizing are out of scope in v1.
+**Trailing stops ARE supported** — `And with trailing_stop at <expr>` on an entry
+scenario (high-water-mark trailing; percentage mode, or ATR-distance mode when the
+expression references `atr_value`; mutually exclusive with `stop_loss` per P23). If a
+user asks for an out-of-scope item, say so and offer the closest expressible equivalent
+(e.g. `stddev(period)` for a volatility gauge, or a fixed `atr_value`-based `stop_loss`
+when a trailing stop is not wanted). See `reference/function-catalog.md` for the full
+boundary.

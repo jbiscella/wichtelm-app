@@ -9,3 +9,9 @@ dependency-reduced-pom.xml
 .idea/
 *.iml
 .vscode/
+
+# scratch / local data dumps (not source)
+tmp1
+tmp2
+skills/wichtelm-strategy-author.zip
+.claude/scheduled_tasks.lock

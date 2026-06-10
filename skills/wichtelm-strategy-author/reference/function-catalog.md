@@ -113,11 +113,13 @@ These primitives may appear **only** as a complete When/And step — never embed
 comparison, arithmetic, or a Background series (P14). CAMARILLA R4/S4, WOODIE/CAMARILLA
 variants, and non-daily pivot periods are out of scope in v1 (any other token → P21).
 
-## `atr_value(period)` — stop/take only
+## `atr_value(period)` — protective clauses only (stop_loss / take_profit / trailing_stop)
 
 `atr_value(period)` is the frozen-at-fill ATR accessor. It is the **only** function allowed
-inside `And with stop_loss at ...` / `And with take_profit at ...`, and it is **not** allowed
-in conditions (use `atr(period)` there). Example: `And with stop_loss at entry_price - 2 * atr_value(14)`.
+inside `And with stop_loss at ...`, `And with take_profit at ...`, and `And with trailing_stop at ...`
+(in `trailing_stop` it also selects ATR-distance mode), and it is **not** allowed in conditions
+(use `atr(period)` there). Example: `And with stop_loss at entry_price - 2 * atr_value(14)` or
+`And with trailing_stop at 3 * atr_value(14)`.
 
 ## Tuning a primitive's period/threshold
 
@@ -142,8 +144,12 @@ Scenario: ...
 ## Not in the catalog (don't suggest these in v1)
 
 Stochastic, Bollinger Bands, ADX/DMI, Supertrend, Ichimoku, VWAP, OBV, parabolic SAR,
-**trailing stops** (stops are fixed at fill — no per-bar updating), SMA-vs-SMA crosses,
-and user-defined functions. If a popular setup needs one of these, offer the closest
-expressible equivalent: `stddev(period)` as a volatility gauge, a fixed `atr_value`
-stop instead of a trailing ATR stop, `sma_crosses_above_ema` instead of an SMA-SMA cross,
-or a Background series + comparison for a custom level.
+SMA-vs-SMA crosses, and user-defined functions. If a popular setup needs one of these,
+offer the closest expressible equivalent: `stddev(period)` as a volatility gauge,
+`sma_crosses_above_ema` instead of an SMA-SMA cross, or a Background series + comparison
+for a custom level.
+
+**Trailing stops ARE in the catalog** (high-water-mark, per-bar ratcheting):
+`And with trailing_stop at <expr>` on an entry scenario — percentage mode by default, or
+ATR-distance mode when `<expr>` references `atr_value(period)` (e.g. `3 * atr_value(14)`).
+Mutually exclusive with `stop_loss` (P23); `take_profit` may accompany it.

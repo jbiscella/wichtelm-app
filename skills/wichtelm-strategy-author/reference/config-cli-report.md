@@ -137,6 +137,7 @@ doesn't match the CSV file's bar interval.
 | `wichtelm validate <file>.strat` | parse-check a strategy (all P-rules), no backtest |
 | `wichtelm run <config>.toml` | run the backtest and write an HTML report |
 | `wichtelm run <config>.toml --no-report` | run but skip report generation |
+| `wichtelm run <config>.toml --dump-equity` | also write the per-bar equity curve to `{config}_equity_{timestamp}.csv` (`time,equity,cash,position_value`); independent of the report, so `--no-report --dump-equity` exports only the CSV |
 | `wichtelm run <config>.toml --output-dir <path>` | override the output directory |
 | `wichtelm sweep <config>.toml` | run every combination in the config's `[sweep]` table; print a ranked table and write a `{config}_sweep_{timestamp}.csv` |
 | `wichtelm sweep … --objective <metric>` | rank by `sharpe` (default), `total_return`, `sortino`, `calmar`, or `profit_factor` |

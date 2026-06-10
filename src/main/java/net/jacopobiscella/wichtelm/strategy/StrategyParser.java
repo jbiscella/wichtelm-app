@@ -291,31 +291,70 @@ public final class StrategyParser {
 
         Optional<String> stopLoss = Optional.empty();
         Optional<String> takeProfit = Optional.empty();
+        Optional<String> trailingStop = Optional.empty();
         for (int s = thenIndex + 1; s < steps.size(); s++) {
             RawStep step = steps.get(s);
+            // Protective clauses are standard Gherkin `And` steps after the
+            // terminal Then (P11). Reject other keywords (But/Given/When/Or…)
+            // so a non-`And` clause is not silently accepted from its text alone.
+            if (!step.keyword().equals("And")) {
+                throw fail("P10", step.line(), 1,
+                        "a protective clause after Then must use 'And' (was '" + step.keyword() + "')");
+            }
             String text = step.text();
             String expression;
-            boolean isStop;
+            ProtectiveKind kind;
             if (text.startsWith("with stop_loss at ")) {
                 expression = text.substring("with stop_loss at ".length()).strip();
-                isStop = true;
+                kind = ProtectiveKind.STOP;
             } else if (text.startsWith("with take_profit at ")) {
                 expression = text.substring("with take_profit at ".length()).strip();
-                isStop = false;
+                kind = ProtectiveKind.TAKE;
+            } else if (text.startsWith("with trailing_stop at ")) {
+                expression = text.substring("with trailing_stop at ".length()).strip();
+                kind = ProtectiveKind.TRAILING;
             } else {
                 throw fail("P10", step.line(), 1,
-                        "only 'And with stop_loss at' / 'And with take_profit at' may follow Then");
+                        "only 'And with stop_loss at' / 'And with take_profit at' / "
+                                + "'And with trailing_stop at' may follow Then");
             }
             if (!condition.isEntry()) {
                 throw fail("P12", step.line(), 1,
-                        "stop_loss/take_profit clauses are not allowed on exit Scenarios");
+                        "stop_loss/take_profit/trailing_stop clauses are not allowed on exit Scenarios");
             }
-            analyzeExpression(expression, step.line(), ExprContext.STOP_TAKE, parameterNames, seriesNames);
-            if (isStop) {
-                stopLoss = Optional.of(expression);
-            } else {
-                takeProfit = Optional.of(expression);
+            ExprContext exprContext = kind == ProtectiveKind.TRAILING
+                    ? ExprContext.TRAILING : ExprContext.STOP_TAKE;
+            analyzeExpression(expression, step.line(), exprContext, parameterNames, seriesNames);
+            switch (kind) {
+                case STOP -> {
+                    if (stopLoss.isPresent()) {
+                        throw fail("P11", step.line(), 1,
+                                "duplicate stop_loss clause on a Scenario (it is singular)");
+                    }
+                    stopLoss = Optional.of(expression);
+                }
+                case TAKE -> {
+                    if (takeProfit.isPresent()) {
+                        throw fail("P11", step.line(), 1,
+                                "duplicate take_profit clause on a Scenario (it is singular)");
+                    }
+                    takeProfit = Optional.of(expression);
+                }
+                case TRAILING -> {
+                    if (trailingStop.isPresent()) {
+                        throw fail("P11", step.line(), 1,
+                                "duplicate trailing_stop clause on a Scenario (it is singular)");
+                    }
+                    requirePositiveTrailing(expression, step.line());
+                    trailingStop = Optional.of(expression);
+                }
             }
+        }
+        // P23: a fixed stop_loss and a trailing_stop are mutually exclusive.
+        if (stopLoss.isPresent() && trailingStop.isPresent()) {
+            throw fail("P23", block.headerLine(), 1,
+                    "a Scenario may declare at most one of stop_loss and trailing_stop "
+                            + "(they are mutually exclusive)");
         }
 
         switch (precondition) {
@@ -345,7 +384,7 @@ public final class StrategyParser {
             conditionSteps.add(new StrategyStep(step.keyword(), step.text(), step.line()));
         }
         return new StrategyScenario(block.name(), precondition, conditionSteps, condition,
-                stopLoss, takeProfit, block.headerLine());
+                stopLoss, takeProfit, trailingStop, block.headerLine());
     }
 
     // ----- expression analysis -------------------------------------------------------
@@ -354,8 +393,12 @@ public final class StrategyParser {
         CONDITION_ENTRY,
         CONDITION_EXIT,
         BACKGROUND,
-        STOP_TAKE
+        STOP_TAKE,
+        TRAILING
     }
+
+    /** Which protective `And with …` clause a trailing-step text declares. */
+    private enum ProtectiveKind { STOP, TAKE, TRAILING }
 
     /**
      * Validates an expression for balanced parentheses (P15), known functions and
@@ -367,6 +410,22 @@ public final class StrategyParser {
         int depth = 0;
         int i = 0;
         int n = expr.length();
+        // An expression must carry at least one operand (a numeric literal or an
+        // identifier/function name). "", "()", or a lone operator are balanced and
+        // token-clean yet syntactically invalid; without this guard they parse and
+        // only blow up opaquely at evaluation time (e.g. "And with trailing_stop
+        // at ()"). P15 covers expression syntax.
+        boolean hasOperand = false;
+        for (int p = 0; p < n; p++) {
+            char ch = expr.charAt(p);
+            if (Character.isLetterOrDigit(ch) || ch == '_') {
+                hasOperand = true;
+                break;
+            }
+        }
+        if (!hasOperand) {
+            throw fail("P15", line, 1, "expression has no operand: \"" + expr + "\"");
+        }
         while (i < n) {
             char c = expr.charAt(i);
             if (c == '(') {
@@ -427,18 +486,109 @@ public final class StrategyParser {
         if (depth != 0) {
             throw fail("P15", line, 1, "unbalanced parentheses in expression");
         }
+        // Protective clauses (stop_loss / take_profit / trailing_stop) are pure
+        // arithmetic — no comparison-operator words, no boolean primitives — so we
+        // can additionally enforce operand/operator ordering. Conditions are NOT
+        // validated this way (they carry "crosses below", "is above", ha_doji() …).
+        if (context == ExprContext.STOP_TAKE || context == ExprContext.TRAILING) {
+            validateArithmeticStructure(expr, line);
+        }
+    }
+
+    /**
+     * Operand/operator state machine for protective-clause arithmetic. The scan in
+     * {@link #analyzeExpression} checks balanced parens, known names and the
+     * presence of an operand, but not ordering — so {@code "1 +"},
+     * {@code "3 * atr_value(14) +"} or {@code "1 2"} have operands and balanced
+     * parens yet are malformed, and would fail opaquely at evaluation instead of
+     * as a deterministic P15. A leading/unary {@code +}/{@code -} is allowed; a
+     * function call ({@code atr_value(14)}) counts as a single operand.
+     */
+    private void validateArithmeticStructure(String expr, int line) {
+        int n = expr.length();
+        int i = 0;
+        boolean expectOperand = true;
+        while (i < n) {
+            char c = expr.charAt(i);
+            if (Character.isWhitespace(c)) {
+                i++;
+            } else if (c == '(') {
+                if (!expectOperand) {
+                    throw fail("P15", line, i + 1,
+                            "malformed expression (operator expected before '('): \"" + expr + "\"");
+                }
+                i++;
+            } else if (c == ')') {
+                if (expectOperand) {
+                    throw fail("P15", line, i + 1,
+                            "malformed expression (operand expected before ')'): \"" + expr + "\"");
+                }
+                i++;
+            } else if (c == '+' || c == '-' || c == '*' || c == '/') {
+                if (expectOperand) {
+                    if (c == '*' || c == '/') {
+                        throw fail("P15", line, i + 1,
+                                "malformed expression (operand expected before '" + c + "'): \"" + expr + "\"");
+                    }
+                    // leading/unary '+'/'-' — still awaiting the operand it signs
+                    i++;
+                } else {
+                    expectOperand = true;
+                    i++;
+                }
+            } else if (Character.isLetter(c) || c == '_') {
+                if (!expectOperand) {
+                    throw fail("P15", line, i + 1,
+                            "malformed expression (operator expected before operand): \"" + expr + "\"");
+                }
+                int j = i;
+                while (j < n && (Character.isLetterOrDigit(expr.charAt(j)) || expr.charAt(j) == '_')) {
+                    j++;
+                }
+                int k = j;
+                while (k < n && expr.charAt(k) == ' ') {
+                    k++;
+                }
+                // identifier immediately followed by '(' is a function call — one operand
+                i = (k < n && expr.charAt(k) == '(') ? closeParenIndex(expr, k, line) + 1 : j;
+                expectOperand = false;
+            } else if (Character.isDigit(c) || c == '.') {
+                if (!expectOperand) {
+                    throw fail("P15", line, i + 1,
+                            "malformed expression (operator expected before operand): \"" + expr + "\"");
+                }
+                int j = i;
+                while (j < n && (Character.isDigit(expr.charAt(j)) || expr.charAt(j) == '.')) {
+                    j++;
+                }
+                i = j;
+                expectOperand = false;
+            } else {
+                // Any character outside the supported arithmetic token set
+                // (whitespace, parens, + - * /, identifiers, numbers) is
+                // malformed input — e.g. "5 >" or "entry_price ,". Reject it
+                // deterministically as P15 here rather than letting it slip
+                // through validate() and fail opaquely in the evaluator.
+                throw fail("P15", line, i + 1,
+                        "malformed expression (unexpected character '" + c + "'): \"" + expr + "\"");
+            }
+        }
+        if (expectOperand) {
+            throw fail("P15", line, 1,
+                    "malformed expression (trailing operator or missing operand): \"" + expr + "\"");
+        }
     }
 
     private void validateFunction(String name, String expr, int openParen, int line,
                                   ExprContext context, Set<String> parameterNames) {
         if (name.equals("atr_value")) {
-            // INC2: atr_value(period) is a stop/take-only frozen-ATR accessor —
-            // the one function P16 admits inside stop_loss / take_profit. It is
-            // evaluated once at the entry fill bar and frozen for the trade.
-            if (context != ExprContext.STOP_TAKE) {
+            // atr_value(period) is the frozen-ATR accessor — the one function
+            // P16 admits inside stop_loss / take_profit and (ATR-distance mode)
+            // trailing_stop. Evaluated once at the entry fill bar, frozen for the trade.
+            if (context != ExprContext.STOP_TAKE && context != ExprContext.TRAILING) {
                 throw fail("P16", line, 1,
-                        "atr_value(...) is only valid in stop_loss/take_profit expressions; "
-                                + "use atr(...) in conditions");
+                        "atr_value(...) is only valid in stop_loss/take_profit/trailing_stop "
+                                + "expressions; use atr(...) in conditions");
             }
             List<String> atrArgs = extractArguments(expr, openParen);
             if (atrArgs.size() != 1) {
@@ -458,10 +608,10 @@ public final class StrategyParser {
             requirePositivePeriod(periodArg, name, line);
             return;
         }
-        if (context == ExprContext.STOP_TAKE) {
+        if (context == ExprContext.STOP_TAKE || context == ExprContext.TRAILING) {
             throw fail("P16", line, 1,
-                    "stop_loss/take_profit expressions must not reference functions or indicators: "
-                            + name);
+                    "stop_loss/take_profit/trailing_stop expressions must not reference functions "
+                            + "or indicators (except atr_value): " + name);
         }
         if (!BuiltinCatalog.isFunction(name)) {
             throw fail("P14", line, 1, "unknown function: " + name);
@@ -548,6 +698,16 @@ public final class StrategyParser {
                 if (series || marketVar) {
                     throw fail("P16", line, 1, "stop_loss/take_profit expressions may only reference "
                             + "constants, parameters and trade-context variables: " + word);
+                }
+                throw fail("P13", line, 1, "undeclared identifier: " + word);
+            }
+            case TRAILING -> {
+                if (parameter) {
+                    return;
+                }
+                if (tradeContext || series || marketVar) {
+                    throw fail("P16", line, 1, "trailing_stop expressions may only reference "
+                            + "constants, parameters and atr_value(period): " + word);
                 }
                 throw fail("P13", line, 1, "undeclared identifier: " + word);
             }
@@ -697,6 +857,23 @@ public final class StrategyParser {
         if (literal != null
                 && (literal.signum() <= 0 || literal.compareTo(BigDecimal.valueOf(100)) >= 0)) {
             throw fail("P21", line, 1, "threshold argument of " + name + " must be in (0, 100), was " + arg);
+        }
+    }
+
+    /**
+     * P21 for a {@code trailing_stop} value: when the whole expression is a bare
+     * numeric literal or a bare parameter, its (default) value must be positive.
+     * A compound expression (e.g. {@code 3 * atr_value(14)}) is not statically
+     * range-checked here — its atr_value period is already covered by P21.
+     */
+    private void requirePositiveTrailing(String expression, int line) {
+        String expr = expression.strip();
+        BigDecimal value = numericLiteral(expr);
+        if (value == null) {
+            value = parameterDefaults.get(expr);
+        }
+        if (value != null && value.signum() <= 0) {
+            throw fail("P21", line, 1, "trailing_stop value must be > 0, was " + expr);
         }
     }
 
