@@ -510,7 +510,7 @@ public final class StrategyParser {
         boolean expectOperand = true;
         while (i < n) {
             char c = expr.charAt(i);
-            if (c == ' ') {
+            if (Character.isWhitespace(c)) {
                 i++;
             } else if (c == '(') {
                 if (!expectOperand) {
@@ -564,7 +564,13 @@ public final class StrategyParser {
                 i = j;
                 expectOperand = false;
             } else {
-                i++;
+                // Any character outside the supported arithmetic token set
+                // (whitespace, parens, + - * /, identifiers, numbers) is
+                // malformed input — e.g. "5 >" or "entry_price ,". Reject it
+                // deterministically as P15 here rather than letting it slip
+                // through validate() and fail opaquely in the evaluator.
+                throw fail("P15", line, i + 1,
+                        "malformed expression (unexpected character '" + c + "'): \"" + expr + "\"");
             }
         }
         if (expectOperand) {

@@ -67,6 +67,34 @@ class EmptyExpressionTest {
     }
 
     @Test
+    void unexpectedCharacterIsRejectedAtParseTime() {
+        // A char outside the supported arithmetic token set (e.g. a comparison
+        // operator) must fail deterministically as P15 at parse time, not slip
+        // through validate() and fail later in the evaluator.
+        record Case(String clause, String expr) {
+        }
+        for (Case c : new Case[] {
+                new Case("trailing_stop", "5 >"),
+                new Case("stop_loss", "entry_price >"),
+                new Case("stop_loss", "entry_price , 2")}) {
+            StrategyParseException ex = assertThrows(StrategyParseException.class, () ->
+                    StrategyParser.parse("""
+                            Feature: Unexpected character
+                              Primary timeframe: 1h
+
+                              Scenario: Enter
+                                Given no open position
+                                When close exceeds 1
+                                Then long_entry
+                                And with %s at %s
+                            """.formatted(c.clause(), c.expr()), "badchar.strat"),
+                    () -> "expected parse failure for: " + c.clause() + " / " + c.expr());
+            assertEquals("P15", ex.violatedRule(),
+                    () -> "expected P15 for \"" + c.expr() + "\", got " + ex.violatedRule());
+        }
+    }
+
+    @Test
     void wellFormedArithmeticIsAccepted() {
         // Guards against over-rejection by the structure validator.
         for (String ok : new String[] {
