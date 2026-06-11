@@ -27,6 +27,7 @@ import org.hatrack.heerwisch.api.error.DriverInternalException;
 import org.hatrack.heerwisch.api.port.ChartRenderer;
 import org.hatrack.heerwisch.api.spec.Annotation;
 import org.hatrack.heerwisch.api.spec.AnnotationLegendEntry;
+import org.hatrack.heerwisch.api.spec.CandleStyle;
 import org.hatrack.heerwisch.api.spec.ChartImage;
 import org.hatrack.heerwisch.api.spec.ChartSpec;
 import org.hatrack.heerwisch.api.spec.ChartSpecBuilder;
@@ -1245,7 +1246,16 @@ private String renderChartFrame(ChartRenderer renderer, OHLCSeries window, Strin
                                          BigDecimal entryPrice, BigDecimal exitPrice,
                                          BigDecimal positionSize) {
         try {
-            ChartSpecBuilder builder = ChartSpec.builder().withSeries(series);
+            // CLAUDE.md §0: Heikin-Ashi candles are wichtelm-app's visual
+            // backbone — every report chart renders HA candles. HEIKIN_ASHI is a
+            // candle *display style* over the real OHLC series: heerwisch draws
+            // HA bodies while overlay indicators (RSI / SMA / EMA / MACD) keep
+            // computing on the real PriceSource.CLOSE (the source of truth the
+            // strategy actually decided on, §3.7), so the chart truthfully shows
+            // the indicators that fired each signal.
+            ChartSpecBuilder builder = ChartSpec.builder()
+                    .withSeries(series)
+                    .withCandleStyle(CandleStyle.HEIKIN_ASHI);
             // Tier B primitives plot their underlying indicator on the primary
             // pane so the boolean is read off a visible overlay (CLAUDE.md §3.7 /
             // §7.5). Background-series indicators dedupe against these.
