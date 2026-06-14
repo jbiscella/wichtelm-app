@@ -387,7 +387,7 @@ For each Scenario whose `Given` matches the current state, the runtime evaluates
 
 If multiple Scenarios with the same `Then` would fire on the same bar, the first in source order wins (the others are no-op; they may be reported in diagnostics).
 
-If a Scenario with `Then long_entry` has a `And with stop_loss at <expr>` clause, the runtime evaluates `<expr>` at the fill time of the entry, snapshots the result as the stop price, and emits `ClosePositionAtPrice(fill_price, intrabar_time)` on the first subsequent bar whose `low` reaches the stop price (for long) or whose `high` reaches the stop price (for short). `fill_price` is **gap-aware** (§19): it is the snapshotted level when the level lies within the breaching bar's range, but the bar's `open` when the bar gapped open beyond the level (so a long stop that gaps down fills at the lower open, not the stale level).
+If a Scenario with `Then long_entry` has a `And with stop_loss at <expr>` clause, the runtime evaluates `<expr>` at the fill time of the entry, snapshots the result as the stop price, and emits `ClosePositionAtPrice(fill_price, intrabar_time)` on the first subsequent bar whose `low` reaches the stop price (for long) or whose `high` reaches the stop price (for short). `fill_price` is **gap-aware** (§19): it is the snapshotted level when the level lies within the breaching bar's range, but the bar's `open` when the bar gapped open beyond the level (so a long stop that gaps down fills at the lower open, not the stale level). The same gap-aware rule applies to `take_profit` (snapshotted identically at the entry fill): a `take_profit` whose level the bar gapped through fills at the bar's `open` — the better but realistic price — rather than the stale level.
 
 If a Scenario has a `And with trailing_stop at <expr>` clause, the runtime snapshots `<expr>` at the fill (a percentage or an ATR distance, §3.4.1), maintains the position's high-water mark across bars, and on each bar derives the trailing level from the high-water mark **through the previous bar**; it emits `ClosePositionAtPrice(fill_price, intrabar_time)` on the first bar whose `low` (long) / `high` (short) reaches that level. The fill is **gap-aware** (§19) exactly as for `stop_loss`: `fill_price` is the trailing level when the level lies within the breaching bar's range, but the bar's `open` when the bar gapped open beyond the level. The high-water mark only ratchets in the favourable direction, so the trailing level never loosens.
 
@@ -935,20 +935,21 @@ all three protective exits (`stop_loss`, `take_profit`, `trailing_stop`), covere
 by `GapFillTest` (the §19.3 scenarios). §3.4 / §6.2 above state the rule. The
 subsections below remain as the design rationale.
 
-### 19.1 Current behavior (the gap)
+### 19.1 Original behaviour (the gap — now fixed)
 
-All three protective exits — `stop_loss`, `take_profit`, `trailing_stop` — emit
-`ClosePositionAtPrice(level, intrabar_time)` at the **snapshotted / trailing
-level**, with no adjustment for an opening gap (§3.4, §6.2). When a bar opens
-**beyond** the protective level (a long whose `low`/`open` gaps below the stop,
-or a short whose `high`/`open` gaps above it), the fill is still booked at the
-level even though the price never traded there on that bar. This **overstates
-P&L** on gap-through exits. The behavior is uniform across the three clauses (it
-is not trailing-specific — see `WichtelmSignalGenerator.protectiveExit` /
-`trailingExit`), which is why it is corrected here as one cross-cutting increment
-rather than patched into the trailing path alone.
+Before this increment, all three protective exits — `stop_loss`, `take_profit`,
+`trailing_stop` — emitted `ClosePositionAtPrice(level, intrabar_time)` at the
+**snapshotted / trailing level**, with no adjustment for an opening gap. When a
+bar opened **beyond** the protective level (a long whose `low`/`open` gapped below
+the stop, or a short whose `high`/`open` gapped above it), the fill was still
+booked at the level even though the price never traded there on that bar, which
+**overstated P&L** on gap-through exits. The behaviour was uniform across the three
+clauses (not trailing-specific — see `WichtelmSignalGenerator.protectiveExit` /
+`trailingExit`), which is why it was corrected as one cross-cutting increment
+rather than patched into the trailing path alone. The current, authoritative fill
+rule is in §3.4 / §6.2; the subsection below records the change that delivered it.
 
-### 19.2 Target behavior
+### 19.2 Implemented behaviour
 
 When the bar's **open** is already beyond the protective level in the exit
 direction, fill at the **open** (the realistic, pessimistic price) instead of the
