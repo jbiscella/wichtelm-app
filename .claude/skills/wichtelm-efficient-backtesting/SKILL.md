@@ -1,6 +1,6 @@
 ---
 name: wichtelm-efficient-backtesting
-description: Run wichtelm-app backtests resource-effectively when asked to test strategies in bulk — across many instruments, parameter combinations, windows, or ablation variants. Use this skill BEFORE launching a batch of `wichtelm run` invocations or a `wichtelm sweep`: it is a pre-flight checklist for the cheapest correct way to get the numbers you need (skip report rendering, sweep-once vs shell-loop, right-size parallelism to the box, cache provider data). Backtests are deterministic, so every choice here affects wall-clock time only, never the results.
+description: "Run wichtelm-app backtests resource-effectively when asked to test strategies in bulk — across many instruments, parameter combinations, windows, or ablation variants. Use this skill BEFORE launching a batch of `wichtelm run` invocations or a `wichtelm sweep`: it is a pre-flight checklist for the cheapest correct way to get the numbers you need (skip report rendering, sweep-once vs shell-loop, right-size parallelism to the box, cache provider data). Backtests are deterministic, so every choice here affects wall-clock time only, never the results."
 ---
 
 # Running wichtelm-app backtests resource-effectively
