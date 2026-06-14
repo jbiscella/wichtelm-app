@@ -30,11 +30,14 @@ hundreds of chart renders — often more than the backtest itself.
   `--no-report --dump-equity`. This writes the per-bar equity CSV
   (`time,equity,cash,position_value`, CLAUDE.md §2.1) with no chart rendering;
   compute total return, max drawdown and Sharpe from that series yourself.
-- **Need the full ten-metric suite** (Sortino, Calmar, profit factor, win rate,
-  avg win/loss — trade-level stats not derivable from the equity curve) → you do
-  need the report, but generate it only for the *final* configs you care about, not
-  for every cell of an exploratory grid.
-- **Never** generate a full report just to regex four numbers out of the HTML.
+- **Need the trade-level metrics** (win rate, profit factor, avg win, avg loss —
+  these need the trade list and are **not** in the equity CSV; Sortino and Calmar,
+  by contrast, *are* derivable from the per-bar equity series) → you do need the
+  report, but generate it only for the *final* configs you care about, not for
+  every cell of an exploratory grid.
+- **Never** generate a full report just to regex out return / drawdown / Sharpe
+  (those come from `--dump-equity`) — reserve it for when you genuinely need the
+  trade-level cards.
 
 ### 2. Varying parameters on the same instrument + window + data? Use `wichtelm sweep`.
 `wichtelm sweep` (CLAUDE.md §18) loads the market data **once** and re-runs only the
@@ -45,10 +48,12 @@ thing changing is parameter values. (It is still single-threaded — §1 — so 
 about avoiding redundant data loads and JVM churn, not multi-core.)
 
 ### 3. Bulk across instruments? Cache the provider data to CSV once.
-Snapshot the data once with the EODHD driver into local CSVs (`data_source = "csv"`),
-then run everything offline against the fixtures. Re-hitting the EODHD HTTPS API per
-run is slow, rate-limited, and (for licensed data) needlessly re-downloads the same
-bars. Reuse a committed/cached CSV set across the whole batch.
+Snapshot the data once with the EODHD driver into **local** CSVs (`data_source = "csv"`),
+then run everything offline against them. Re-hitting the EODHD HTTPS API per run is
+slow, rate-limited, and (for licensed data) needlessly re-downloads the same bars.
+Reuse that local cached CSV set across the whole batch — but **keep EODHD-derived
+CSVs and reports out of git**: provider data is licensed and must stay local (see
+`demo/README.md` / CLAUDE.md §17; only the synthetic demo fixtures are committed).
 
 ### 4. Parallelism: size workers to the box, not to the core count.
 Each `wichtelm run` is a **separate JVM**, and each JVM is itself multi-threaded
@@ -86,7 +91,9 @@ Two levers (in order of impact):
 ## Anti-patterns to call out
 
 - A bash loop over `wichtelm run` for a parameter grid (use `sweep`).
-- Full HTML reports generated solely to scrape aggregate metrics (use `--dump-equity`).
+- Full HTML reports generated solely to scrape return / drawdown / Sharpe (use
+  `--dump-equity`; only the trade-level metrics — win rate, profit factor, avg
+  win/loss — actually require the report).
 - Your orchestration pool size (the bash/Python harness that fans out `wichtelm run`
   calls) set to the core count (oversubscribes; each run is a multi-threaded JVM —
   wichtelm itself is single-threaded, so the parallelism is yours to size).
