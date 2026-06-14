@@ -932,8 +932,9 @@ command, its CSV output and `--objective` validation are specified in
 **Status: implemented.** Raised from a PR #60 review of the trailing-stop work
 and delivered: `WichtelmSignalGenerator.gapAwareFill` applies the §19.2 rule to
 all three protective exits (`stop_loss`, `take_profit`, `trailing_stop`), covered
-by `GapFillTest` (the §19.3 scenarios). §3.4 / §6.2 above state the rule. The
-subsections below remain as the design rationale.
+by `src/test/resources/features/protective-gap-fill.feature` (the §19.3 scenarios).
+§3.4 / §6.2 above state the rule. The subsections below remain as the design
+rationale.
 
 ### 19.1 Original behaviour (the gap — now fixed)
 

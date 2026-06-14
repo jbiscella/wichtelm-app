@@ -120,6 +120,19 @@ public class TrailingStopSteps {
         history.add(b);
     }
 
+    // Open-aware variant for §19 gap-through scenarios, where the bar must OPEN
+    // beyond the trailing level (a gap) rather than merely touch it intrabar.
+    @When("an in-position bar prints open {double} high {double} low {double} close {double}")
+    public void anInPositionBarPrintsOHLC(double open, double high, double low, double close) {
+        barCounter++;
+        Instant t = entryTime.plus(Duration.ofHours(barCounter));
+        OHLCBar b = bar(t, open, high, low, close);
+        BarContext ctx = new BarContext(b, history, Optional.of(position),
+                EQUITY, EQUITY, history.size());
+        emitted = generator.generate(ctx);
+        history.add(b);
+    }
+
     @Then("a ClosePositionAtPrice signal is emitted at price {double}")
     public void aClosePositionAtPriceSignalIsEmittedAtPrice(double price) {
         Signal.ClosePositionAtPrice signal =
