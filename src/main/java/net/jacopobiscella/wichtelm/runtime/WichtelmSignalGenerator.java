@@ -319,9 +319,11 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 .map(expression -> evaluateProtective(expression, position));
         if (stop.isPresent()) {
             BigDecimal price = stop.get();
+            // Long stop breaches on the low, short stop on the high (§19).
             boolean hit = isLong ? bar.low().compareTo(price) <= 0 : bar.high().compareTo(price) >= 0;
             if (hit) {
-                return Optional.of(new Signal.ClosePositionAtPrice(price, intrabarFillTime(bar)));
+                return Optional.of(new Signal.ClosePositionAtPrice(
+                        gapAwareFill(price, bar, isLong), intrabarFillTime(bar)));
             }
         }
 
@@ -337,12 +339,29 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                 .map(expression -> evaluateProtective(expression, position));
         if (take.isPresent()) {
             BigDecimal price = take.get();
+            // Long take breaches on the high, short take on the low (§19).
             boolean hit = isLong ? bar.high().compareTo(price) >= 0 : bar.low().compareTo(price) <= 0;
             if (hit) {
-                return Optional.of(new Signal.ClosePositionAtPrice(price, intrabarFillTime(bar)));
+                return Optional.of(new Signal.ClosePositionAtPrice(
+                        gapAwareFill(price, bar, !isLong), intrabarFillTime(bar)));
             }
         }
         return Optional.empty();
+    }
+
+    /**
+     * Gap-aware protective-exit fill price (CLAUDE.md §19). When the bar's OPEN
+     * is already beyond the protective {@code level} in the breach direction, the
+     * price never traded at the level on this bar, so the realistic fill is the
+     * open — worse than the level for a stop, better for a take_profit, both
+     * honest — instead of the stale level. Otherwise the level lies within the
+     * bar's traded range and the fill is the level (unchanged behaviour).
+     * {@code lowSideBreach} is true when the breach is checked against the bar's
+     * low (long stop / short take / long trailing) and false when against the
+     * high (long take / short stop / short trailing).
+     */
+    private static BigDecimal gapAwareFill(BigDecimal level, OHLCBar bar, boolean lowSideBreach) {
+        return lowSideBreach ? bar.open().min(level) : bar.open().max(level);
     }
 
     /**
@@ -387,7 +406,10 @@ public final class WichtelmSignalGenerator implements SignalGenerator {
                     ? bar.low().compareTo(level) <= 0
                     : bar.high().compareTo(level) >= 0;
             if (breached) {
-                hit = Optional.of(new Signal.ClosePositionAtPrice(level, intrabarFillTime(bar)));
+                // Long trailing breaches on the low, short on the high — same
+                // gap-aware fill as a fixed stop (§19).
+                hit = Optional.of(new Signal.ClosePositionAtPrice(
+                        gapAwareFill(level, bar, isLong), intrabarFillTime(bar)));
             }
         }
 

@@ -91,7 +91,7 @@ A Scenario terminating with `Then long_entry` or `Then short_entry` MAY append t
 - `And with take_profit at <expression>` — declares the price at which the position will close intrabar if reached, monitored via frau-holle `ClosePositionAtPrice`.
 - `And with trailing_stop at <expression>` — declares a **dynamic** stop that ratchets in the favourable direction as the trade moves, locking in profit while letting the trend run (§3.4.1).
 
-The stop_loss / take_profit expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted, with one exception: `atr_value(period)` — the frozen-at-fill ATR accessor (e.g. `entry_price - 2 * atr_value(14)`), evaluated once at the entry fill bar and held constant for the trade. It is valid ONLY inside `stop_loss` / `take_profit` / `trailing_stop` (use `atr(period)` in conditions). (`entry_time` is reserved — see §15.)
+The stop_loss / take_profit expression is evaluated at the fill time of the entry, snapshotted, and compared against the high/low of subsequent bars until the position closes. The fill is **gap-aware** (§19): on a bar whose `open` is already beyond the snapshotted level in the exit direction, the position fills at the `open` (the realistic price — worse than the level for a stop, better for a take_profit) rather than at a level the bar never traded; when the level lies within the bar's range, the fill is the level. The expression may reference: constants, declared `Parameter` values, and trade-context variables (`entry_price`, `position_size`). Indicators, window aggregates, and built-in functions are NOT accepted, with one exception: `atr_value(period)` — the frozen-at-fill ATR accessor (e.g. `entry_price - 2 * atr_value(14)`), evaluated once at the entry fill bar and held constant for the trade. It is valid ONLY inside `stop_loss` / `take_profit` / `trailing_stop` (use `atr(period)` in conditions). (`entry_time` is reserved — see §15.)
 
 Each open position is bound at fill time to the scenario that emitted its Buy/Sell signal; the protective-exit evaluator uses that scenario's stop_loss / take_profit / trailing_stop expressions, not the first same-direction entry scenario in source order. Two `long_entry` scenarios with different stops therefore each apply their own stop to the position they opened.
 
@@ -387,7 +387,7 @@ For each Scenario whose `Given` matches the current state, the runtime evaluates
 
 If multiple Scenarios with the same `Then` would fire on the same bar, the first in source order wins (the others are no-op; they may be reported in diagnostics).
 
-If a Scenario with `Then long_entry` has a `And with stop_loss at <expr>` clause, the runtime evaluates `<expr>` at the fill time of the entry, snapshots the result as the stop price, and emits `ClosePositionAtPrice(snapshotted_price, intrabar_time)` on the first subsequent bar whose `low` reaches the stop price (for long) or whose `high` reaches the stop price (for short).
+If a Scenario with `Then long_entry` has a `And with stop_loss at <expr>` clause, the runtime evaluates `<expr>` at the fill time of the entry, snapshots the result as the stop price, and emits `ClosePositionAtPrice(fill_price, intrabar_time)` on the first subsequent bar whose `low` reaches the stop price (for long) or whose `high` reaches the stop price (for short). `fill_price` is **gap-aware** (§19): it is the snapshotted level when the level lies within the breaching bar's range, but the bar's `open` when the bar gapped open beyond the level (so a long stop that gaps down fills at the lower open, not the stale level).
 
 If a Scenario has a `And with trailing_stop at <expr>` clause, the runtime snapshots `<expr>` at the fill (a percentage or an ATR distance, §3.4.1), maintains the position's high-water mark across bars, and on each bar derives the trailing level from the high-water mark **through the previous bar**; it emits `ClosePositionAtPrice(trailing_level, intrabar_time)` on the first bar whose `low` (long) / `high` (short) reaches that level. The high-water mark only ratchets in the favourable direction, so the trailing level never loosens.
 
@@ -922,16 +922,18 @@ objective, tradeless-sorts-last, market-data-loaded-exactly-once). The `sweep`
 command, its CSV output and `--objective` validation are specified in
 `cli-behavior.feature` (§14).
 
-## 19. Gap-aware protective-exit fills (next increment — NOT yet implemented)
+## 19. Gap-aware protective-exit fills (IMPLEMENTED)
 
 > **As** a strategy author, **I want** a protective exit that the market gapped
 > straight through to fill at the realistic worse price, **so that** my backtest
 > P&L is not flattered by assuming an impossible fill at a level the price never
 > traded.
 
-**Status: planned, not implemented.** This is the next increment, raised from a
-PR #60 review of the trailing-stop work. It is recorded here so the spec stays
-the source of truth; no code implements it yet.
+**Status: implemented.** Raised from a PR #60 review of the trailing-stop work
+and delivered: `WichtelmSignalGenerator.gapAwareFill` applies the §19.2 rule to
+all three protective exits (`stop_loss`, `take_profit`, `trailing_stop`), covered
+by `GapFillTest` (the §19.3 scenarios). §3.4 / §6.2 above state the rule. The
+subsections below remain as the design rationale.
 
 ### 19.1 Current behavior (the gap)
 
