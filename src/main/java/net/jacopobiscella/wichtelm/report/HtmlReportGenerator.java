@@ -877,20 +877,26 @@ public final class HtmlReportGenerator {
             return "forced exit";
         }
         BigDecimal exit = trade.exitPrice();
+        boolean isLong = trade.direction().toString().equalsIgnoreCase("LONG");
+        // A protective exit fills AT the snapshotted/trailing level, or — when the
+        // bar gapped through it — at the bar open BEYOND the level (§19 gap-aware
+        // fills). Either way the fill lies on the protective side of the level
+        // (≤ a stop/trailing level for a long, ≥ for a short; mirrored for a
+        // take_profit). An end-of-series close fills at the last bar's close, which
+        // is never beyond a level — had the bar reached the level the protective
+        // exit would have fired first — so the directional test keeps it generic.
         // A trailing_stop is mutually exclusive with stop_loss (P23). The runtime
-        // checks trailingExit BEFORE take_profit, so the trailing stop wins a
-        // same-bar tie (§6.3) — test the recomputed trailing level FIRST, then
-        // take. Attributing to a level only when the exit price matches it keeps
-        // an end-of-series close (filled at the bar close) generic.
+        // checks trailingExit BEFORE take_profit, so trailing wins a same-bar tie
+        // (§6.3) — test the recomputed trailing level FIRST, then take.
         if (entryScenario.trailingStopExpression().isPresent()) {
             Optional<BigDecimal> level = trailingLevelAtExit(data, entryScenario, trade);
-            if (level.isPresent() && exit.compareTo(level.get()) == 0) {
+            if (level.isPresent() && onStopSide(exit, level.get(), isLong)) {
                 return "trailing_stop";
             }
             Optional<BigDecimal> take = entryScenario.takeProfitExpression()
                     .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
                             trade.entryTime(), data));
-            if (take.isPresent() && exit.compareTo(take.get()) == 0) {
+            if (take.isPresent() && onTakeSide(exit, take.get(), isLong)) {
                 return "take_profit";
             }
             return "forced exit";
@@ -901,13 +907,10 @@ public final class HtmlReportGenerator {
         Optional<BigDecimal> take = entryScenario.takeProfitExpression()
                 .map(e -> evaluateLevel(e, trade.entryPrice(), trade.quantity(),
                         trade.entryTime(), data));
-        // A genuine stop_loss / take_profit forced exit fills EXACTLY at the
-        // snapshotted level (ClosePositionAtPrice). Confirm the exit price matches
-        // a level before attributing it — otherwise an end-of-series close (filled
-        // at the last bar's close, matching neither) would be mislabelled. Same
-        // price-confirmation the trailing branch uses. stop_loss wins a tie (§6.3).
-        boolean atStop = stop.isPresent() && exit.compareTo(stop.get()) == 0;
-        boolean atTake = take.isPresent() && exit.compareTo(take.get()) == 0;
+        // stop_loss wins a tie (§6.3). The distinct stop (below entry) and take
+        // (above entry) levels can never both be on-side for one exit price.
+        boolean atStop = stop.isPresent() && onStopSide(exit, stop.get(), isLong);
+        boolean atTake = take.isPresent() && onTakeSide(exit, take.get(), isLong);
         if (atStop) {
             return "stop_loss";
         }
@@ -915,6 +918,23 @@ public final class HtmlReportGenerator {
             return "take_profit";
         }
         return "forced exit";
+    }
+
+    /**
+     * Whether {@code exit} fell on the protective side of a stop / trailing
+     * {@code level} — at or below for a long, at or above for a short. Matches a
+     * fill exactly at the level AND a §19 gap-through fill at a bar open beyond it.
+     */
+    private static boolean onStopSide(BigDecimal exit, BigDecimal level, boolean isLong) {
+        return isLong ? exit.compareTo(level) <= 0 : exit.compareTo(level) >= 0;
+    }
+
+    /**
+     * Whether {@code exit} fell on the take_profit side of a {@code level} — at or
+     * above for a long, at or below for a short (the mirror of {@link #onStopSide}).
+     */
+    private static boolean onTakeSide(BigDecimal exit, BigDecimal level, boolean isLong) {
+        return isLong ? exit.compareTo(level) >= 0 : exit.compareTo(level) <= 0;
     }
 
     private String forcedExitTerm(ReportData data, StrategyScenario entryScenario, Trade trade) {
